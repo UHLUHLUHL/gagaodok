@@ -56,7 +56,7 @@ public struct KakaoMainWindowView: View {
                     
                     Spacer()
                     
-                    // 하단 알림 & 설정 아이콘 (클릭 시 토큰/비용 설정창 오픈)
+                    // 하단 알림 & 설정 아이콘
                     TabIconButton(systemName: "bell", size: 17, isSelected: false)
                     
                     Button(action: {
@@ -69,7 +69,7 @@ public struct KakaoMainWindowView: View {
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
-                    .help("설정 및 실시간 API 토큰/비용 대시보드")
+                    .help("설정 및 실시간 API 사용량")
                     .padding(.bottom, 16)
                 }
                 .frame(width: 58)
@@ -82,7 +82,7 @@ public struct KakaoMainWindowView: View {
                 VStack(spacing: 0) {
                     // 상단 타이틀 & 툴바 ("• 채팅 ▾", "오픈채팅", 돋보기, 새 대화방 추가)
                     HStack(alignment: .center, spacing: 14) {
-                        // "• 채팅 ▾" (파란 포커스 링 완전 제거)
+                        // "• 채팅 ▾"
                         Button(action: {
                             activeHeaderTab = "채팅"
                         }) {
@@ -126,7 +126,7 @@ public struct KakaoMainWindowView: View {
                         .buttonStyle(.plain)
                         .focusable(false)
                         
-                        // 새 채팅방 만들기 (카카오톡 말풍선+점 아이콘)
+                        // 새 채팅방 만들기
                         Button(action: {
                             let newName = "새로운 챗봇 \(roomManager.rooms.count + 1)"
                             let newRoom = roomManager.createNewRoom(name: newName, status: "수학 파트너")
@@ -145,7 +145,7 @@ public struct KakaoMainWindowView: View {
                     .padding(.top, 14)
                     .padding(.bottom, 10)
                     
-                    // 상단 필터 칩 바 (오리지널 카카오톡 스샷 4 1:1)
+                    // 상단 필터 칩 바
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             // "전체"
@@ -212,7 +212,7 @@ public struct KakaoMainWindowView: View {
                     
                     Divider()
                     
-                    // 채팅방 목록 (더블클릭 또는 클릭 시 독립된 카카오톡 채팅창 열림)
+                    // 채팅방 목록
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(roomManager.rooms) { room in
@@ -237,7 +237,7 @@ public struct KakaoMainWindowView: View {
                 .background(Color.white)
             }
             
-            // 설정 및 실시간 토큰/비용 대시보드 모달
+            // 100% 카카오톡 macOS 네이티브 스타일 설정 모달
             if isSettingsPresented {
                 KakaoSettingsModal(onClose: {
                     isSettingsPresented = false
@@ -251,7 +251,7 @@ public struct KakaoMainWindowView: View {
     }
 }
 
-// MARK: - 설정 및 실시간 토큰/비용 대시보드 모달
+// MARK: - 카카오톡 macOS 정통 네이티브 스타일 설정 모달
 public struct KakaoSettingsModal: View {
     let onClose: () -> Void
     @ObservedObject var tokenManager = TokenUsageManager.shared
@@ -263,174 +263,182 @@ public struct KakaoSettingsModal: View {
     
     public var body: some View {
         ZStack {
-            Color.black.opacity(0.5)
+            Color.black.opacity(0.4)
                 .ignoresSafeArea()
                 .onTapGesture { onClose() }
             
             VStack(spacing: 0) {
-                // 상단 헤더 바
+                // 상단 타이틀 바 (카카오톡 특유의 미니멀 헤더)
                 HStack {
-                    Text("설정 및 API 사용량 통계")
+                    Text("설정")
                         .font(.custom("Pretendard-Bold", size: 15))
-                        .foregroundColor(.black)
+                        .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                     
                     Spacer()
                     
                     Button(action: onClose) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(Color.black.opacity(0.6))
-                            .frame(width: 24, height: 24)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color.black.opacity(0.5))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .background(Color(red: 0.96, green: 0.96, blue: 0.96))
-                .overlay(Divider(), alignment: .bottom)
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+                
+                Divider()
                 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        // 1. 전체 누적 요약 카드
+                    VStack(alignment: .leading, spacing: 18) {
+                        // 1. 카카오톡 머니/지갑 감성의 정갈한 총 사용량 카드
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("📊 전체 누적 API 비용 (실시간)")
-                                .font(.custom("Pretendard-Bold", size: 13))
-                                .foregroundColor(Color.black.opacity(0.85))
-                            
-                            HStack(spacing: 12) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("총 누적 비용 (KRW)")
-                                        .font(.custom("Pretendard-Regular", size: 11))
-                                        .foregroundColor(.secondary)
-                                    Text(String(format: "₩%.2f원", tokenManager.totalCostKRW))
-                                        .font(.custom("Pretendard-Bold", size: 20))
-                                        .foregroundColor(Color(red: 0.1, green: 0.45, blue: 0.9))
-                                }
+                            HStack {
+                                Text("API 사용 금액")
+                                    .font(.custom("Pretendard-Medium", size: 12.5))
+                                    .foregroundColor(Color.black.opacity(0.6))
                                 
                                 Spacer()
                                 
-                                VStack(alignment: .trailing, spacing: 3) {
-                                    Text("USD 환산 ($)")
-                                        .font(.custom("Pretendard-Regular", size: 11))
-                                        .foregroundColor(.secondary)
-                                    Text(String(format: "$%.5f", tokenManager.totalCostUSD))
-                                        .font(.custom("Pretendard-Medium", size: 14))
-                                        .foregroundColor(.primary)
-                                }
+                                Text("Gemini 3.6 Flash")
+                                    .font(.custom("Pretendard-Medium", size: 10.5))
+                                    .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color(red: 0.996, green: 0.902, blue: 0.0)) // 카카오 옐로우 뱃지
+                                    .cornerRadius(4)
                             }
-                            .padding(12)
-                            .background(Color(red: 0.95, green: 0.97, blue: 1.0))
-                            .cornerRadius(8)
+                            
+                            HStack(alignment: .lastTextBaseline, spacing: 6) {
+                                Text(String(format: "₩%.2f", tokenManager.totalCostKRW))
+                                    .font(.custom("Pretendard-Bold", size: 24))
+                                    .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                                
+                                Text(String(format: "($%.4f)", tokenManager.totalCostUSD))
+                                    .font(.custom("Pretendard-Regular", size: 12))
+                                    .foregroundColor(Color.black.opacity(0.45))
+                            }
+                            
+                            Divider()
+                                .padding(.vertical, 2)
                             
                             HStack {
-                                Text("총 사용 토큰:")
-                                    .font(.custom("Pretendard-Regular", size: 12))
-                                    .foregroundColor(.secondary)
-                                Text("\(tokenManager.totalTokens.formatted()) tokens")
-                                    .font(.custom("Pretendard-Bold", size: 12))
+                                Text("누적 토큰")
+                                    .font(.custom("Pretendard-Regular", size: 11.5))
+                                    .foregroundColor(Color.black.opacity(0.55))
                                 
                                 Spacer()
                                 
-                                Text("(입력: \(tokenManager.totalPromptTokens.formatted()) / 출력: \(tokenManager.totalCandidatesTokens.formatted()))")
-                                    .font(.custom("Pretendard-Regular", size: 10.5))
-                                    .foregroundColor(.secondary)
+                                Text("\(tokenManager.totalTokens.formatted()) tokens")
+                                    .font(.custom("Pretendard-Bold", size: 12))
+                                    .foregroundColor(Color(red: 0.15, green: 0.15, blue: 0.15))
+                            }
+                            
+                            HStack {
+                                Text("입력 / 출력")
+                                    .font(.custom("Pretendard-Regular", size: 11))
+                                    .foregroundColor(Color.black.opacity(0.45))
+                                
+                                Spacer()
+                                
+                                Text("\(tokenManager.totalPromptTokens.formatted()) / \(tokenManager.totalCandidatesTokens.formatted())")
+                                    .font(.custom("Pretendard-Regular", size: 11))
+                                    .foregroundColor(Color.black.opacity(0.55))
                             }
                         }
                         .padding(14)
-                        .background(Color.white)
+                        .background(Color(red: 0.965, green: 0.965, blue: 0.97))
                         .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.black.opacity(0.08), lineWidth: 1)
-                        )
                         
-                        // 2. 채팅방별 실시간 토큰/비용 통계
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("💬 채팅방별 사용량 내역")
-                                .font(.custom("Pretendard-Bold", size: 13))
-                                .foregroundColor(Color.black.opacity(0.85))
+                        // 2. 대화방별 상세 사용량
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("대화방별 사용 내역")
+                                .font(.custom("Pretendard-Bold", size: 12.5))
+                                .foregroundColor(Color.black.opacity(0.75))
+                                .padding(.leading, 2)
                             
-                            VStack(spacing: 8) {
-                                ForEach(roomManager.rooms) { room in
+                            VStack(spacing: 0) {
+                                ForEach(Array(roomManager.rooms.enumerated()), id: \.element.id) { idx, room in
                                     let usage = tokenManager.getUsage(for: room.id)
                                     HStack(spacing: 10) {
-                                        RoomAvatarView(image: roomManager.loadAvatarForRoom(profile: room.profile), size: 32)
+                                        RoomAvatarView(image: roomManager.loadAvatarForRoom(profile: room.profile), size: 34)
                                         
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(room.title)
                                                 .font(.custom("Pretendard-Bold", size: 12.5))
+                                                .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                                                 .lineLimit(1)
                                             
-                                            Text("입력 \(usage.promptTokens.formatted()) · 출력 \(usage.candidatesTokens.formatted())")
+                                            Text("\(usage.totalTokens.formatted()) tokens (입력 \(usage.promptTokens.formatted()) · 출력 \(usage.candidatesTokens.formatted()))")
                                                 .font(.custom("Pretendard-Regular", size: 10))
-                                                .foregroundColor(.secondary)
+                                                .foregroundColor(Color.black.opacity(0.45))
                                         }
                                         
                                         Spacer()
                                         
-                                        VStack(alignment: .trailing, spacing: 2) {
-                                            Text(String(format: "₩%.2f원", usage.costKRW(exchangeRate: tokenManager.exchangeRate)))
-                                                .font(.custom("Pretendard-Bold", size: 12.5))
-                                                .foregroundColor(Color(red: 0.15, green: 0.15, blue: 0.15))
-                                            
-                                            Text("\(usage.totalTokens.formatted()) tokens")
-                                                .font(.custom("Pretendard-Regular", size: 10))
-                                                .foregroundColor(.secondary)
-                                        }
+                                        Text(String(format: "₩%.2f", usage.costKRW(exchangeRate: tokenManager.exchangeRate)))
+                                            .font(.custom("Pretendard-Bold", size: 13))
+                                            .foregroundColor(Color(red: 0.12, green: 0.12, blue: 0.12))
                                     }
-                                    .padding(8)
-                                    .background(Color.black.opacity(0.02))
-                                    .cornerRadius(6)
+                                    .padding(.vertical, 9)
+                                    .padding(.horizontal, 4)
+                                    
+                                    if idx < roomManager.rooms.count - 1 {
+                                        Divider()
+                                            .padding(.leading, 44)
+                                    }
                                 }
                             }
+                            .padding(.horizontal, 8)
+                            .background(Color.white)
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.black.opacity(0.06), lineWidth: 0.5)
+                            )
                         }
-                        .padding(14)
-                        .background(Color.white)
-                        .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.black.opacity(0.08), lineWidth: 1)
-                        )
                         
-                        // 3. 구글 공식 단가 & 캐싱 안내
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("ℹ️ Google Gemini 1.5/2.0 Flash 공식 단가표")
-                                .font(.custom("Pretendard-Bold", size: 12))
-                                .foregroundColor(Color.black.opacity(0.8))
+                        // 3. 단가 정보 풋터
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("단가 기준 (Google AI Studio 공식 요율)")
+                                .font(.custom("Pretendard-Bold", size: 10.5))
+                                .foregroundColor(Color.black.opacity(0.45))
                             
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("• 입력 토큰: 100만 토큰당 $0.075 (1,000토큰당 약 0.1원)")
-                                Text("• 출력 토큰: 100만 토큰당 $0.300 (1,000토큰당 약 0.4원)")
-                                Text("• 컨텍스트 캐싱(32k 이상): 100만 토큰당 $0.01875 (75% 할인)")
-                                Text("• 적용 환율: 1 USD = 1,380.00 KRW")
-                            }
-                            .font(.custom("Pretendard-Regular", size: 11))
-                            .foregroundColor(Color.black.opacity(0.65))
-                            .lineSpacing(2)
+                            Text("• 입력: $1.50 / 1M tokens · 출력(사고 포함): $7.50 / 1M tokens")
+                                .font(.custom("Pretendard-Regular", size: 10))
+                                .foregroundColor(Color.black.opacity(0.45))
+                            Text("• 컨텍스트 캐싱: $0.15 / 1M tokens (90% 할인)")
+                                .font(.custom("Pretendard-Regular", size: 10))
+                                .foregroundColor(Color.black.opacity(0.45))
+                            Text("• 적용 환율: 1 USD = 1,420.00 KRW")
+                                .font(.custom("Pretendard-Regular", size: 10))
+                                .foregroundColor(Color.black.opacity(0.45))
                         }
-                        .padding(12)
-                        .background(Color(red: 0.98, green: 0.98, blue: 0.98))
-                        .cornerRadius(8)
+                        .padding(.horizontal, 4)
                         
-                        // 초기화 버튼
+                        // 4. 통계 초기화 버튼
                         Button(action: {
                             tokenManager.resetAllUsage()
                         }) {
-                            Text("사용량 통계 초기화")
+                            Text("사용량 초기화")
                                 .font(.custom("Pretendard-Regular", size: 11.5))
-                                .foregroundColor(.red.opacity(0.8))
+                                .foregroundColor(Color.red.opacity(0.75))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                         }
                         .buttonStyle(.plain)
+                        .focusable(false)
                     }
-                    .padding(16)
+                    .padding(14)
                 }
             }
-            .frame(width: 320, height: 500)
-            .background(Color(red: 0.97, green: 0.97, blue: 0.97))
+            .frame(width: 310, height: 480)
+            .background(Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.35), radius: 20, x: 0, y: 10)
+            .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 12)
         }
     }
 }

@@ -11,14 +11,14 @@ public struct RoomTokenUsage: Codable, Equatable {
         self.candidatesTokens = candidatesTokens
     }
     
-    // Gemini 1.5/2.0 Flash 공식 단가 ($0.075 / 1M Input, $0.30 / 1M Output)
+    // Gemini 3.6 Flash 공식 단가 ($1.50 / 1M Input, $7.50 / 1M Output)
     public func costUSD() -> Double {
-        let inputCost = Double(promptTokens) * 0.000000075
-        let outputCost = Double(candidatesTokens) * 0.00000030
+        let inputCost = Double(promptTokens) * 0.00000150
+        let outputCost = Double(candidatesTokens) * 0.00000750
         return inputCost + outputCost
     }
     
-    public func costKRW(exchangeRate: Double = 1380.0) -> Double {
+    public func costKRW(exchangeRate: Double = 1420.0) -> Double {
         return costUSD() * exchangeRate
     }
 }
@@ -27,7 +27,7 @@ public class TokenUsageManager: ObservableObject {
     public static let shared = TokenUsageManager()
     
     @Published public var roomUsages: [UUID: RoomTokenUsage] = [:]
-    @Published public var exchangeRate: Double = 1380.0
+    @Published public var exchangeRate: Double = 1420.0 // 요청 환율: 1 USD = 1,420 KRW
     
     private let fileManager = FileManager.default
     private let usageFileURL: URL
@@ -38,8 +38,6 @@ public class TokenUsageManager: ObservableObject {
         self.usageFileURL = dir.appendingPathComponent("token_usage.json")
         
         loadUsage()
-        
-        // 기존 대화가 있는데 토큰 기록이 비어있다면 대화 내역 기반 초기 추정치 산출
         bootstrapExistingHistoryIfEmpty()
     }
     
@@ -120,11 +118,10 @@ public class TokenUsageManager: ObservableObject {
             var estCandidates = 0
             
             for msg in messages {
-                // 한글 1글자 약 1.5~2토큰, 영문/기호 약 0.5~1토큰 추정
                 let charCount = msg.text.count
                 let tokens = max(Int(Double(charCount) * 1.6), 10)
                 if msg.sender == .user {
-                    estPrompt += tokens + 250 // 시스템 프롬프트 가중치
+                    estPrompt += tokens + 250
                 } else {
                     estCandidates += tokens
                 }
