@@ -1,0 +1,16 @@
+# Xcode & Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# App Bundles
+*.app
+*.dSYM
+
+# OS generated
+.DS_Store
+.Spotlight-V100
+.Trashes
