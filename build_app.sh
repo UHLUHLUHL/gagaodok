@@ -17,7 +17,16 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
-# 바이너리 찾기 및 복사
+# 1. 앱 아이콘 생성 및 복사
+if [ ! -f "AppIcon.icns" ]; then
+    echo "🎨 Generating AppIcon.icns..."
+    swift generate_icon.swift
+    iconutil -c icns AppIcon.iconset -o AppIcon.icns
+fi
+
+cp -f "AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
+
+# 2. 바이너리 복사
 BIN_PATH=$(find .build -name "KakaoSapiens" -type f -not -path "*.dSYM*" | grep -E "release|debug" | head -n 1)
 
 if [ -z "$BIN_PATH" ]; then
@@ -29,7 +38,7 @@ echo "📦 Using binary from: $BIN_PATH"
 cp -f "$BIN_PATH" "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 
-# Info.plist 생성
+# 3. Info.plist 생성 (아이콘 및 표시 이름 포함)
 cat <<EOF > "${CONTENTS_DIR}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -43,6 +52,8 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <string>${APP_NAME}</string>
     <key>CFBundleDisplayName</key>
     <string>사피엔스 (카카오톡)</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -66,5 +77,10 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
 </plist>
 EOF
 
-echo "✅ KakaoSapiens.app 번들 생성이 완료되었습니다!"
-echo "🚀 실행하려면 'open ${APP_BUNDLE}' 또는 './run.sh'를 실행하세요."
+# 4. /Applications 디렉토리에 정식 설치
+echo "🚀 Installing KakaoSapiens to /Applications..."
+rm -rf "/Applications/${APP_BUNDLE}"
+cp -R "${APP_BUNDLE}" "/Applications/${APP_BUNDLE}"
+touch "/Applications/${APP_BUNDLE}"
+
+echo "✅ KakaoSapiens.app 정식 설치가 완료되었습니다!"
