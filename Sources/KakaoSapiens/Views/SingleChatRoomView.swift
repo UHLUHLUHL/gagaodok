@@ -166,7 +166,8 @@ public struct SingleChatRoomView: View {
                 .transition(.opacity)
             }
         }
-        .frame(minWidth: 340, idealWidth: 380, maxWidth: 500, minHeight: 460, idealHeight: 600, maxHeight: 850)
+        .frame(minWidth: 330, minHeight: 440)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.all)
     }
     
@@ -267,12 +268,14 @@ public struct SingleChatRoomView: View {
     
     private func triggerAIResponse(history: [ChatMessage]) {
         let currentBotName = room.profile.name
+        let currentRoomId = roomId
         
         Task {
             do {
                 let responses = try await GeminiService.shared.generateResponse(
                     chatHistory: history,
-                    botName: currentBotName
+                    botName: currentBotName,
+                    roomId: currentRoomId
                 )
                 
                 await MainActor.run {

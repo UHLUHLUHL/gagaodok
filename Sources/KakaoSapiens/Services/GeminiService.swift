@@ -60,16 +60,16 @@ public actor GeminiService {
 
     private init() {}
     
-    public func generateResponse(chatHistory: [ChatMessage], botName: String = "사피엔스") async throws -> [GeneratedMessageBubble] {
+    public func generateResponse(chatHistory: [ChatMessage], botName: String = "사피엔스", roomId: UUID? = nil) async throws -> [GeneratedMessageBubble] {
         do {
-            return try await sendRequest(model: primaryModel, chatHistory: chatHistory, botName: botName)
+            return try await sendRequest(model: primaryModel, chatHistory: chatHistory, botName: botName, roomId: roomId)
         } catch {
             print("Primary model (\(primaryModel)) failed: \(error.localizedDescription). Trying fallback (\(fallbackModel))...")
-            return try await sendRequest(model: fallbackModel, chatHistory: chatHistory, botName: botName)
+            return try await sendRequest(model: fallbackModel, chatHistory: chatHistory, botName: botName, roomId: roomId)
         }
     }
     
-    private func sendRequest(model: String, chatHistory: [ChatMessage], botName: String) async throws -> [GeneratedMessageBubble] {
+    private func sendRequest(model: String, chatHistory: [ChatMessage], botName: String, roomId: UUID?) async throws -> [GeneratedMessageBubble] {
         guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)") else {
             throw URLError(.badURL)
         }
@@ -145,8 +145,20 @@ public actor GeminiService {
             throw NSError(domain: "GeminiError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorText])
         }
         
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let candidates = json["candidates"] as? [[String: Any]],
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "GeminiError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"])
+        }
+        
+        // 실시간 토큰 사용량 파싱 및 기록
+        if let usage = json["usageMetadata"] as? [String: Any] {
+            let promptTokens = usage["promptTokenCount"] as? Int ?? 0
+            let candidatesTokens = usage["candidatesTokenCount"] as? Int ?? 0
+            if let targetRoomId = roomId {
+                TokenUsageManager.shared.recordUsage(roomId: targetRoomId, promptTokens: promptTokens, candidatesTokens: candidatesTokens)
+            }
+        }
+        
+        guard let candidates = json["candidates"] as? [[String: Any]],
               let firstCandidate = candidates.first,
               let content = firstCandidate["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]],
