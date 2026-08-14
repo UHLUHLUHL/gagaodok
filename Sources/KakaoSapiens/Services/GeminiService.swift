@@ -465,9 +465,9 @@ public actor GeminiService {
     private var prefixCaches: [UUID: PrefixCache] = [:]
     private var refreshingRooms: Set<UUID> = []
     private static let cacheTTLSeconds = 900
-    // 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 한국어는 대략 2.4자당 1토큰이라
-    // 넉넉히 잡아 이 길이 아래에서는 생성을 시도하지 않습니다.
-    private static let minimumCacheCharacters = 3000
+    // 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 어림값이 실제보다 조금 클 수 있으므로
+    // 여유를 둡니다. 그래도 거부되면 캐시 없이 그냥 진행하므로 대화에는 영향이 없습니다.
+    private static let minimumCacheTokens = 1200
 
     private func sendGeminiRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil) async throws -> String {
         let model = AIModel.gemini37Flash
@@ -601,10 +601,11 @@ public actor GeminiService {
             return
         }
 
-        let characterCount = contents.reduce(0) { total, item in
-            total + ((item["parts"] as? [[String: Any]])?.reduce(0) { $0 + (($1["text"] as? String)?.count ?? 0) } ?? 0)
-        }
-        guard characterCount >= Self.minimumCacheCharacters else { return }
+        // 사진도 함께 셉니다. 글자만 세던 시절에는 사진이 0자로 잡혀서,
+        // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
+        let estimatedTokens = TokenEstimator.estimatedTokens(contents: contents)
+            + TokenEstimator.textTokens(system)
+        guard estimatedTokens >= Self.minimumCacheTokens else { return }
 
         let previous = prefixCaches[roomId]
         guard let url = URL(string: "\(Self.geminiBaseURL)/cachedContents") else { return }
