@@ -53,7 +53,7 @@ public struct PersonaStyle: Codable, Equatable {
         if !samples.isEmpty {
             lines.append("")
             lines.append("아래는 이 인물의 실제 대사다. 어휘와 문장 끝맺음을 이 결에 맞춘다.")
-            for sample in samples.prefix(12) {
+            for sample in samples.prefix(20) {
                 lines.append("- \(sample.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
             // 예시를 그대로 붙여넣는 실수가 잦습니다. 칭찬 대사를 지적하는 상황에 쓰는 식입니다.
@@ -172,12 +172,60 @@ public class ChatRoomManager: ObservableObject {
             Self.saveMessagesDirectly(url: dir.appendingPathComponent("room_\(defaultRoom.id.uuidString)_messages.json"), messages: [])
             Self.saveRoomsDirectly(url: listURL, rooms: [defaultRoom])
         }
+
+        refreshConversationIndex()
     }
     
     public func getRoom(id: UUID) -> ChatRoom? {
         rooms.first(where: { $0.id == id })
     }
-    
+
+    // 친구 목록에는 모든 상대가 나오고, 채팅 목록에는 대화를 시작한 방만 나옵니다.
+    // 카카오톡에서 친구를 추가해도 대화 전까지 채팅 목록에 안 뜨는 것과 같습니다.
+    // 매 행마다 디스크를 읽지 않도록 시작할 때 한 번 조사해두고 저장할 때 갱신합니다.
+    @Published public private(set) var roomsWithConversation: Set<UUID> = []
+
+    func refreshConversationIndex() {
+        var found: Set<UUID> = []
+        for room in rooms {
+            let url = messagesURLForRoom(roomId: room.id)
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+                  let size = values.fileSize else { continue }
+            // 빈 배열("[]")만 있는 파일은 대화가 없는 것으로 봅니다.
+            if size > 4 { found.insert(room.id) }
+        }
+        roomsWithConversation = found
+    }
+
+    public func hasConversation(_ roomId: UUID) -> Bool {
+        roomsWithConversation.contains(roomId)
+    }
+
+    /// 채팅 탭에 보여줄 방입니다. 고정한 방이 먼저, 그 뒤는 최근 대화 순입니다.
+    public var conversationRooms: [ChatRoom] {
+        rooms
+            .filter { roomsWithConversation.contains($0.id) }
+            .sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                return lhs.lastMessageTime > rhs.lastMessageTime
+            }
+    }
+
+    /// 친구 탭에 보여줄 목록입니다. 즐겨찾기와 일반을 나눠서 씁니다.
+    public var favoriteRooms: [ChatRoom] {
+        rooms.filter { $0.isPinned }.sorted { $0.profile.name < $1.profile.name }
+    }
+
+    public var regularRooms: [ChatRoom] {
+        rooms.filter { !$0.isPinned }.sorted { $0.profile.name < $1.profile.name }
+    }
+
+    public func togglePinned(roomId: UUID) {
+        guard let idx = rooms.firstIndex(where: { $0.id == roomId }) else { return }
+        rooms[idx].isPinned.toggle()
+        saveRooms()
+    }
+
     public func createNewRoom(name: String, status: String = "수학 학습 코치") -> ChatRoom {
         let newProfile = RoomProfile(name: name, statusMessage: status)
         let newRoom = ChatRoom(
@@ -197,8 +245,11 @@ public class ChatRoomManager: ObservableObject {
     }
     
     public func deleteRoom(id: UUID) {
-        guard rooms.count > 1 else { return }
         rooms.removeAll(where: { $0.id == id })
+        roomsWithConversation.remove(id)
+        // 대화 기록과 아바타 파일도 같이 정리합니다.
+        try? fileManager.removeItem(at: messagesURLForRoom(roomId: id))
+        try? fileManager.removeItem(at: appSupportURL.appendingPathComponent("avatar_\(id.uuidString).png"))
         saveRooms()
     }
     
@@ -278,6 +329,13 @@ public class ChatRoomManager: ObservableObject {
         }
         pendingSaves[roomId] = (work, messages)
         Self.persistenceQueue.asyncAfter(deadline: .now() + Self.saveCoalescingInterval, execute: work)
+
+        // 첫 메시지가 오는 순간 이 방이 채팅 목록에 나타나야 합니다.
+        if messages.isEmpty {
+            roomsWithConversation.remove(roomId)
+        } else if !roomsWithConversation.contains(roomId) {
+            roomsWithConversation.insert(roomId)
+        }
 
         // 마지막 메시지 업데이트
         // rooms는 @Published라서 값을 넣을 때마다 이 매니저를 보는 화면이 전부 다시 그려집니다.

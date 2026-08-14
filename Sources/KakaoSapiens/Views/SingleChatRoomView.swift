@@ -34,6 +34,44 @@ public struct SingleChatRoomView: View {
         roomManager.loadAvatarForRoom(profile: room.profile)
     }
     
+    /// 본문에서 떼어냈습니다. 한 덩어리로 두면 타입 검사가 시간 안에 끝나지 않습니다.
+    private var messageList: some View {
+        LazyVStack(spacing: 0) {
+            if !messages.isEmpty {
+                // 카카오톡 상단 날짜 구분선
+                KakaoDateDividerView(date: messages.first?.timestamp ?? Date())
+                    .padding(.top, 6)
+                    .padding(.bottom, 4)
+            }
+
+            ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
+                MessageBubbleView(
+                    message: msg,
+                    isFirstInGroup: isFirstMessageInGroup(at: index),
+                    isLastInGroup: isLastMessageInGroup(at: index),
+                    botName: room.profile.name,
+                    customAvatar: currentAvatar,
+                    isEditingThisMessage: editingMessage?.id == msg.id,
+                    onImageTapped: { activeImageModal = $0 },
+                    onEditMessage: { startEditingMessage($0) },
+                    onDeleteMessage: { deleteMessage($0) },
+                    onAvatarTapped: { isProfileModalPresented = true }
+                )
+                .id(msg.id)
+            }
+
+            if isTyping {
+                TypingIndicatorView(botName: room.profile.name, customAvatar: currentAvatar)
+                    .id("typingIndicator")
+                    .transition(.opacity)
+            }
+
+            Spacer()
+                .frame(height: 8)
+                .id("bottomSpacer")
+        }
+    }
+
     public var body: some View {
         ZStack(alignment: .top) {
             // 카카오톡 시그니처 파스텔 연하늘색 단일 배경 (#BACEE0)
@@ -45,6 +83,7 @@ public struct SingleChatRoomView: View {
                 ChatHeaderView(
                     botName: room.profile.name,
                     customAvatar: currentAvatar,
+                    onAvatarTapped: { isProfileModalPresented = true },
                     opacity: $windowOpacity,
                     onToggleSidebar: {
                         WindowManager.shared.openMainWindow()
@@ -61,52 +100,7 @@ public struct SingleChatRoomView: View {
                 // 메시지 스크롤뷰
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 0) {
-                            if !messages.isEmpty {
-                                // 카카오톡 상단 날짜 구분선
-                                KakaoDateDividerView(date: messages.first?.timestamp ?? Date())
-                                    .padding(.top, 6)
-                                    .padding(.bottom, 4)
-                            }
-                            
-                            ForEach(Array(messages.enumerated()), id: \.element.id) { index, msg in
-                                let isFirstInGroup = isFirstMessageInGroup(at: index)
-                                let isLastInGroup = isLastMessageInGroup(at: index)
-                                
-                                MessageBubbleView(
-                                    message: msg,
-                                    isFirstInGroup: isFirstInGroup,
-                                    isLastInGroup: isLastInGroup,
-                                    botName: room.profile.name,
-                                    customAvatar: currentAvatar,
-                                    isEditingThisMessage: editingMessage?.id == msg.id,
-                                    onImageTapped: { attachment in
-                                        activeImageModal = attachment
-                                    },
-                                    onEditMessage: { msgToEdit in
-                                        startEditingMessage(msgToEdit)
-                                    },
-                                    onDeleteMessage: { msgToDelete in
-                                        deleteMessage(msgToDelete)
-                                    }
-                                )
-                                .id(msg.id)
-                            }
-                            
-                            // 도톰한 타이핑 인디케이터 (현재 방 이름 & 아바타)
-                            if isTyping {
-                                TypingIndicatorView(
-                                    botName: room.profile.name,
-                                    customAvatar: currentAvatar
-                                )
-                                .id("typingIndicator")
-                                .transition(.opacity)
-                            }
-                            
-                            Spacer()
-                                .frame(height: 8)
-                                .id("bottomSpacer")
-                        }
+                        messageList
                     }
                     .onChange(of: messages.count) {
                         lastScrollAnchorAt = Date()
@@ -431,261 +425,169 @@ public struct RoomProfileModal: View {
     let roomId: UUID
     let onClose: () -> Void
     @ObservedObject var roomManager = ChatRoomManager.shared
-    
-    @State private var isEditing: Bool = false
-    @State private var editName: String = ""
-    @State private var editStatusMessage: String = ""
+
     @State private var isPersonaEditorPresented: Bool = false
-    
+    @State private var isProfileEditorPresented: Bool = false
+
     public init(roomId: UUID, onClose: @escaping () -> Void) {
         self.roomId = roomId
         self.onClose = onClose
-        let current = ChatRoomManager.shared.getRoom(id: roomId)
-        _editName = State(initialValue: current?.profile.name ?? "사피엔스")
-        _editStatusMessage = State(initialValue: current?.profile.statusMessage ?? "수학 학습 파트너")
     }
-    
+
     private var room: ChatRoom {
         roomManager.getRoom(id: roomId) ?? ChatRoom(id: roomId)
     }
-    
+
     private var currentAvatar: NSImage? {
         roomManager.loadAvatarForRoom(profile: room.profile)
     }
-    
-    public var body: some View {
+
+    /// 프로필 사진을 흐려 배경으로 깝니다. 사진이 없으면 회색 그라디언트로 떨어집니다.
+    /// 블러가 너무 세면 색만 번져 보이므로 적당히 두고 어두운 막을 덮어 글자를 살립니다.
+    private var cardBackground: some View {
         ZStack {
-            Color.black.opacity(0.55)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    if !isEditing { onClose() }
-                }
-            
-            ZStack(alignment: .top) {
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.65, green: 0.65, blue: 0.63),
-                        Color(red: 0.52, green: 0.52, blue: 0.50),
-                        Color(red: 0.40, green: 0.40, blue: 0.38)
-                    ]),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                
+            LinearGradient(
+                colors: [Color(red: 0.42, green: 0.44, blue: 0.47),
+                         Color(red: 0.26, green: 0.28, blue: 0.31)],
+                startPoint: .top, endPoint: .bottom
+            )
+            if let avatar = currentAvatar {
+                Image(nsImage: avatar)
+                    .resizable()
+                    .scaledToFill()
+                    .blur(radius: 22)
+                    .opacity(0.45)
+            }
+            LinearGradient(
+                colors: [Color.black.opacity(0.22), Color.black.opacity(0.52)],
+                startPoint: .top, endPoint: .bottom
+            )
+        }
+    }
+
+    private func toolbarCircle(_ systemName: String, action: (() -> Void)? = nil) -> some View {
+        Button(action: { action?() }) {
+            Circle()
+                .fill(Color.black.opacity(0.28))
+                .frame(width: 26, height: 26)
+                .overlay(Image(systemName: systemName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white))
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+
+    /// 카카오톡처럼 아래쪽에 알약 하나로 묶습니다.
+    /// 항목이 3개라 좁은 창에서는 글자가 잘리므로 폭에 맞춰 균등 분배합니다.
+    private var actionBar: some View {
+        HStack(spacing: 0) {
+            actionItem("bubble.left.fill", "대화하기", highlighted: false) { onClose() }
+            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 15)
+            actionItem("pencil", "프로필", highlighted: false) { isProfileEditorPresented = true }
+            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 15)
+            actionItem("theatermasks.fill", "말투", highlighted: room.profile.persona.isEnabled) {
+                isPersonaEditorPresented = true
+            }
+        }
+        .background(Color.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.18)))
+    }
+
+    private func actionItem(_ systemName: String, _ title: String, highlighted: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemName).font(.system(size: 10.5))
+                Text(title).font(.custom("Pretendard-Medium", size: 12))
+            }
+            .foregroundColor(highlighted ? Color(red: 0.996, green: 0.898, blue: 0.0) : .white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            // 창이 좁아도 내용이 잘리지 않도록 남는 폭 안에서만 자랍니다.
+            let cardWidth = min(max(geo.size.width - 40, 260), 320)
+            let cardHeight = min(max(geo.size.height - 90, 380), 470)
+
+            ZStack {
+                Color.black.opacity(0.55)
+                    .ignoresSafeArea()
+                    .onTapGesture { onClose() }
+
                 VStack(spacing: 0) {
-                    // 상단 툴바
-                    HStack(spacing: 12) {
+                    HStack(spacing: 8) {
                         Spacer()
-                        
-                        Circle()
-                            .fill(Color.black.opacity(0.25))
-                            .frame(width: 26, height: 26)
-                            .overlay(Image(systemName: "gift").font(.system(size: 12)).foregroundColor(.white))
-                        
-                        Circle()
-                            .fill(Color.black.opacity(0.25))
-                            .frame(width: 26, height: 26)
-                            .overlay(Image(systemName: "waveform.path").font(.system(size: 12)).foregroundColor(.white))
-                        
-                        Button(action: onClose) {
-                            Circle()
-                                .fill(Color.black.opacity(0.25))
-                                .frame(width: 26, height: 26)
-                                .overlay(Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundColor(.white))
-                        }
-                        .buttonStyle(.plain)
+                        toolbarCircle("xmark") { onClose() }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
-                    
-                    // BGM 바
-                    HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(LinearGradient(colors: [.orange, .red, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 34, height: 34)
-                            .overlay(Image(systemName: "music.note").foregroundColor(.white.opacity(0.8)).font(.system(size: 14)))
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(room.profile.musicTitle)
-                                .font(.custom("Pretendard-Medium", size: 12))
-                                .foregroundColor(.white)
-                            Text(room.profile.musicArtist)
-                                .font(.custom("Pretendard-Regular", size: 10))
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                        
-                        Spacer()
-                        Image(systemName: "suit.heart").font(.system(size: 13)).foregroundColor(.white.opacity(0.8))
-                        Image(systemName: "play").font(.system(size: 13)).foregroundColor(.white.opacity(0.8))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.12))
-                    .cornerRadius(8)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    
-                    Spacer()
-                    
-                    // 아바타 (스퀘어클 74x74)
-                    ZStack(alignment: .bottomTrailing) {
-                        RoomAvatarView(image: currentAvatar, size: 74)
-                            .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
-                            .onTapGesture { pickImage() }
-                        
-                        Button(action: { pickImage() }) {
-                            Circle()
-                                .fill(Color(red: 0.2, green: 0.2, blue: 0.2))
-                                .frame(width: 24, height: 24)
-                                .overlay(Image(systemName: "camera.fill").font(.system(size: 11)).foregroundColor(.white))
-                                .shadow(radius: 2)
-                        }
-                        .buttonStyle(.plain)
-                        .offset(x: 2, y: 2)
-                    }
-                    .padding(.bottom, 10)
-                    
-                    // 이름 및 상태메시지
-                    if isEditing {
-                        VStack(spacing: 8) {
-                            TextField("이름 입력", text: $editName)
-                                .textFieldStyle(.plain)
-                                .font(.custom("Pretendard-Bold", size: 16))
-                                .foregroundColor(.white)
-                                .multilineTextAlignment(.center)
-                                .padding(6)
-                                .background(Color.white.opacity(0.2))
-                                .cornerRadius(6)
-                                .frame(width: 200)
-                            
-                            TextField("상태 메시지", text: $editStatusMessage)
-                                .textFieldStyle(.plain)
-                                .font(.custom("Pretendard-Regular", size: 12))
-                                .foregroundColor(.white.opacity(0.9))
-                                .multilineTextAlignment(.center)
-                                .padding(5)
-                                .background(Color.white.opacity(0.2))
-                                .cornerRadius(6)
-                                .frame(width: 240)
-                        }
-                        .padding(.bottom, 16)
-                    } else {
-                        VStack(spacing: 4) {
-                            Text(room.profile.name)
-                                .font(.custom("Pretendard-Bold", size: 19))
-                                .foregroundColor(.white)
-                                .shadow(radius: 2)
-                            
-                            Text(room.profile.statusMessage)
-                                .font(.custom("Pretendard-Regular", size: 12))
-                                .foregroundColor(.white.opacity(0.85))
-                                .shadow(radius: 1)
-                        }
-                        .padding(.bottom, 20)
-                    }
-                    
-                    // 하단 분할 바
-                    HStack(spacing: 0) {
-                        if isEditing {
-                            Button(action: {
-                                roomManager.updateRoomAvatar(roomId: roomId, image: nil)
-                            }) {
-                                Text("기본 사진으로")
-                                    .font(.custom("Pretendard-Regular", size: 12))
-                                    .foregroundColor(.white.opacity(0.9))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.plain)
-                            
-                            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
-                            
-                            Button(action: {
-                                roomManager.updateRoomProfile(roomId: roomId, name: editName, statusMessage: editStatusMessage)
-                                isEditing = false
-                            }) {
-                                Text("저장 완료")
-                                    .font(.custom("Pretendard-Bold", size: 12))
-                                    .foregroundColor(Color(red: 0.996, green: 0.902, blue: 0.0))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            Button(action: onClose) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "bubble.left.fill").font(.system(size: 11))
-                                    Text("대화하기").font(.custom("Pretendard-Medium", size: 12.5))
-                                }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.plain)
-                            
-                            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 14)
 
-                            Button(action: {
-                                editName = room.profile.name
-                                editStatusMessage = room.profile.statusMessage
-                                isEditing = true
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "pencil").font(.system(size: 11))
-                                    Text("프로필 편집").font(.custom("Pretendard-Medium", size: 12.5))
-                                }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.plain)
+                    Spacer(minLength: 10)
 
-                            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
+                    RoomAvatarView(image: currentAvatar, size: 84)
+                        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
+                        .padding(.bottom, 11)
 
-                            Button(action: { isPersonaEditorPresented = true }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "theatermasks").font(.system(size: 11))
-                                    Text("말투").font(.custom("Pretendard-Medium", size: 12.5))
-                                }
-                                // 말투가 켜져 있으면 한눈에 보이도록 강조합니다.
-                                .foregroundColor(room.profile.persona.isEnabled
-                                                 ? Color(red: 0.996, green: 0.902, blue: 0.0)
-                                                 : .white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    Text(room.profile.name)
+                        .font(.custom("Pretendard-Bold", size: 18))
+                        .foregroundColor(.white)
+                        .shadow(radius: 2)
+                        .lineLimit(1)
+
+                    if !room.profile.statusMessage.isEmpty {
+                        Text(room.profile.statusMessage)
+                            .font(.custom("Pretendard-Regular", size: 11.5))
+                            .foregroundColor(.white.opacity(0.88))
+                            .shadow(radius: 1)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 3)
                     }
-                    .background(Color.white.opacity(0.15))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                    .cornerRadius(14)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
+
+                    Spacer(minLength: 14)
+
+                    actionBar
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 14)
+                }
+                .frame(width: cardWidth, height: cardHeight)
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .shadow(color: .black.opacity(0.4), radius: 22, x: 0, y: 10)
+
+                if isPersonaEditorPresented {
+                    PersonaEditorView(roomId: roomId) { isPersonaEditorPresented = false }
+                        .transition(.opacity)
+                }
+
+                if isProfileEditorPresented {
+                    ProfileEditSheet(
+                        title: "프로필 편집",
+                        name: room.profile.name,
+                        statusMessage: room.profile.statusMessage,
+                        image: currentAvatar,
+                        onCancel: { isProfileEditorPresented = false },
+                        onConfirm: { result in
+                            roomManager.updateRoomProfile(roomId: roomId, name: result.name, statusMessage: result.statusMessage)
+                            if result.didChangeImage {
+                                roomManager.updateRoomAvatar(roomId: roomId, image: result.image)
+                            }
+                            isProfileEditorPresented = false
+                        }
+                    )
+                    .transition(.opacity)
                 }
             }
-            .frame(width: 300, height: 440)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 12)
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .environment(\.colorScheme, .light)
+    }
 
-            if isPersonaEditorPresented {
-                PersonaEditorView(roomId: roomId) { isPersonaEditorPresented = false }
-                    .transition(.opacity)
-            }
-        }
-    }
-    
-    private func pickImage() {
-        let openPanel = NSOpenPanel()
-        openPanel.allowsMultipleSelection = false
-        openPanel.canChooseDirectories = false
-        openPanel.canChooseFiles = true
-        openPanel.allowedContentTypes = [.image]
-        
-        if openPanel.runModal() == .OK, let url = openPanel.url {
-            if let image = NSImage(contentsOf: url) {
-                roomManager.updateRoomAvatar(roomId: roomId, image: image)
-            }
-        }
-    }
 }

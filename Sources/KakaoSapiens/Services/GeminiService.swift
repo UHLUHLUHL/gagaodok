@@ -126,7 +126,7 @@ public actor GeminiService {
         - 인물을 특정하지 못했으면 '낮음'이라고 솔직히 적고 아래 두 절을 비운다
 
         [대사]
-        찾은 실제 대사를 한 줄에 하나씩, 최대 10줄. 앞에 기호를 붙이지 않는다.
+        찾은 실제 대사를 한 줄에 하나씩, 최대 20줄. 앞에 기호를 붙이지 않는다.
         지어내지 말고 실제로 찾은 것만 적는다. 찾지 못했으면 이 절을 비운다.
 
         [말투]
@@ -281,6 +281,82 @@ public actor GeminiService {
         guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
               let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
             throw serviceError("미리보기를 읽을 수 없습니다.")
+        }
+        let text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
+        }
+        return text
+    }
+
+    /// 뽑아낸 말투 규칙을 사용자의 요청대로 손봅니다.
+    ///
+    /// 자동 추출은 관찰된 사실만 담기 때문에, 실제로 쓰다 보면
+    /// "좀 더 딱딱하게", "이모지 빼줘", "존댓말로 바꿔줘" 같은 조정이 필요합니다.
+    /// 원래 규칙을 통째로 다시 쓰지 않고 요청한 부분만 반영합니다.
+    public func refinePersonaStyle(
+        currentGuide: String,
+        instruction: String,
+        description: String,
+        samples: [String]
+    ) async throws -> String {
+        guard let apiKey = KeychainStore.geminiAPIKey else {
+            throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
+        }
+        let trimmedInstruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInstruction.isEmpty else {
+            throw serviceError("어떻게 고칠지 입력해주세요.")
+        }
+        let trimmedGuide = currentGuide.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedGuide.isEmpty else {
+            throw serviceError("먼저 말투 규칙을 만들어주세요.")
+        }
+
+        let instructionPrompt = """
+        너는 말투 규칙 편집자다. 주어진 말투 규칙을 사용자의 요청대로 고친다.
+
+        규칙:
+        - 요청과 관련된 항목만 고치고 나머지는 원래 문장을 그대로 둔다.
+        - 원래와 같은 '- 항목: 내용' 목록 형식을 유지한다. 항목 이름을 바꾸지 않는다.
+        - 요청이 기존 관찰과 충돌하면 요청을 따른다. 사용자가 원하는 방향이 우선이다.
+        - 요청에 없는 내용을 새로 지어내지 않는다.
+        - 마지막 '- 한 줄 요약:' 항목도 바뀐 내용에 맞게 갱신한다.
+
+        설명이나 인사말 없이 고친 목록만 출력한다.
+        """
+
+        var userText = "현재 말투 규칙:\n\(trimmedGuide)\n\n"
+        let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedDescription.isEmpty { userText += "인물: \(trimmedDescription)\n\n" }
+        if !samples.isEmpty {
+            userText += "참고용 실제 대사:\n" + samples.prefix(20).joined(separator: "\n") + "\n\n"
+        }
+        userText += "고쳐줬으면 하는 방향:\n\(trimmedInstruction)"
+
+        let body: [String: Any] = [
+            "systemInstruction": ["parts": [["text": instructionPrompt]]],
+            "contents": [["role": "user", "parts": [["text": userText]]]],
+            "generationConfig": [
+                "maxOutputTokens": 2560,
+                "thinkingConfig": ["thinkingLevel": "low"]
+            ]
+        ]
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 60
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
+              let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
+            throw serviceError("교정 결과를 읽을 수 없습니다.")
         }
         let text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)

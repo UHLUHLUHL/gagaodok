@@ -4,8 +4,8 @@ import AppKit
 public class ProfileState: ObservableObject {
     public static let shared = ProfileState()
     
-    @Published public var name: String = "사피엔스"
-    @Published public var statusMessage: String = "수학 학습 파트너 · 냉철한 피드백"
+    @Published public var name: String = "나"
+    @Published public var statusMessage: String = ""
     @Published public var musicTitle: String = "1-800 (Explicit Ver.)"
     @Published public var musicArtist: String = "bbno$"
     @Published public var customImage: NSImage? = nil
@@ -38,6 +38,12 @@ public class ProfileState: ObservableObject {
         )
     }
     
+    /// 편집 시트에서 고른 이미지를 그대로 반영합니다.
+    public func setProfileImage(_ image: NSImage?) {
+        self.customImage = image
+        StorageService.shared.saveAvatarImage(image)
+    }
+
     public func selectNewProfileImage() {
         let openPanel = NSOpenPanel()
         openPanel.allowsMultipleSelection = false

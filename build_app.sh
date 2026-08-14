@@ -26,20 +26,29 @@ fi
 cp -f "AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 
 # 2. 바이너리 복사
-BIN_PATH=$(find .build -name "KakaoSapiens" -type f -not -path "*.dSYM*" | grep -E "release" | head -n 1)
+#    package_for_sharing.sh 가 x86_64 빌드도 남기므로, 이 맥의 아키텍처를 명시해 고릅니다.
+#    이걸 안 하면 find 결과 순서에 따라 인텔 전용 바이너리가 설치돼 Rosetta로 돌아갑니다.
+NATIVE_ARCH=$(uname -m)
+BIN_PATH=".build/${NATIVE_ARCH}-apple-macosx/release/${APP_NAME}"
+if [ ! -f "$BIN_PATH" ]; then
+    BIN_PATH=$(find .build -name "${APP_NAME}" -type f -not -path "*.dSYM*" | grep -E "release" | head -n 1)
+fi
 
 if [ -z "$BIN_PATH" ]; then
     echo "❌ Binary not found!"
     exit 1
 fi
 
-echo "📦 Using binary from: $BIN_PATH"
+echo "📦 Using binary from: $BIN_PATH ($(lipo -archs "$BIN_PATH" 2>/dev/null))"
 cp -f "$BIN_PATH" "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 
 # 3. 리소스 번들 복사 (KaTeX·markdown-it·말풍선 셸)
 #    이게 빠지면 수식이 전혀 렌더링되지 않으므로 없으면 즉시 중단합니다.
-BUNDLE_PATH=$(find .build -maxdepth 3 -name "${APP_NAME}_${APP_NAME}.bundle" -type d | grep -E "release" | head -n 1)
+BUNDLE_PATH=".build/${NATIVE_ARCH}-apple-macosx/release/${APP_NAME}_${APP_NAME}.bundle"
+if [ ! -d "$BUNDLE_PATH" ]; then
+    BUNDLE_PATH=$(find .build -maxdepth 3 -name "${APP_NAME}_${APP_NAME}.bundle" -type d | grep -E "release" | head -n 1)
+fi
 
 if [ -z "$BUNDLE_PATH" ]; then
     echo "❌ Resource bundle not found! (수식 렌더링에 필요합니다)"

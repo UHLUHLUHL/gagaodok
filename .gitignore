@@ -16,3 +16,6 @@ output/
 .DS_Store
 .Spotlight-V100
 .Trashes
+
+# Distribution artifacts
+dist/

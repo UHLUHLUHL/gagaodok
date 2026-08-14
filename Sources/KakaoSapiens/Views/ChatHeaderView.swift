@@ -4,6 +4,7 @@ import AppKit
 public struct ChatHeaderView: View {
     let botName: String
     let customAvatar: NSImage?
+    var onAvatarTapped: (() -> Void)? = nil
     @Binding var opacity: Double
     var onToggleSidebar: (() -> Void)?
     var onSearchTapped: (() -> Void)?
@@ -15,6 +16,7 @@ public struct ChatHeaderView: View {
     public init(
         botName: String = "사피엔스",
         customAvatar: NSImage? = nil,
+        onAvatarTapped: (() -> Void)? = nil,
         opacity: Binding<Double>,
         onToggleSidebar: (() -> Void)? = nil,
         onSearchTapped: (() -> Void)? = nil,
@@ -24,6 +26,7 @@ public struct ChatHeaderView: View {
     ) {
         self.botName = botName
         self.customAvatar = customAvatar
+        self.onAvatarTapped = onAvatarTapped
         self._opacity = opacity
         self.onToggleSidebar = onToggleSidebar
         self.onSearchTapped = onSearchTapped
@@ -52,15 +55,14 @@ public struct ChatHeaderView: View {
                 // 2. 프로필 및 액션 아이콘 라인 (오리지널 카카오톡 Y: 34px 완벽 매칭)
                 HStack(alignment: .center, spacing: 10) {
                     // 좌측 스퀘어클 아바타 (42x42)
-                    RoomAvatarView(image: customAvatar, size: 42)
-                        .onTapGesture {
-                            onCallTapped?() // 프로필 모달 열기
-                        }
+                    RoomAvatarView(image: customAvatar, size: 46)
+                        .contentShape(Rectangle())
+                        .onTapGesture { (onAvatarTapped ?? onCallTapped)?() }
                     
                     // 이름 및 인원수
                     VStack(alignment: .leading, spacing: 2) {
                         Text(botName)
-                            .font(.custom("Pretendard-Bold", size: 14.5))
+                            .font(.custom("Pretendard-Bold", size: 15.5))
                             .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                             .onTapGesture {
                                 onCallTapped?()

@@ -11,6 +11,7 @@ public struct MessageBubbleView: View {
     let onImageTapped: ((ChatAttachment) -> Void)?
     let onEditMessage: ((ChatMessage) -> Void)?
     let onDeleteMessage: ((ChatMessage) -> Void)?
+    var onAvatarTapped: (() -> Void)? = nil
     
     @State private var webViewHeight: CGFloat = 30
     @State private var isHovering: Bool = false
@@ -25,7 +26,8 @@ public struct MessageBubbleView: View {
         isEditingThisMessage: Bool = false,
         onImageTapped: ((ChatAttachment) -> Void)? = nil,
         onEditMessage: ((ChatMessage) -> Void)? = nil,
-        onDeleteMessage: ((ChatMessage) -> Void)? = nil
+        onDeleteMessage: ((ChatMessage) -> Void)? = nil,
+        onAvatarTapped: (() -> Void)? = nil
     ) {
         self.message = message
         self.isFirstInGroup = isFirstInGroup
@@ -36,6 +38,7 @@ public struct MessageBubbleView: View {
         self.onImageTapped = onImageTapped
         self.onEditMessage = onEditMessage
         self.onDeleteMessage = onDeleteMessage
+        self.onAvatarTapped = onAvatarTapped
     }
     
     public var body: some View {
@@ -195,6 +198,8 @@ public struct MessageBubbleView: View {
         HStack(alignment: .top, spacing: 7) {
             if isFirstInGroup {
                 RoomAvatarView(image: customAvatar, size: 38)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onAvatarTapped?() }
                     .padding(.top, 1)
             } else {
                 Color.clear
