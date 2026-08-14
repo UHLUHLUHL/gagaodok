@@ -89,6 +89,9 @@ public struct ChatInputView: View {
                         if canSend {
                             onSend()
                         }
+                    },
+                    onAttachmentPasted: { attachment in
+                        selectedAttachment = attachment
                     }
                 )
                 .padding(.horizontal, 0)
@@ -217,11 +220,18 @@ public struct NativeChatTextView: NSViewRepresentable {
     @Binding var text: String
     var isSendWithEnter: Bool
     var onSend: () -> Void
-    
-    public init(text: Binding<String>, isSendWithEnter: Bool, onSend: @escaping () -> Void) {
+    var onAttachmentPasted: ((ChatAttachment) -> Void)?
+
+    public init(
+        text: Binding<String>,
+        isSendWithEnter: Bool,
+        onSend: @escaping () -> Void,
+        onAttachmentPasted: ((ChatAttachment) -> Void)? = nil
+    ) {
         self._text = text
         self.isSendWithEnter = isSendWithEnter
         self.onSend = onSend
+        self.onAttachmentPasted = onAttachmentPasted
     }
     
     public func makeCoordinator() -> Coordinator {
@@ -268,16 +278,20 @@ public struct NativeChatTextView: NSViewRepresentable {
         textView.onCmdEnterPressed = {
             self.onSend()
         }
-        
+
+        textView.onAttachmentPasted = onAttachmentPasted
+
         scrollView.documentView = textView
         return scrollView
     }
-    
+
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? CustomAppKitTextView else { return }
         if textView.string != text {
             textView.string = text
         }
+        // 콜백은 뷰가 다시 만들어질 때마다 새 값으로 갈아끼워야 옛 상태를 붙잡지 않습니다.
+        textView.onAttachmentPasted = onAttachmentPasted
     }
     
     public class Coordinator: NSObject, NSTextViewDelegate {
@@ -297,7 +311,23 @@ public struct NativeChatTextView: NSViewRepresentable {
 class CustomAppKitTextView: NSTextView {
     var onEnterPressed: (() -> Void)?
     var onCmdEnterPressed: (() -> Void)?
-    
+    var onAttachmentPasted: ((ChatAttachment) -> Void)?
+
+    // isRichText가 꺼져 있어 이미지를 붙여넣으면 NSTextView가 그냥 버립니다.
+    // 그래서 붙여넣기를 가로채 이미지·파일이면 첨부로 돌리고, 아니면 원래 동작에 맡깁니다.
+    override func paste(_ sender: Any?) {
+        if let attachment = ChatAttachment.fromPasteboard(.general) {
+            onAttachmentPasted?(attachment)
+            return
+        }
+        super.paste(sender)
+    }
+
+    // ⌘V가 리치 텍스트 경로로 들어오는 경우까지 같은 처리로 모읍니다.
+    override func pasteAsPlainText(_ sender: Any?) {
+        paste(sender)
+    }
+
     override func keyDown(with event: NSEvent) {
         let isEnter = event.keyCode == 36 || event.keyCode == 76
         let isCmd = event.modifierFlags.contains(.command)

@@ -59,6 +59,52 @@ public struct ChatAttachment: Identifiable, Codable {
         )
     }
     
+    /// 클립보드에 있는 이미지나 파일을 첨부로 바꿉니다.
+    ///
+    /// 붙여넣기 경로는 두 갈래입니다. Finder에서 파일을 복사하면 파일 URL이 올라오고,
+    /// 화면을 캡처하거나 브라우저에서 이미지를 복사하면 이미지 데이터가 바로 올라옵니다.
+    /// 뒤쪽은 파일 이름이 없으므로 형식에 맞는 이름을 붙여 줍니다.
+    public static func fromPasteboard(_ pasteboard: NSPasteboard) -> ChatAttachment? {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL],
+           let url = urls.first, url.isFileURL,
+           let attachment = fromURL(url) {
+            return attachment
+        }
+
+        // 압축된 형식만 그대로 받습니다. 캡처 이미지는 png와 tiff가 같이 올라오는데
+        // tiff는 무압축이라 그대로 쓰면 png의 세 배 가까이 부풉니다.
+        // tiff뿐인 경우는 아래에서 png로 다시 인코딩해 받습니다.
+        let candidates: [(NSPasteboard.PasteboardType, UTType)] = [
+            (.png, .png),
+            (.init("public.jpeg"), .jpeg),
+            (.init("com.compuserve.gif"), .gif)
+        ]
+
+        for (pasteboardType, contentType) in candidates {
+            guard let data = pasteboard.data(forType: pasteboardType), !data.isEmpty else { continue }
+            return imageAttachment(data: data, contentType: contentType)
+        }
+
+        // 위 형식이 없으면 NSImage가 읽어낼 수 있는지 마지막으로 확인하고 png로 변환합니다.
+        guard let image = NSImage(pasteboard: pasteboard),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return imageAttachment(data: png, contentType: .png)
+    }
+
+    private static func imageAttachment(data: Data, contentType: UTType) -> ChatAttachment {
+        let ext = contentType.preferredFilenameExtension ?? "png"
+        return ChatAttachment(
+            type: .image,
+            fileName: "붙여넣은 이미지.\(ext)",
+            fileSize: Int64(data.count),
+            fileExtension: ext,
+            dataBase64: data.base64EncodedString(),
+            mimeType: contentType.preferredMIMEType ?? "image/png"
+        )
+    }
+
     public var formattedSize: String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useKB, .useMB]
