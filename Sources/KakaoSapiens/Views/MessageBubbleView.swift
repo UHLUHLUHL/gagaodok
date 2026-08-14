@@ -8,11 +8,17 @@ public struct MessageBubbleView: View {
     let botName: String
     let customAvatar: NSImage?
     let isEditingThisMessage: Bool
+    let isSelected: Bool
     let onImageTapped: ((ChatAttachment) -> Void)?
     let onEditMessage: ((ChatMessage) -> Void)?
     let onDeleteMessage: ((ChatMessage) -> Void)?
     var onAvatarTapped: (() -> Void)? = nil
-    
+
+    /// 드래그로 고른 말풍선에 덧씌우는 회색입니다. 카카오톡과 같은 농도로 맞췄습니다.
+    private var selectionTint: Color {
+        isSelected ? Color.black.opacity(0.16) : Color.clear
+    }
+
     @State private var webViewHeight: CGFloat = 30
     @State private var isHovering: Bool = false
     @State private var hoverDismissTask: Task<Void, Never>?
@@ -24,6 +30,7 @@ public struct MessageBubbleView: View {
         botName: String = "사피엔스",
         customAvatar: NSImage? = nil,
         isEditingThisMessage: Bool = false,
+        isSelected: Bool = false,
         onImageTapped: ((ChatAttachment) -> Void)? = nil,
         onEditMessage: ((ChatMessage) -> Void)? = nil,
         onDeleteMessage: ((ChatMessage) -> Void)? = nil,
@@ -35,6 +42,7 @@ public struct MessageBubbleView: View {
         self.botName = botName
         self.customAvatar = customAvatar
         self.isEditingThisMessage = isEditingThisMessage
+        self.isSelected = isSelected
         self.onImageTapped = onImageTapped
         self.onEditMessage = onEditMessage
         self.onDeleteMessage = onDeleteMessage
@@ -96,7 +104,6 @@ public struct MessageBubbleView: View {
                                 .font(.custom("Pretendard-Regular", size: 13.5))
                                 .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                                 .lineSpacing(2)
-                                .textSelection(.enabled) // 마우스 긁기/선택 활성화
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -105,6 +112,10 @@ public struct MessageBubbleView: View {
                     .background(
                         KakaoAlignedUserBubbleShape(isFirst: isFirstInGroup)
                             .fill(Color(red: 0.996, green: 0.902, blue: 0.0)) // 카카오 옐로우 #FEE500
+                    )
+                    .overlay(
+                        KakaoAlignedUserBubbleShape(isFirst: isFirstInGroup)
+                            .fill(selectionTint)
                     )
                     .overlay(
                         // 수정 중 하이라이트 테두리
@@ -229,7 +240,6 @@ public struct MessageBubbleView: View {
                                 .font(.custom("Pretendard-Regular", size: 13.5))
                                 .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                                 .lineSpacing(2)
-                                .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -238,6 +248,10 @@ public struct MessageBubbleView: View {
                     .background(
                         KakaoAlignedSapiensBubbleShape(isFirst: isFirstInGroup)
                             .fill(Color.white)
+                    )
+                    .overlay(
+                        KakaoAlignedSapiensBubbleShape(isFirst: isFirstInGroup)
+                            .fill(selectionTint)
                     )
                     .contextMenu {
                         Button("복사") {
@@ -261,24 +275,17 @@ public struct MessageBubbleView: View {
             Button(action: {
                 onImageTapped?(attachment)
             }) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 280, maxHeight: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.black.opacity(0.12), lineWidth: 0.5)
-                        )
-                    
-                    if !attachment.fileName.isEmpty && !attachment.fileName.hasPrefix("image_") {
-                        Text(attachment.fileName)
-                            .font(.custom("Pretendard-Medium", size: 10.5))
-                            .foregroundColor(Color.black.opacity(0.6))
-                            .padding(.leading, 2)
-                    }
-                }
+                // 카카오톡은 사진 아래에 파일명을 쓰지 않습니다.
+                // 붙여넣은 사진은 이름이 UUID라 더더욱 보여줄 이유가 없습니다.
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 280, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.black.opacity(0.12), lineWidth: 0.5)
+                    )
             }
             .buttonStyle(.plain)
         } else {

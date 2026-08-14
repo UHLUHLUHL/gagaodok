@@ -15,6 +15,7 @@ public struct SingleChatRoomView: View {
     @State private var activeImageModal: ChatAttachment? = nil
     @State private var isProfileModalPresented: Bool = false
     @State private var editingMessage: ChatMessage? = nil
+    @StateObject private var selection = BubbleSelectionModel()
     // 뒤늦게 확정되는 말풍선 높이를 언제까지 따라갈지 정하는 기준 시각입니다.
     @State private var lastScrollAnchorAt = Date.distantPast
     @State private var isFileDropTargeted: Bool = false
@@ -34,6 +35,17 @@ public struct SingleChatRoomView: View {
         roomManager.loadAvatarForRoom(profile: room.profile)
     }
     
+    /// 말풍선 위치를 재는 좌표계 이름입니다.
+    static let chatSpace = "chatSelectionSpace"
+
+    /// 드래그로 고른 말풍선의 본문을 화면에 보이는 순서대로 잇습니다.
+    private var selectedTranscript: String {
+        messages
+            .filter { selection.isSelected($0.id) && !$0.text.isEmpty }
+            .map(\.text)
+            .joined(separator: "\n")
+    }
+
     /// 본문에서 떼어냈습니다. 한 덩어리로 두면 타입 검사가 시간 안에 끝나지 않습니다.
     private var messageList: some View {
         LazyVStack(spacing: 0) {
@@ -52,12 +64,14 @@ public struct SingleChatRoomView: View {
                     botName: room.profile.name,
                     customAvatar: currentAvatar,
                     isEditingThisMessage: editingMessage?.id == msg.id,
+                    isSelected: selection.isSelected(msg.id),
                     onImageTapped: { activeImageModal = $0 },
                     onEditMessage: { startEditingMessage($0) },
                     onDeleteMessage: { deleteMessage($0) },
                     onAvatarTapped: { isProfileModalPresented = true }
                 )
                 .id(msg.id)
+                .reportsBubbleFrame(id: msg.id, in: Self.chatSpace)
             }
 
             if isTyping {
@@ -101,6 +115,29 @@ public struct SingleChatRoomView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         messageList
+                            .onPreferenceChange(BubbleFramePreferenceKey.self) { frames in
+                                selection.updateFrames(frames)
+                            }
+                    }
+                    .coordinateSpace(name: Self.chatSpace)
+                    // macOS에서는 스크롤이 휠·트랙패드로 일어나므로 드래그를 가져와도 안 부딪힙니다.
+                    .gesture(
+                        DragGesture(minimumDistance: 5, coordinateSpace: .named(Self.chatSpace))
+                            .onChanged { value in
+                                if selection.marquee == nil {
+                                    selection.beginDrag(at: value.startLocation)
+                                }
+                                selection.extendDrag(to: value.location)
+                            }
+                            .onEnded { _ in selection.endDrag() }
+                    )
+                    // 그냥 한 번 누르면 선택을 놓습니다. 위 DragGesture가 클릭을 삼켜서
+                    // onTapGesture로는 오지 않으므로 나란히 도는 제스처로 답니다.
+                    // 놓을 방법이 없으면 고른 채로 남아 ⌘C를 계속 가로챕니다.
+                    .simultaneousGesture(TapGesture().onEnded { selection.clear() })
+                    // 복사할 글은 선택이 바뀌는 순간 미리 만들어 둡니다.
+                    .onChange(of: selection.selected) {
+                        selection.copyText = selectedTranscript
                     }
                     .onChange(of: messages.count) {
                         lastScrollAnchorAt = Date()
@@ -121,6 +158,13 @@ public struct SingleChatRoomView: View {
                     .onAppear {
                         lastScrollAnchorAt = Date()
                         scrollToBottom(proxy: proxy, animated: false)
+                        selection.startMonitoringCopy()
+                    }
+                    .onDisappear {
+                        // 창을 닫으면 고른 것도 같이 놓습니다. 창이 여럿일 때
+                        // 안 보이는 창의 선택이 ⌘C를 가로채지 않도록요.
+                        selection.clear()
+                        selection.stopMonitoringCopy()
                     }
                 }
                 
