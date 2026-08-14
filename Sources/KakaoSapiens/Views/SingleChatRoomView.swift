@@ -1,9 +1,11 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 public struct SingleChatRoomView: View {
     let roomId: UUID
     @ObservedObject var roomManager = ChatRoomManager.shared
+    @ObservedObject var modelManager = ModelSelectionManager.shared
     
     @State private var messages: [ChatMessage] = []
     @State private var inputText: String = ""
@@ -13,6 +15,7 @@ public struct SingleChatRoomView: View {
     @State private var activeImageModal: ChatAttachment? = nil
     @State private var isProfileModalPresented: Bool = false
     @State private var editingMessage: ChatMessage? = nil
+    @State private var isFileDropTargeted: Bool = false
     
     public init(roomId: UUID) {
         self.roomId = roomId
@@ -165,10 +168,73 @@ public struct SingleChatRoomView: View {
                 }
                 .transition(.opacity)
             }
+
+            if isFileDropTargeted {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.black.opacity(0.18))
+                    .overlay(
+                        VStack(spacing: 9) {
+                            Image(systemName: "arrow.down.doc.fill")
+                                .font(.system(size: 28, weight: .medium))
+                            Text("여기에 놓아 첨부")
+                                .font(.custom("Pretendard-Bold", size: 14))
+                        }
+                        .foregroundColor(.white)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.white.opacity(0.9), style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                    )
+                    .padding(12)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                    .zIndex(20)
+            }
         }
         .frame(minWidth: 330, minHeight: 440)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.all)
+        .onDrop(
+            of: [UTType.fileURL.identifier, UTType.image.identifier],
+            isTargeted: $isFileDropTargeted,
+            perform: handleDroppedItems
+        )
+    }
+
+    private func handleDroppedItems(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadObject(ofClass: NSURL.self) { object, _ in
+                guard let url = object as? URL,
+                      let attachment = ChatAttachment.fromURL(url) else { return }
+                DispatchQueue.main.async {
+                    selectedAttachment = attachment
+                }
+            }
+            return true
+        }
+
+        guard let imageType = provider.registeredTypeIdentifiers
+            .compactMap(UTType.init)
+            .first(where: { $0.conforms(to: .image) }) else { return false }
+
+        provider.loadDataRepresentation(forTypeIdentifier: imageType.identifier) { data, _ in
+            guard let data, !data.isEmpty else { return }
+            let ext = imageType.preferredFilenameExtension ?? "png"
+            let attachment = ChatAttachment(
+                type: .image,
+                fileName: "드롭한 이미지.\(ext)",
+                fileSize: Int64(data.count),
+                fileExtension: ext,
+                dataBase64: data.base64EncodedString(),
+                mimeType: imageType.preferredMIMEType ?? "image/png"
+            )
+            DispatchQueue.main.async {
+                selectedAttachment = attachment
+            }
+        }
+        return true
     }
     
     // MARK: - 메시지 수정 모드 진입
@@ -180,7 +246,12 @@ public struct SingleChatRoomView: View {
     // MARK: - 메시지 삭제
     private func deleteMessage(_ message: ChatMessage) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            messages.removeAll(where: { $0.id == message.id })
+            // 분할된 AI 말풍선 하나를 지우면 같은 응답 턴 전체를 화면과 API 문맥에서 제거합니다.
+            if let turnId = message.turnId {
+                messages.removeAll(where: { $0.turnId == turnId })
+            } else {
+                messages.removeAll(where: { $0.id == message.id })
+            }
             roomManager.saveMessagesForRoom(roomId: roomId, messages: messages)
         }
     }
@@ -216,6 +287,8 @@ public struct SingleChatRoomView: View {
     
     // MARK: - 메시지 전송 또는 수정 재전송
     private func handleSendOrEdit() {
+        // 한 방에서 응답 순서가 뒤섞이지 않도록 현재 응답이 끝난 뒤 다음 요청을 받습니다.
+        guard !isTyping else { return }
         if let editTarget = editingMessage {
             let trimmedText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty else { return }
@@ -231,7 +304,9 @@ public struct SingleChatRoomView: View {
                 sender: .user,
                 text: trimmedText,
                 timestamp: Date(),
-                attachment: selectedAttachment ?? editTarget.attachment
+                attachment: selectedAttachment ?? editTarget.attachment,
+                turnId: editTarget.turnId ?? UUID(),
+                canonicalText: trimmedText
             )
             
             self.messages = truncated
@@ -251,7 +326,9 @@ public struct SingleChatRoomView: View {
                 sender: .user,
                 text: trimmedText,
                 timestamp: Date(),
-                attachment: selectedAttachment
+                attachment: selectedAttachment,
+                turnId: UUID(),
+                canonicalText: trimmedText
             )
             
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -269,20 +346,24 @@ public struct SingleChatRoomView: View {
     private func triggerAIResponse(history: [ChatMessage]) {
         let currentBotName = room.profile.name
         let currentRoomId = roomId
+        let currentModel = modelManager.selectedModel
+        let conversation = ConversationTurn.from(messages: history)
         
         Task {
             do {
-                let responses = try await GeminiService.shared.generateResponse(
-                    chatHistory: history,
+                let response = try await GeminiService.shared.generateResponse(
+                    conversation: conversation,
                     botName: currentBotName,
-                    roomId: currentRoomId
+                    roomId: currentRoomId,
+                    model: currentModel
                 )
                 
                 await MainActor.run {
                     self.isTyping = false
                 }
                 
-                for (idx, bubble) in responses.enumerated() {
+                let responseTurnId = UUID()
+                for (idx, bubble) in response.bubbles.enumerated() {
                     if idx > 0 {
                         try? await Task.sleep(nanoseconds: 450_000_000)
                     }
@@ -292,7 +373,9 @@ public struct SingleChatRoomView: View {
                             sender: .sapiens,
                             text: bubble.text,
                             timestamp: Date(),
-                            attachment: bubble.attachment
+                            attachment: bubble.attachment,
+                            turnId: responseTurnId,
+                            canonicalText: idx == 0 ? response.rawText : nil
                         )
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                             self.messages.append(sapiensMsg)
@@ -305,7 +388,9 @@ public struct SingleChatRoomView: View {
                     let errorMsg = ChatMessage(
                         sender: .sapiens,
                         text: "요청을 처리하는 중 오류가 발생했습니다: \(error.localizedDescription)",
-                        timestamp: Date()
+                        timestamp: Date(),
+                        turnId: UUID(),
+                        canonicalText: "요청을 처리하는 중 오류가 발생했습니다: \(error.localizedDescription)"
                     )
                     withAnimation {
                         self.messages.append(errorMsg)

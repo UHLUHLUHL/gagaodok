@@ -18,7 +18,7 @@ public struct KakaoMainWindowView: View {
     public var body: some View {
         ZStack {
             HStack(spacing: 0) {
-                // 1. 최좌측 다크/그레이 메인 탭바 (오리지널 카카오톡 58px)
+                // 창 크기가 달라져도 카카오톡 특유의 좌측 레일 비율을 유지합니다.
                 VStack(spacing: 22) {
                     // 신호등 아래 안전 마진
                     Spacer().frame(height: 30)
@@ -72,7 +72,7 @@ public struct KakaoMainWindowView: View {
                     .help("설정 및 실시간 API 사용량")
                     .padding(.bottom, 16)
                 }
-                .frame(width: 58)
+                .frame(width: 76)
                 .background(Color(red: 0.955, green: 0.955, blue: 0.955))
                 .overlay(
                     Rectangle().fill(Color.black.opacity(0.08)).frame(width: 0.5), alignment: .trailing
@@ -141,7 +141,7 @@ public struct KakaoMainWindowView: View {
                         .focusable(false)
                         .help("새로운 챗봇 생성 및 대화창 열기")
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 18)
                     .padding(.top, 14)
                     .padding(.bottom, 10)
                     
@@ -206,7 +206,7 @@ public struct KakaoMainWindowView: View {
                                 action: { selectedFilter = "학교/모임" }
                             )
                         }
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 18)
                         .padding(.bottom, 9)
                     }
                     
@@ -239,13 +239,13 @@ public struct KakaoMainWindowView: View {
             
             // 100% 카카오톡 macOS 네이티브 스타일 설정 모달
             if isSettingsPresented {
-                KakaoSettingsModal(onClose: {
+                KakaoUsageSettingsView(onClose: {
                     isSettingsPresented = false
                 })
                 .transition(.opacity)
             }
         }
-        .frame(minWidth: 320, idealWidth: 350, minHeight: 480, idealHeight: 620)
+        .frame(minWidth: 350, idealWidth: 420, minHeight: 480, idealHeight: 680)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.all)
     }
@@ -256,7 +256,8 @@ public struct KakaoSettingsModal: View {
     let onClose: () -> Void
     @ObservedObject var tokenManager = TokenUsageManager.shared
     @ObservedObject var roomManager = ChatRoomManager.shared
-    
+    @ObservedObject var modelManager = ModelSelectionManager.shared
+
     public init(onClose: @escaping () -> Void) {
         self.onClose = onClose
     }
@@ -303,7 +304,7 @@ public struct KakaoSettingsModal: View {
                                 
                                 Spacer()
                                 
-                                Text("Gemini 3.6 Flash")
+                                Text(modelManager.selectedModel.displayName)
                                     .font(.custom("Pretendard-Medium", size: 10.5))
                                     .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
                                     .padding(.horizontal, 6)

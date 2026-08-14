@@ -14,6 +14,7 @@ public struct MessageBubbleView: View {
     
     @State private var webViewHeight: CGFloat = 30
     @State private var isHovering: Bool = false
+    @State private var hoverDismissTask: Task<Void, Never>?
     
     public init(
         message: ChatMessage,
@@ -68,9 +69,8 @@ public struct MessageBubbleView: View {
             }
         }
         .padding(.horizontal, 11)
-        .padding(.top, isFirstInGroup ? 5 : 1.5)
-        .padding(.bottom, isLastInGroup ? 5 : 1.5)
-        .onHover { isHovering = $0 }
+        .padding(.top, isFirstInGroup ? 4 : 1)
+        .padding(.bottom, isLastInGroup ? 4 : 1)
     }
     
     // MARK: - 내 말풍선 (User) - 플로팅 툴바로 찌그러짐 원천 방지
@@ -82,7 +82,7 @@ public struct MessageBubbleView: View {
             }
             
             if !message.text.isEmpty {
-                ZStack(alignment: .topTrailing) {
+                VStack(alignment: .trailing, spacing: 2) {
                     Group {
                         if message.containsLaTeXOrMarkdown {
                             LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight)
@@ -97,8 +97,8 @@ public struct MessageBubbleView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6.5)
                     .background(
                         KakaoAlignedUserBubbleShape(isFirst: isFirstInGroup)
                             .fill(Color(red: 0.996, green: 0.902, blue: 0.0)) // 카카오 옐로우 #FEE500
@@ -109,19 +109,20 @@ public struct MessageBubbleView: View {
                             .stroke(isEditingThisMessage ? Color.orange : Color.clear, lineWidth: 1.5)
                     )
                     
-                    // 마우스 오버 시 우상단에 작고 세련되게 뜨는 플로팅 수정 버튼 (레이아웃 흔들림 0%)
-                    if isHovering {
-                        HStack(spacing: 3) {
+                    // 항상 같은 높이의 액션 영역을 확보해 호버 중 말풍선이 움직이거나
+                    // 커서 아래에서 버튼이 사라지지 않게 합니다.
+                    HStack(spacing: 5) {
                             Button(action: {
                                 onEditMessage?(message)
                             }) {
                                 Image(systemName: "pencil")
-                                    .font(.system(size: 9.5, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 17, height: 17)
-                                    .background(Circle().fill(Color.black.opacity(0.65)))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(Color.black.opacity(0.58))
+                                    .frame(width: 22, height: 18)
+                                    .background(Capsule().fill(Color.white.opacity(0.92)))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("메시지 수정")
                             .help("메시지 수정 후 다시 답변받기")
                             
                             Button(action: {
@@ -129,17 +130,22 @@ public struct MessageBubbleView: View {
                                 NSPasteboard.general.setString(message.text, forType: .string)
                             }) {
                                 Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 17, height: 17)
-                                    .background(Circle().fill(Color.black.opacity(0.65)))
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundColor(Color.black.opacity(0.58))
+                                    .frame(width: 22, height: 18)
+                                    .background(Capsule().fill(Color.white.opacity(0.92)))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("메시지 복사")
                             .help("복사")
                         }
-                        .offset(x: 4, y: -10)
-                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    }
+                        .padding(.trailing, 2)
+                        .frame(height: 18)
+                        .contentShape(Rectangle())
+                        .onHover(perform: updateHoverState)
+                        .opacity(isHovering ? 1 : 0)
+                        .allowsHitTesting(isHovering)
+                        .animation(.easeOut(duration: 0.12), value: isHovering)
                 }
                 .contextMenu {
                     Button("✏️ 메시지 수정") {
@@ -156,12 +162,37 @@ public struct MessageBubbleView: View {
                 }
             }
         }
+        // 투명한 여백까지 하나의 직사각형 호버 영역으로 만듭니다. 말풍선과
+        // 아래 액션 버튼 사이를 지날 때도 exit 이벤트가 발생하지 않습니다.
+        .contentShape(Rectangle())
+        .background(Color.clear)
+        .onHover(perform: updateHoverState)
+        .onDisappear {
+            hoverDismissTask?.cancel()
+        }
+    }
+
+    /// 자식 버튼으로 포인터가 넘어갈 때 SwiftUI가 부모의 hover-exit을 먼저
+    /// 보내는 경우가 있어, 짧은 유예 시간 동안 버튼 hover 진입을 기다립니다.
+    private func updateHoverState(_ hovering: Bool) {
+        hoverDismissTask?.cancel()
+
+        if hovering {
+            isHovering = true
+            return
+        }
+
+        hoverDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            isHovering = false
+        }
     }
     
     // MARK: - 챗봇 말풍선 (상대방)
     @ViewBuilder
     private var sapiensBubbleWithProfile: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 7) {
             if isFirstInGroup {
                 RoomAvatarView(image: customAvatar, size: 38)
                     .padding(.top, 1)
@@ -197,8 +228,8 @@ public struct MessageBubbleView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6.5)
                     .background(
                         KakaoAlignedSapiensBubbleShape(isFirst: isFirstInGroup)
                             .fill(Color.white)
@@ -280,7 +311,7 @@ public struct KakaoAlignedSapiensBubbleShape: Shape {
     let isFirst: Bool
     
     public func path(in rect: CGRect) -> Path {
-        let r: CGFloat = 12
+        let r: CGFloat = 10
         var path = Path()
         
         if !isFirst {
@@ -311,7 +342,7 @@ public struct KakaoAlignedUserBubbleShape: Shape {
     let isFirst: Bool
     
     public func path(in rect: CGRect) -> Path {
-        let r: CGFloat = 12
+        let r: CGFloat = 10
         var path = Path()
         
         if !isFirst {

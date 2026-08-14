@@ -9,6 +9,8 @@ xcuserdata/
 # App Bundles
 *.app
 *.dSYM
+AppIcon.iconset/
+output/
 
 # OS generated
 .DS_Store

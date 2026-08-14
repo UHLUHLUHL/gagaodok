@@ -60,6 +60,7 @@ public class ChatRoomManager: ObservableObject {
     @Published public var rooms: [ChatRoom] = []
     
     private let fileManager = FileManager.default
+    private static let persistenceQueue = DispatchQueue(label: "com.sapiens.kakaotalk.persistence", qos: .utility)
     public let appSupportURL: URL
     
     private var roomsListURL: URL {
@@ -163,12 +164,16 @@ public class ChatRoomManager: ObservableObject {
               let msgs = try? JSONDecoder().decode([ChatMessage].self, from: data) else {
             return []
         }
-        return msgs
+        let migrated = Self.migrateLegacyTurns(msgs)
+        if migrated.changed {
+            Self.saveMessagesDirectly(url: url, messages: migrated.messages)
+        }
+        return migrated.messages
     }
     
     public func saveMessagesForRoom(roomId: UUID, messages: [ChatMessage]) {
         let url = messagesURLForRoom(roomId: roomId)
-        DispatchQueue.global(qos: .utility).async {
+        Self.persistenceQueue.async {
             if let data = try? JSONEncoder().encode(messages) {
                 try? data.write(to: url, options: .atomic)
             }
@@ -189,7 +194,7 @@ public class ChatRoomManager: ObservableObject {
     }
     
     private static func saveRoomsDirectly(url: URL, rooms: [ChatRoom]) {
-        DispatchQueue.global(qos: .utility).async {
+        persistenceQueue.async {
             if let data = try? JSONEncoder().encode(rooms) {
                 try? data.write(to: url, options: .atomic)
             }
@@ -197,7 +202,7 @@ public class ChatRoomManager: ObservableObject {
     }
     
     private static func saveMessagesDirectly(url: URL, messages: [ChatMessage]) {
-        DispatchQueue.global(qos: .utility).async {
+        persistenceQueue.async {
             if let data = try? JSONEncoder().encode(messages) {
                 try? data.write(to: url, options: .atomic)
             }
@@ -211,5 +216,34 @@ public class ChatRoomManager: ObservableObject {
             return nil
         }
         return list
+    }
+
+    private static func migrateLegacyTurns(_ messages: [ChatMessage]) -> (messages: [ChatMessage], changed: Bool) {
+        guard messages.contains(where: { $0.turnId == nil }) else { return (messages, false) }
+        var migrated = messages
+        var index = 0
+
+        while index < migrated.count {
+            if migrated[index].sender == .user {
+                let id = migrated[index].turnId ?? UUID()
+                migrated[index].turnId = id
+                migrated[index].canonicalText = migrated[index].canonicalText ?? migrated[index].text
+                index += 1
+                continue
+            }
+
+            let start = index
+            while index < migrated.count, migrated[index].sender == .sapiens { index += 1 }
+            let id = migrated[start].turnId ?? UUID()
+            let canonical = migrated[start..<index]
+                .map(\.text)
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            for position in start..<index {
+                migrated[position].turnId = id
+                migrated[position].canonicalText = position == start ? canonical : nil
+            }
+        }
+        return (migrated, true)
     }
 }

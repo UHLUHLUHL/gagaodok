@@ -21,17 +21,19 @@ public class WindowManager: ObservableObject {
         let hostingView = NSHostingView(rootView: mainView)
         
         let window = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 330, height: 600),
+            contentRect: NSRect(x: 100, y: 100, width: 420, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        // 콘텐츠 영역(채팅 목록, 설정 카드 등)을 드래그해도 창이 움직이지 않게 합니다.
+        // NSWindow의 실제 상단 제목 표시줄만 기본 macOS 방식으로 창 이동을 처리합니다.
+        window.isMovableByWindowBackground = false
         window.isOpaque = false
         window.backgroundColor = .white
-        window.minSize = NSSize(width: 300, height: 420)
+        window.minSize = NSSize(width: 350, height: 480)
         window.contentView = hostingView
         window.center()
         
@@ -49,13 +51,13 @@ public class WindowManager: ObservableObject {
             return
         }
         
-        guard let room = ChatRoomManager.shared.getRoom(id: roomId) else { return }
+        guard ChatRoomManager.shared.getRoom(id: roomId) != nil else { return }
         
         let chatView = SingleChatRoomView(roomId: roomId)
         let hostingView = NSHostingView(rootView: chatView)
         
         let window = NSWindow(
-            contentRect: NSRect(x: 200, y: 150, width: 380, height: 600),
+            contentRect: NSRect(x: 200, y: 150, width: 405, height: 750),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -65,7 +67,7 @@ public class WindowManager: ObservableObject {
         window.isMovableByWindowBackground = false
         window.isOpaque = false
         window.backgroundColor = NSColor(red: 0.729, green: 0.808, blue: 0.878, alpha: 1.0)
-        window.minSize = NSSize(width: 340, height: 460)
+        window.minSize = NSSize(width: 350, height: 500)
         window.contentView = hostingView
         
         // 창 위치 분산

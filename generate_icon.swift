@@ -10,6 +10,25 @@ func createKakaoAppIcon() -> NSImage {
         img.unlockFocus()
         return img
     }
+
+    // ImageGen으로 확정한 브랜드 원본을 macOS 아이콘 안전 영역 안에 배치합니다.
+    // 원본 파일의 모서리 배경은 스퀘어클 클리핑으로 제거합니다.
+    if let source = NSImage(contentsOfFile: "AppIconSource.png") {
+        ctx.clear(CGRect(x: 0, y: 0, width: size, height: size))
+        let sourceRect = CGRect(x: 100, y: 100, width: 824, height: 824)
+        ctx.saveGState()
+        ctx.addPath(CGPath(roundedRect: sourceRect, cornerWidth: 185, cornerHeight: 185, transform: nil))
+        ctx.clip()
+        source.draw(
+            in: sourceRect,
+            from: NSRect(origin: .zero, size: source.size),
+            operation: .copy,
+            fraction: 1
+        )
+        ctx.restoreGState()
+        img.unlockFocus()
+        return img
+    }
     
     // 투명 배경 (흰색 테두리 원천 방지)
     ctx.clear(CGRect(x: 0, y: 0, width: size, height: size))
@@ -22,29 +41,15 @@ func createKakaoAppIcon() -> NSImage {
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -20), blur: 36, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.22))
     
-    // 2. 카카오톡 시그니처 옐로우 스퀘어클 배경 (#FEE500)
+    // 2. 사피엔스 시그니처 다크 브라운 스퀘어클 배경 (#381E1F)
     let squirclePath = CGPath(roundedRect: iconRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
     ctx.addPath(squirclePath)
-    ctx.setFillColor(CGColor(red: 0.996, green: 0.898, blue: 0.0, alpha: 1.0)) // #FEE500
+    ctx.setFillColor(CGColor(red: 0.224, green: 0.118, blue: 0.122, alpha: 1.0)) // #381E1F
     ctx.fillPath()
     ctx.restoreGState()
     
-    // 3. 내부 미세 그라디언트 하이라이트 (더욱 입체감 있고 프리미엄한 룩)
-    ctx.saveGState()
-    ctx.addPath(squirclePath)
-    ctx.clip()
-    
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let gradColors = [
-        CGColor(red: 1.0, green: 0.93, blue: 0.15, alpha: 0.35),
-        CGColor(red: 0.98, green: 0.86, blue: 0.0, alpha: 0.0)
-    ] as CFArray
-    if let gradient = CGGradient(colorsSpace: colorSpace, colors: gradColors, locations: [0.0, 1.0]) {
-        ctx.drawLinearGradient(gradient, start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 300), options: [])
-    }
-    
-    // 4. 카카오톡 다크 브라운 말풍선 (#381E1F)
-    let bubbleColor = CGColor(red: 0.224, green: 0.118, blue: 0.122, alpha: 1.0) // #381E1F
+    // 3. 색 위치를 뒤집은 카카오 옐로우 말풍선 (#FEE500)
+    let bubbleColor = CGColor(red: 0.996, green: 0.898, blue: 0.0, alpha: 1.0) // #FEE500
     ctx.setFillColor(bubbleColor)
     
     let bubblePath = CGMutablePath()
@@ -68,12 +73,12 @@ func createKakaoAppIcon() -> NSImage {
     ctx.addPath(tailPath)
     ctx.fillPath()
     
-    // 5. 'TALK' 옐로우 텍스트 (#FEE500)
+    // 4. 'TALK' 다크 브라운 텍스트 (#381E1F)
     let font = NSFont(name: "Arial-Black", size: 130) ?? NSFont.systemFont(ofSize: 130, weight: .heavy)
     let text = "TALK"
     let textAttrs: [NSAttributedString.Key: Any] = [
         .font: font,
-        .foregroundColor: NSColor(red: 0.996, green: 0.898, blue: 0.0, alpha: 1.0),
+        .foregroundColor: NSColor(red: 0.224, green: 0.118, blue: 0.122, alpha: 1.0),
         .kern: 3.0
     ]
     let attrStr = NSAttributedString(string: text, attributes: textAttrs)
@@ -81,8 +86,6 @@ func createKakaoAppIcon() -> NSImage {
     let textPoint = NSPoint(x: bCenter.x - textSize.width / 2, y: bCenter.y - textSize.height / 2 - 4)
     
     attrStr.draw(at: textPoint)
-    
-    ctx.restoreGState()
     
     img.unlockFocus()
     return img

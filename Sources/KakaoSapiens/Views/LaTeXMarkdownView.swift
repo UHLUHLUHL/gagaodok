@@ -151,7 +151,44 @@ public struct KaTeXHTMLGenerator {
                     linkify: true
                 });
                 
-                const renderedHtml = md.render(rawMarkdown);
+                // markdown-it의 줄바꿈 처리가 $$ ... $$ 내부에 <br>를 넣으면
+                // KaTeX가 시작/끝 구분자를 한 블록으로 찾지 못합니다. 먼저 블록 수식을
+                // 안전한 토큰으로 치환하고 Markdown 렌더링 뒤 KaTeX HTML로 복원합니다.
+                const displayMathBlocks = [];
+                function protectDisplayMath(source, left, right) {
+                    let output = '';
+                    let cursor = 0;
+                    while (cursor < source.length) {
+                        const start = source.indexOf(left, cursor);
+                        if (start < 0) {
+                            output += source.slice(cursor);
+                            break;
+                        }
+                        const end = source.indexOf(right, start + left.length);
+                        if (end < 0) {
+                            output += source.slice(cursor);
+                            break;
+                        }
+                        const token = `KATEXDISPLAYBLOCKTOKEN${displayMathBlocks.length}END`;
+                        displayMathBlocks.push(source.slice(start + left.length, end));
+                        output += source.slice(cursor, start) + String.fromCharCode(10, 10) + token + String.fromCharCode(10, 10);
+                        cursor = end + right.length;
+                    }
+                    return output;
+                }
+
+                let protectedMarkdown = protectDisplayMath(rawMarkdown, '$$', '$$');
+                protectedMarkdown = protectDisplayMath(protectedMarkdown, '\\\\[', '\\\\]');
+                let renderedHtml = md.render(protectedMarkdown);
+                displayMathBlocks.forEach((formula, index) => {
+                    const token = `KATEXDISPLAYBLOCKTOKEN${index}END`;
+                    const mathHtml = katex.renderToString(formula.trim(), {
+                        displayMode: true,
+                        throwOnError: false,
+                        strict: false
+                    });
+                    renderedHtml = renderedHtml.split(token).join(mathHtml);
+                });
                 const container = document.getElementById('content');
                 container.innerHTML = renderedHtml;
                 
@@ -213,7 +250,7 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
         
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = PassthroughWKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         
@@ -262,5 +299,12 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
                 }
             }
         }
+    }
+}
+
+/// 수식 웹뷰가 마우스 휠을 내부 스크롤로 소비하지 않고 채팅 ScrollView로 전달합니다.
+final class PassthroughWKWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
     }
 }

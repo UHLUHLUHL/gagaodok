@@ -1,11 +1,16 @@
 import Foundation
 
-let apiKey = "REDACTED__see_Keychain"
-let testUrl = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=\(apiKey)")!
+// 키는 소스에 두지 않습니다. 실행 예: GEMINI_API_KEY=... swift test_api.swift
+guard let apiKey = ProcessInfo.processInfo.environment["GEMINI_API_KEY"], !apiKey.isEmpty else {
+    print("GEMINI_API_KEY 환경 변수를 설정한 뒤 실행해주세요.")
+    exit(1)
+}
+let testUrl = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent")!
 
 var request = URLRequest(url: testUrl)
 request.httpMethod = "POST"
 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
 
 let prompt = """
 사용자 질문: g(x)= (e^x - e^-x)/2, 역함수 g^-1, g^-1'(-1) 값은?

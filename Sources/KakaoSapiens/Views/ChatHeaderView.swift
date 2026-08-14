@@ -10,6 +10,7 @@ public struct ChatHeaderView: View {
     var onCallTapped: (() -> Void)?
     var onVideoTapped: (() -> Void)?
     var onMenuTapped: (() -> Void)?
+    @ObservedObject private var modelManager = ModelSelectionManager.shared
     
     public init(
         botName: String = "사피엔스",
@@ -39,19 +40,6 @@ public struct ChatHeaderView: View {
             VStack(spacing: 0) {
                 // 1. 최상단 신호등 버튼 높이 라인 & 우상단 미니 슬라이더
                 HStack(alignment: .center) {
-                    // 사이드바 토글 버튼 (채팅 목록 열기/닫기)
-                    Button(action: {
-                        onToggleSidebar?()
-                    }) {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(Color.black.opacity(0.55))
-                            .frame(width: 20, height: 14)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.leading, 78) // macOS 기본 신호등 버튼 우측
-                    .help("채팅방 목록 열기/닫기")
-                    
                     Spacer()
                     
                     // 우상단 카카오톡 특유의 미니멀 슬림 슬라이더 (신호등과 완벽 동일한 수평선)
@@ -78,7 +66,7 @@ public struct ChatHeaderView: View {
                                 onCallTapped?()
                             }
                         
-                        HStack(spacing: 3.5) {
+                        HStack(spacing: 5) {
                             Image(systemName: "person.fill")
                                 .font(.system(size: 9))
                                 .foregroundColor(Color.black.opacity(0.45))
@@ -86,6 +74,40 @@ public struct ChatHeaderView: View {
                             Text("2")
                                 .font(.custom("Pretendard-Regular", size: 11))
                                 .foregroundColor(Color.black.opacity(0.45))
+
+                            Circle()
+                                .fill(Color.black.opacity(0.18))
+                                .frame(width: 2.5, height: 2.5)
+
+                            Menu {
+                                ForEach(AIModel.allCases) { model in
+                                    Button {
+                                        modelManager.selectedModel = model
+                                    } label: {
+                                        if modelManager.selectedModel == model {
+                                            Label(model.displayName, systemImage: "checkmark")
+                                        } else {
+                                            Text(model.displayName)
+                                        }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Circle()
+                                        .fill(modelManager.selectedModel == .gemini37Flash
+                                              ? Color(red: 0.26, green: 0.53, blue: 0.95)
+                                              : Color(red: 0.39, green: 0.26, blue: 0.76))
+                                        .frame(width: 5, height: 5)
+                                    Text(modelManager.selectedModel.shortName)
+                                        .font(.custom("Pretendard-Medium", size: 10.5))
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 7, weight: .semibold))
+                                }
+                                .foregroundColor(Color.black.opacity(0.55))
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                            .fixedSize()
                         }
                     }
                     
@@ -109,14 +131,14 @@ public struct ChatHeaderView: View {
                             onMenuTapped?()
                         }
                     }
-                    .padding(.trailing, 14)
+                    .padding(.trailing, 1)
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 7)
-                .padding(.bottom, 6)
+                .padding(.bottom, 8)
             }
         }
-        .frame(height: 86)
+        .frame(height: 88)
         .background(Color(red: 0.729, green: 0.808, blue: 0.878)) // 카카오톡 상단 배경색 #BACEE0
     }
 }

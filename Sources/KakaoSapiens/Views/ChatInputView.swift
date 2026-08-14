@@ -94,7 +94,7 @@ public struct ChatInputView: View {
                 .padding(.horizontal, 0)
                 .padding(.top, 0)
             }
-            .frame(minHeight: 52, maxHeight: 105)
+            .frame(height: 58)
             
             // 하단 도구 툴바
             HStack(alignment: .center, spacing: 14) {
@@ -186,7 +186,7 @@ public struct ChatInputView: View {
                 )
             }
             .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, 9)
             .padding(.top, 4)
         }
         .background(Color.white)
