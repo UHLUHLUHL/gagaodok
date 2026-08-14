@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 
 public struct GeneratedMessageBubble {
     public let text: String
@@ -47,7 +48,9 @@ public actor GeminiService {
     그래프가 학습에 실질적으로 도움이 될 때만 별도 문단에 다음 형식 중 하나를 쓴다.
     [GRAPH: type=cartesian, func=sin(x), xmin=-6.28, xmax=6.28, ymin=-2, ymax=2, title="y = sin(x)"]
     [GRAPH: type=parametric, x=t*cos(t), y=t*sin(t), tmin=0, tmax=6.28, xmin=-7, xmax=7, ymin=-7, ymax=7, title="매개변수 곡선"]
-    지원 식은 sin(x), cos(x), tan(x), x^2, exp(x), ln(x), t*cos(t), t*sin(t)다. 지원되지 않는 식을 그래프 태그로 만들지 않는다.
+    수식에는 + - * / ^ 와 괄호, 그리고 sin, cos, tan, asin, acos, atan, sinh, cosh, tanh,
+    exp, ln, log, sqrt, abs를 쓸 수 있다. 상수 pi와 e도 쓸 수 있고 2x처럼 곱셈 기호를 생략해도 된다.
+    직교함수는 변수 x를, 매개변수 곡선은 변수 t를 쓴다. 이 범위를 벗어나는 식은 그래프 태그로 만들지 않는다.
     """
 
     private init() {
@@ -62,15 +65,20 @@ public actor GeminiService {
         conversation: [ConversationTurn],
         botName: String = "사피엔스",
         roomId: UUID? = nil,
-        model requestedModel: AIModel? = nil
+        model requestedModel: AIModel? = nil,
+        persona: PersonaStyle? = nil
     ) async throws -> GeneratedAIResponse {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
         let rawText: String
         switch model {
         case .gemini37Flash:
-            rawText = try await sendGeminiRequest(conversation: conversation, botName: botName, roomId: roomId)
+            rawText = try await sendGeminiRequest(
+                conversation: conversation, botName: botName, roomId: roomId, persona: persona
+            )
         case .gpt56Luna:
-            rawText = try await sendOpenAIRequest(conversation: conversation, botName: botName, roomId: roomId)
+            rawText = try await sendOpenAIRequest(
+                conversation: conversation, botName: botName, roomId: roomId, persona: persona
+            )
         }
         return GeneratedAIResponse(
             rawText: rawText,
@@ -78,44 +86,337 @@ public actor GeminiService {
         )
     }
 
-    private func systemPrompt(botName: String) -> String {
-        stableSystemPrompt + "\n\n# 현재 대화 설정\n이 대화에서 당신의 이름은 '\(botName)'이다. 자신을 지칭해야 할 때 이 이름을 사용한다."
+    /// 캐릭터 이름이나 참고 링크만으로 말투를 조사한 결과입니다.
+    public struct PersonaLookup {
+        public let confidence: String   // 높음 / 보통 / 낮음
+        public let note: String
+        public let samples: [String]
+        public let styleGuide: String
+        public let sources: [String]
+
+        public var isUsable: Bool { !samples.isEmpty || !styleGuide.isEmpty }
     }
 
-    // Gemini 3.7 Flash는 사고 토큰도 출력 토큰 예산에서 함께 소모합니다.
-    // thinkingLevel이 medium이므로 실제로 보이는 답변 길이보다 여유를 두고 잡습니다.
-    private static let geminiMaxOutputTokens = 8192
-
-    private func sendGeminiRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?) async throws -> String {
-        let model = AIModel.gemini37Flash
+    /// 대사를 외우고 있지 않아도 되도록, 이름이나 링크만으로 말투를 조사합니다.
+    ///
+    /// 검색 그라운딩과 URL 읽기를 함께 켜므로 이름이든 링크든 같은 입구로 처리됩니다.
+    /// 스크린샷을 넘기면 거기 적힌 대사도 함께 읽습니다.
+    /// 모르는 인물이면 지어내지 않고 확신도를 '낮음'으로 돌려줍니다.
+    public func lookupPersona(
+        query: String,
+        imageBase64: String? = nil,
+        imageMimeType: String? = nil
+    ) async throws -> PersonaLookup {
         guard let apiKey = KeychainStore.geminiAPIKey else {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
         }
-        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model.rawValue):generateContent") else {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty || imageBase64 != nil else {
+            throw serviceError("캐릭터 이름이나 참고 링크를 입력해주세요.")
+        }
+
+        let instruction = """
+        너는 말투 조사관이다. 사용자가 지정한 인물의 말투를 조사해 정리한다.
+
+        먼저 검색이나 주어진 링크·이미지에서 그 인물의 실제 대사를 찾는다. 그 다음 아래 형식으로만 출력한다.
+
+        [확신도] 높음/보통/낮음 중 하나와 한 줄 근거.
+        - 실제 대사를 여러 개 찾았으면 '높음'
+        - 인물 설명은 찾았지만 대사가 적으면 '보통'
+        - 인물을 특정하지 못했으면 '낮음'이라고 솔직히 적고 아래 두 절을 비운다
+
+        [대사]
+        찾은 실제 대사를 한 줄에 하나씩, 최대 10줄. 앞에 기호를 붙이지 않는다.
+        지어내지 말고 실제로 찾은 것만 적는다. 찾지 못했으면 이 절을 비운다.
+
+        [말투]
+        - 문장 끝맺음:
+        - 높임 수준:
+        - 1인칭과 호칭:
+        - 자주 쓰는 표현:
+        - 문장 길이와 리듬:
+        - 감정 표현:
+        - 피해야 할 것:
+        - 한 줄 요약:
+
+        없는 사실을 지어내지 않는다. 확실하지 않으면 확신도를 낮춘다.
+        """
+
+        var parts: [[String: Any]] = []
+        if !trimmedQuery.isEmpty { parts.append(["text": "인물 또는 참고 자료: \(trimmedQuery)"]) }
+        if let imageBase64, let imageMimeType {
+            parts.append(["text": "아래 이미지에 이 인물의 대사가 있다. 읽어서 활용한다."])
+            parts.append(["inlineData": ["mimeType": imageMimeType, "data": imageBase64]])
+        }
+
+        let body: [String: Any] = [
+            "systemInstruction": ["parts": [["text": instruction]]],
+            "contents": [["role": "user", "parts": parts]],
+            // 이름이면 검색이, 링크가 섞여 있으면 URL 읽기가 각각 동작합니다.
+            "tools": [["google_search": [:]], ["url_context": [:]]],
+            "generationConfig": [
+                "maxOutputTokens": 4096,
+                "thinkingConfig": ["thinkingLevel": "medium"]
+            ]
+        ]
+
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // 키를 쿼리 문자열에 붙이면 URL이 남는 곳마다 그대로 노출되므로 헤더로 보냅니다.
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.timeoutInterval = 60
-
-        let contents = buildGeminiContents(conversation)
-        // Gemini 3.x는 temperature·topP·topK·candidateCount를 받지 않고,
-        // 사고량은 thinking_budget 숫자가 아니라 thinkingLevel 문자열(low/medium/high)로 지정합니다.
-        let body: [String: Any] = [
-            "systemInstruction": ["parts": [["text": systemPrompt(botName: botName)]]],
-            "contents": contents,
-            "generationConfig": [
-                "maxOutputTokens": Self.geminiMaxOutputTokens,
-                "thinkingConfig": ["thinkingLevel": "medium"]
-            ]
-        ]
+        request.timeoutInterval = 90
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
+              let responseParts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
+            throw serviceError("말투 조사 결과를 읽을 수 없습니다.")
+        }
+        let text = responseParts.compactMap { $0["text"] as? String }.joined()
+        guard !text.isEmpty else {
+            throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
+        }
+
+        var sources: [String] = []
+        if let grounding = candidate["groundingMetadata"] as? [String: Any],
+           let chunks = grounding["groundingChunks"] as? [[String: Any]] {
+            sources = chunks.compactMap { chunk in
+                ((chunk["web"] as? [String: Any])?["title"] as? String)
+            }
+        }
+        return Self.parsePersonaLookup(text, sources: sources)
+    }
+
+    static func parsePersonaLookup(_ text: String, sources: [String]) -> PersonaLookup {
+        var confidence = "보통"
+        var note = ""
+        var samples: [String] = []
+        var guideLines: [String] = []
+
+        enum Section { case none, samples, guide }
+        var section = Section.none
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[확신도]") {
+                let body = line.replacingOccurrences(of: "[확신도]", with: "").trimmingCharacters(in: .whitespaces)
+                for level in ["높음", "보통", "낮음"] where body.hasPrefix(level) {
+                    confidence = level
+                    note = body.dropFirst(level.count)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: " -–—()·,"))
+                    break
+                }
+                if note.isEmpty { note = body }
+                section = .none
+                continue
+            }
+            if line.hasPrefix("[대사]") { section = .samples; continue }
+            if line.hasPrefix("[말투]") { section = .guide; continue }
+            if line.isEmpty { continue }
+
+            switch section {
+            case .samples:
+                let cleaned = line
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "-•* "))
+                    .trimmingCharacters(in: .whitespaces)
+                if !cleaned.isEmpty { samples.append(cleaned) }
+            case .guide:
+                guideLines.append(line)
+            case .none:
+                break
+            }
+        }
+
+        return PersonaLookup(
+            confidence: confidence,
+            note: note,
+            samples: samples,
+            styleGuide: guideLines.joined(separator: "\n"),
+            sources: Array(Set(sources)).sorted()
+        )
+    }
+
+    /// 미리보기에서 던져볼 상황들입니다.
+    /// 설명·지적·칭찬은 말투가 가장 크게 갈리는 지점이라, 이 셋만 봐도 결이 맞는지 판단이 섭니다.
+    public static let personaPreviewPrompts: [(situation: String, message: String)] = [
+        ("설명할 때", "미분이 뭔지 한두 문장으로 짧게 설명해줘."),
+        ("틀렸다고 말할 때", "x²의 미분은 2라고 배웠어. 맞지?"),
+        ("칭찬할 때", "고마워! 덕분에 이해했어.")
+    ]
+
+    /// 저장하기 전에 이 말투가 실제 그 캐릭터 같은지 확인할 수 있도록 짧은 답변을 만듭니다.
+    /// 실제 대화와 똑같은 시스템 지침을 쓰므로, 여기서 보이는 결이 채팅방에서도 그대로 나옵니다.
+    public func previewPersona(persona: PersonaStyle, botName: String, message: String) async throws -> String {
+        guard let apiKey = KeychainStore.geminiAPIKey else {
+            throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
+        }
+        var enabled = persona
+        enabled.isEnabled = true
+        let system = systemPrompt(botName: botName, persona: enabled)
+
+        let body: [String: Any] = [
+            "systemInstruction": ["parts": [["text": system]]],
+            "contents": [["role": "user", "parts": [["text": message]]]],
+            "generationConfig": [
+                "maxOutputTokens": 2048,
+                "thinkingConfig": ["thinkingLevel": "low"]
+            ]
+        ]
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 60
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
+              let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
+            throw serviceError("미리보기를 읽을 수 없습니다.")
+        }
+        let text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
+        }
+        return text
+    }
+
+    /// 붙여넣은 대사에서 말투 규칙을 뽑아냅니다.
+    ///
+    /// 모델에게 "이 캐릭터처럼 말해"라고만 하면 흉내가 흐려집니다.
+    /// 관찰 가능한 항목(문장 끝맺음, 호칭, 자주 쓰는 어휘, 문장 길이 등)을 짚어서 적게 하면
+    /// 이후 대화에서 재현이 훨씬 안정적입니다.
+    public func analyzePersonaStyle(description: String, samples: [String]) async throws -> String {
+        guard let apiKey = KeychainStore.geminiAPIKey else {
+            throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
+        }
+        let joined = samples
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        guard !joined.isEmpty else {
+            throw serviceError("말투를 분석할 대사를 먼저 입력해주세요.")
+        }
+
+        let instruction = """
+        너는 말투 분석가다. 아래 대사를 읽고, 다른 사람이 이 인물의 말투를 그대로 재현할 수 있도록
+        관찰된 특징만 한국어로 정리한다. 대사에 없는 특징은 지어내지 않는다.
+
+        다음 항목을 각각 한 줄씩, '- 항목: 내용' 형태로 쓴다. 해당 없으면 그 줄은 생략한다.
+        - 문장 끝맺음: 자주 쓰는 어미와 종결 형태를 실제 예와 함께
+        - 높임 수준: 반말/존댓말/혼용 중 무엇이며 어떤 상황에서 바뀌는지
+        - 1인칭과 호칭: 자기를 뭐라 부르고 상대를 뭐라 부르는지
+        - 자주 쓰는 표현: 반복되는 단어·감탄사·말버릇을 원문 그대로
+        - 문장 길이와 리듬: 짧게 끊는지 길게 이어붙이는지
+        - 감정 표현: 이모지·물결·느낌표 사용 습관
+        - 피해야 할 것: 이 인물이 절대 쓰지 않을 법한 말투
+
+        마지막에 '- 한 줄 요약:'으로 전체를 한 문장으로 압축한다.
+        설명이나 인사말 없이 목록만 출력한다.
+        """
+
+        var body: [String: Any] = [
+            "systemInstruction": ["parts": [["text": instruction]]],
+            "generationConfig": [
+                "maxOutputTokens": 2048,
+                "thinkingConfig": ["thinkingLevel": "low"]
+            ]
+        ]
+        var userText = ""
+        let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedDescription.isEmpty { userText += "인물 설명: \(trimmedDescription)\n\n" }
+        userText += "대사:\n\(joined)"
+        body["contents"] = [["role": "user", "parts": [["text": userText]]]]
+
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 60
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
+              let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
+            throw serviceError("말투 분석 결과를 읽을 수 없습니다.")
+        }
+        let text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
+        }
+        return text
+    }
+
+    private func systemPrompt(botName: String, persona: PersonaStyle? = nil) -> String {
+        var prompt = stableSystemPrompt
+        // 말투는 방마다 고정이라 캐시 접두사 안쪽에 두어도 적중률이 떨어지지 않습니다.
+        if let section = persona?.promptSection(botName: botName) {
+            prompt += "\n\n" + section
+        }
+        prompt += "\n\n# 현재 대화 설정\n이 대화에서 당신의 이름은 '\(botName)'이다. 자신을 지칭해야 할 때 이 이름을 사용한다."
+        return prompt
+    }
+
+    // Gemini 3.7 Flash는 사고 토큰도 출력 토큰 예산에서 함께 소모합니다.
+    // thinkingLevel이 medium이므로 실제로 보이는 답변 길이보다 여유를 두고 잡습니다.
+    private static let geminiMaxOutputTokens = 8192
+    private static let geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+
+    // Gemini의 implicit 캐시는 "완전히 똑같은 요청"이 짧은 간격으로 반복될 때만 걸립니다.
+    // 채팅처럼 턴이 계속 붙는 패턴에서는 접두사가 같아도 적중하지 않아 실측 적중률이 0%였습니다.
+    // 그래서 대화 접두사를 명시적 캐시(cachedContents)로 올려두고 새 턴만 보냅니다. 실측 99.7%.
+    private struct PrefixCache {
+        let name: String          // cachedContents/xxxx
+        let coveredTurns: Int     // 이 캐시가 덮는 contents 앞부분의 개수
+        let fingerprint: String   // 덮은 구간이 편집되지 않았는지 확인하는 지문
+        let expiresAt: Date
+    }
+
+    private var prefixCaches: [UUID: PrefixCache] = [:]
+    private var refreshingRooms: Set<UUID> = []
+    private static let cacheTTLSeconds = 900
+    // 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 한국어는 대략 2.4자당 1토큰이라
+    // 넉넉히 잡아 이 길이 아래에서는 생성을 시도하지 않습니다.
+    private static let minimumCacheCharacters = 3000
+
+    private func sendGeminiRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil) async throws -> String {
+        let model = AIModel.gemini37Flash
+        guard let apiKey = KeychainStore.geminiAPIKey else {
+            throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
+        }
+
+        let contents = buildGeminiContents(conversation)
+        let system = systemPrompt(botName: botName, persona: persona)
+
+        var reusedCache = roomId.flatMap { usablePrefixCache(for: $0, contents: contents, system: system) }
+        let json: [String: Any]
+        do {
+            json = try await performGeminiRequest(
+                contents: contents, system: system, cache: reusedCache, apiKey: apiKey, model: model
+            )
+        } catch {
+            // 캐시가 서버에서 이미 만료·삭제되었으면 캐시 없이 한 번만 다시 보냅니다.
+            guard reusedCache != nil else { throw error }
+            if let roomId { prefixCaches[roomId] = nil }
+            reusedCache = nil
+            json = try await performGeminiRequest(
+                contents: contents, system: system, cache: nil, apiKey: apiKey, model: model
+            )
+        }
 
         if let usage = json["usageMetadata"] as? [String: Any], let roomId {
             let input = intValue(usage["promptTokenCount"])
@@ -143,7 +444,159 @@ public actor GeminiService {
             // 답변이 비었을 때 "왜" 비었는지가 3.7에서는 대부분 finishReason에 담겨 옵니다.
             throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
         }
+
+        // 캐시에는 "방금 실제로 보낸 contents"를 그대로 올립니다.
+        // 답변까지 덧붙여 캐시하면 적중률이 몇 %p 높지만, 앱이 다음 턴에 재구성하는 문자열과
+        // 한 글자라도 어긋나면 지문 검사에서 통째로 탈락합니다. 보낸 것을 그대로 캐시하면
+        // 다음 요청의 앞부분과 반드시 일치하므로, 답변+새 질문 두 턴만 캐시 밖에 남습니다.
+        // 답변을 이미 확보한 뒤이므로 화면 표시를 막지 않도록 백그라운드에서 진행합니다.
+        if let roomId {
+            Task { await self.refreshPrefixCache(roomId: roomId, contents: contents, system: system, apiKey: apiKey) }
+        }
         return text
+    }
+
+    private func performGeminiRequest(
+        contents: [[String: Any]],
+        system: String,
+        cache: PrefixCache?,
+        apiKey: String,
+        model: AIModel
+    ) async throws -> [String: Any] {
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // 키를 쿼리 문자열에 붙이면 URL이 남는 곳마다 그대로 노출되므로 헤더로 보냅니다.
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 60
+
+        // Gemini 3.x는 temperature·topP·topK·candidateCount를 받지 않고,
+        // 사고량은 thinking_budget 숫자가 아니라 thinkingLevel 문자열(low/medium/high)로 지정합니다.
+        var body: [String: Any] = [
+            "generationConfig": [
+                "maxOutputTokens": Self.geminiMaxOutputTokens,
+                "thinkingConfig": ["thinkingLevel": "medium"]
+            ]
+        ]
+        if let cache {
+            // 캐시에 시스템 지침과 앞부분 대화가 들어 있으므로 남은 턴만 보냅니다.
+            // 이때 systemInstruction을 함께 보내면 요청이 거부됩니다.
+            body["cachedContent"] = cache.name
+            body["contents"] = Array(contents.dropFirst(cache.coveredTurns))
+        } else {
+            body["systemInstruction"] = ["parts": [["text": system]]]
+            body["contents"] = contents
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try validatedJSON(data: data, response: response, provider: "Gemini")
+    }
+
+    private func usablePrefixCache(for roomId: UUID, contents: [[String: Any]], system: String) -> PrefixCache? {
+        guard let cache = prefixCaches[roomId] else { return nil }
+        guard cache.expiresAt > Date().addingTimeInterval(30) else {
+            prefixCaches[roomId] = nil
+            return nil
+        }
+        // 캐시가 덮는 만큼의 턴이 남아 있고, 그 구간이 편집되지 않았을 때만 재사용합니다.
+        guard contents.count > cache.coveredTurns else { return nil }
+        guard fingerprint(Array(contents.prefix(cache.coveredTurns)), system: system) == cache.fingerprint else {
+            prefixCaches[roomId] = nil
+            return nil
+        }
+        return cache
+    }
+
+    private func refreshPrefixCache(roomId: UUID, contents: [[String: Any]], system: String, apiKey: String) async {
+        // 갱신 도중에는 URL 요청에서 액터가 풀리므로, 막지 않으면 같은 방에 대해
+        // 갱신이 겹치면서 캐시가 여러 개 만들어지고 이전 것이 지워지지 않습니다.
+        guard !refreshingRooms.contains(roomId) else { return }
+        refreshingRooms.insert(roomId)
+        defer { refreshingRooms.remove(roomId) }
+
+        // 이미 같은 구간을 덮는 캐시가 있으면 다시 만들 필요가 없습니다.
+        if let existing = prefixCaches[roomId],
+           existing.coveredTurns >= contents.count,
+           existing.expiresAt > Date().addingTimeInterval(60) {
+            return
+        }
+
+        let characterCount = contents.reduce(0) { total, item in
+            total + ((item["parts"] as? [[String: Any]])?.reduce(0) { $0 + (($1["text"] as? String)?.count ?? 0) } ?? 0)
+        }
+        guard characterCount >= Self.minimumCacheCharacters else { return }
+
+        let previous = prefixCaches[roomId]
+        guard let url = URL(string: "\(Self.geminiBaseURL)/cachedContents") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 30
+
+        let payload: [String: Any] = [
+            "model": "models/\(AIModel.gemini37Flash.rawValue)",
+            "systemInstruction": ["parts": [["text": system]]],
+            "contents": contents,
+            "ttl": "\(Self.cacheTTLSeconds)s"
+        ]
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        request.httpBody = httpBody
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let name = json["name"] as? String else {
+            // 캐시는 요금 최적화 수단일 뿐이라 실패해도 대화에는 영향이 없습니다. 조용히 넘어갑니다.
+            return
+        }
+
+        prefixCaches[roomId] = PrefixCache(
+            name: name,
+            coveredTurns: contents.count,
+            fingerprint: fingerprint(contents, system: system),
+            expiresAt: Date().addingTimeInterval(TimeInterval(Self.cacheTTLSeconds))
+        )
+
+        // 캐시는 올려둔 토큰 수 × 보관 시간으로 요금이 매겨집니다.
+        // 이전 캐시를 바로 지우므로 실제 보관 시간은 다음 갱신까지지만,
+        // 최악의 경우인 TTL 전체를 기준으로 잡아 요금을 과소 표시하지 않습니다.
+        if let cachedTokens = (json["usageMetadata"] as? [String: Any])?["totalTokenCount"] as? Int {
+            let tokenHours = Double(cachedTokens) * (Double(Self.cacheTTLSeconds) / 3600.0)
+            await MainActor.run {
+                TokenUsageManager.shared.recordCacheStorage(
+                    roomId: roomId,
+                    model: .gemini37Flash,
+                    tokenHours: tokenHours
+                )
+            }
+        }
+
+        // 이전 캐시는 보관 요금이 붙으므로 새 캐시가 자리 잡은 뒤 지웁니다.
+        if let previous { await deleteCache(named: previous.name, apiKey: apiKey) }
+    }
+
+    private func deleteCache(named name: String, apiKey: String) async {
+        guard let url = URL(string: "\(Self.geminiBaseURL)/\(name)") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 15
+        _ = try? await URLSession.shared.data(for: request)
+    }
+
+    private func fingerprint(_ contents: [[String: Any]], system: String) -> String {
+        var hasher = SHA256()
+        hasher.update(data: Data(system.utf8))
+        for item in contents {
+            guard let data = try? JSONSerialization.data(withJSONObject: item, options: [.sortedKeys]) else { continue }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private func geminiEmptyResponseMessage(finishReason: String?) -> String {
@@ -161,7 +614,7 @@ public actor GeminiService {
         }
     }
 
-    private func sendOpenAIRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?) async throws -> String {
+    private func sendOpenAIRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil) async throws -> String {
         guard let apiKey = KeychainStore.openAIAPIKey else {
             throw serviceError("설정에서 OpenAI API 키를 먼저 등록해주세요.")
         }
@@ -179,7 +632,7 @@ public actor GeminiService {
         let cacheKey = "kakao-sapiens-room-\(roomId?.uuidString ?? "default")"
         let body: [String: Any] = [
             "model": AIModel.gpt56Luna.rawValue,
-            "instructions": systemPrompt(botName: botName),
+            "instructions": systemPrompt(botName: botName, persona: persona),
             "input": buildOpenAIInput(conversation),
             "prompt_cache_key": cacheKey,
             // 대화가 뒤에 계속 추가되는 메신저에는 implicit 경계가 가장 잘 맞습니다.
@@ -433,8 +886,10 @@ public actor GeminiService {
                 text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 break
             }
-            let (cleanedText, specs) = MathGraphRenderer.extractGraphSpecs(from: text)
+            let (cleanedText, allSpecs) = MathGraphRenderer.extractGraphSpecs(from: text)
             if !cleanedText.isEmpty { bubbles.append(GeneratedMessageBubble(text: cleanedText)) }
+            // 해석하지 못하는 식은 그래프를 만들지 않습니다. 틀린 그림을 내보내는 것보다 낫습니다.
+            let specs = allSpecs.filter { MathGraphRenderer.canRender($0) }
             for spec in specs {
                 let image = MathGraphRenderer.shared.renderGraph(spec: spec)
                 if let tiff = image.tiffRepresentation,

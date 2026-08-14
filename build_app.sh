@@ -13,7 +13,6 @@ CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 
-# 디렉토리 생성
 mkdir -p "${MACOS_DIR}"
 mkdir -p "${RESOURCES_DIR}"
 
@@ -27,7 +26,7 @@ fi
 cp -f "AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 
 # 2. 바이너리 복사
-BIN_PATH=$(find .build -name "KakaoSapiens" -type f -not -path "*.dSYM*" | grep -E "release|debug" | head -n 1)
+BIN_PATH=$(find .build -name "KakaoSapiens" -type f -not -path "*.dSYM*" | grep -E "release" | head -n 1)
 
 if [ -z "$BIN_PATH" ]; then
     echo "❌ Binary not found!"
@@ -38,7 +37,22 @@ echo "📦 Using binary from: $BIN_PATH"
 cp -f "$BIN_PATH" "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
 
-# 3. Info.plist 생성 (아이콘 및 표시 이름 포함)
+# 3. 리소스 번들 복사 (KaTeX·markdown-it·말풍선 셸)
+#    이게 빠지면 수식이 전혀 렌더링되지 않으므로 없으면 즉시 중단합니다.
+BUNDLE_PATH=$(find .build -maxdepth 3 -name "${APP_NAME}_${APP_NAME}.bundle" -type d | grep -E "release" | head -n 1)
+
+if [ -z "$BUNDLE_PATH" ]; then
+    echo "❌ Resource bundle not found! (수식 렌더링에 필요합니다)"
+    exit 1
+fi
+
+echo "📚 Bundling resources from: $BUNDLE_PATH"
+rm -rf "${RESOURCES_DIR}/$(basename "$BUNDLE_PATH")"
+cp -R "$BUNDLE_PATH" "${RESOURCES_DIR}/"
+
+# 4. Info.plist 생성
+#    NSAppTransportSecurity는 두지 않습니다. 모든 자원을 앱 안에 넣어
+#    외부 네트워크로 나가는 웹 요청 자체가 없어졌습니다.
 cat <<EOF > "${CONTENTS_DIR}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -68,16 +82,35 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <false/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
 </dict>
 </plist>
 EOF
 
-# 4. /Applications 디렉토리에 정식 설치
+# 5. 코드 서명
+#    ad-hoc 서명은 빌드할 때마다 서명이 바뀌어, 그때마다 macOS가 키체인 접근을 다시 묻습니다.
+#    안정적인 인증서로 서명하면 이 창이 사라집니다.
+#    - 환경 변수로 지정:  CODESIGN_IDENTITY="Apple Development: 이름 (TEAMID)" ./build_app.sh
+#    - 인증서 만들기:     키체인 접근 > 인증서 지원 > 인증서 생성
+#                        이름 아무거나 / 유형 "코드 서명" / 자체 서명 루트
+if [ -z "${CODESIGN_IDENTITY}" ]; then
+    CODESIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+        | grep -oE '"[^"]+"' | head -n 1 | tr -d '"')
+fi
+
+if [ -n "${CODESIGN_IDENTITY}" ]; then
+    echo "🔏 Signing with: ${CODESIGN_IDENTITY}"
+    codesign --force --sign "${CODESIGN_IDENTITY}" --timestamp=none \
+        --options runtime "${APP_BUNDLE}" 2>/dev/null \
+        || codesign --force --deep --sign "${CODESIGN_IDENTITY}" "${APP_BUNDLE}"
+else
+    echo "🔏 서명 인증서가 없어 ad-hoc으로 서명합니다."
+    echo "   ⚠️  재설치할 때마다 키체인 접근 허용 창이 다시 뜹니다."
+    echo "   → 없애려면: 키체인 접근 > 인증서 지원 > 인증서 생성 (유형: 코드 서명)"
+    echo "     그 뒤 CODESIGN_IDENTITY=\"만든이름\" ./build_app.sh"
+    codesign --force --deep --sign - "${APP_BUNDLE}" 2>/dev/null || true
+fi
+
+# 6. /Applications 디렉토리에 정식 설치
 echo "🚀 Installing KakaoSapiens to /Applications..."
 rm -rf "/Applications/${APP_BUNDLE}"
 cp -R "${APP_BUNDLE}" "/Applications/${APP_BUNDLE}"

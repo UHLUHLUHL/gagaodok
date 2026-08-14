@@ -16,7 +16,8 @@ let package = Package(
             dependencies: [],
             path: "Sources/KakaoSapiens",
             resources: [
-                .process("Resources")
+                // katex/fonts 같은 하위 디렉터리 구조가 그대로 유지되어야 상대 경로가 맞습니다.
+                .copy("Resources")
             ]
         )
     ]

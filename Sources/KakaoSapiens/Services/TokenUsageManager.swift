@@ -7,19 +7,38 @@ public struct ModelTokenUsage: Codable, Equatable {
     public var cacheWriteTokens: Int
     public var outputTokens: Int
     public var requestCount: Int
+    /// 명시적 캐시를 올려둔 누적량입니다. 토큰 수 × 보관 시간으로 요금이 매겨집니다.
+    public var cacheStorageTokenHours: Double
 
     public init(
         inputTokens: Int = 0,
         cachedInputTokens: Int = 0,
         cacheWriteTokens: Int = 0,
         outputTokens: Int = 0,
-        requestCount: Int = 0
+        requestCount: Int = 0,
+        cacheStorageTokenHours: Double = 0
     ) {
         self.inputTokens = inputTokens
         self.cachedInputTokens = cachedInputTokens
         self.cacheWriteTokens = cacheWriteTokens
         self.outputTokens = outputTokens
         self.requestCount = requestCount
+        self.cacheStorageTokenHours = cacheStorageTokenHours
+    }
+
+    // 이전 버전 장부에는 보관량 항목이 없었습니다. 없으면 0으로 읽습니다.
+    private enum CodingKeys: String, CodingKey {
+        case inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, requestCount, cacheStorageTokenHours
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        inputTokens = try container.decodeIfPresent(Int.self, forKey: .inputTokens) ?? 0
+        cachedInputTokens = try container.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0
+        cacheWriteTokens = try container.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0
+        outputTokens = try container.decodeIfPresent(Int.self, forKey: .outputTokens) ?? 0
+        requestCount = try container.decodeIfPresent(Int.self, forKey: .requestCount) ?? 0
+        cacheStorageTokenHours = try container.decodeIfPresent(Double.self, forKey: .cacheStorageTokenHours) ?? 0
     }
 
     public var totalTokens: Int { inputTokens + outputTokens }
@@ -35,8 +54,14 @@ public struct ModelTokenUsage: Codable, Equatable {
         let regular = max(0, inputTokens - cached - writes)
         return Double(regular) / 1_000_000 * model.inputPricePerMillion
             + Double(cached) / 1_000_000 * model.cachedInputPricePerMillion
-            + Double(writes) / 1_000_000 * model.inputPricePerMillion * 1.25
+            + Double(writes) / 1_000_000 * model.inputPricePerMillion * model.cacheWriteMultiplier
             + Double(outputTokens) / 1_000_000 * model.outputPricePerMillion
+            + cacheStorageCostUSD(for: model)
+    }
+
+    /// 명시적 캐시 보관료입니다. 절감액에 비하면 작지만 실제로 청구되는 항목입니다.
+    public func cacheStorageCostUSD(for model: AIModel) -> Double {
+        cacheStorageTokenHours / 1_000_000 * model.cacheStoragePricePerMillionPerHour
     }
 
     public func costWithoutCacheUSD(for model: AIModel) -> Double {
@@ -50,7 +75,8 @@ public struct ModelTokenUsage: Codable, Equatable {
             cachedInputTokens: cachedInputTokens + other.cachedInputTokens,
             cacheWriteTokens: cacheWriteTokens + other.cacheWriteTokens,
             outputTokens: outputTokens + other.outputTokens,
-            requestCount: requestCount + other.requestCount
+            requestCount: requestCount + other.requestCount,
+            cacheStorageTokenHours: cacheStorageTokenHours + other.cacheStorageTokenHours
         )
     }
 }
@@ -112,7 +138,8 @@ public final class TokenUsageManager: ObservableObject {
         inputTokens: Int,
         outputTokens: Int,
         cachedInputTokens: Int = 0,
-        cacheWriteTokens: Int = 0
+        cacheWriteTokens: Int = 0,
+        cacheStorageTokenHours: Double = 0
     ) {
         var room = usageByRoom[roomId] ?? [:]
         let delta = ModelTokenUsage(
@@ -120,7 +147,8 @@ public final class TokenUsageManager: ObservableObject {
             cachedInputTokens: max(0, cachedInputTokens),
             cacheWriteTokens: max(0, cacheWriteTokens),
             outputTokens: max(0, outputTokens),
-            requestCount: 1
+            requestCount: 1,
+            cacheStorageTokenHours: max(0, cacheStorageTokenHours)
         )
         room[model] = (room[model] ?? ModelTokenUsage()).adding(delta)
         usageByRoom[roomId] = room
@@ -135,6 +163,17 @@ public final class TokenUsageManager: ObservableObject {
             inputTokens: promptTokens,
             outputTokens: candidatesTokens
         )
+    }
+
+    /// 캐시 보관량만 따로 더합니다. 요청 횟수는 늘리지 않습니다.
+    public func recordCacheStorage(roomId: UUID, model: AIModel, tokenHours: Double) {
+        guard tokenHours > 0 else { return }
+        var room = usageByRoom[roomId] ?? [:]
+        var entry = room[model] ?? ModelTokenUsage()
+        entry.cacheStorageTokenHours += tokenHours
+        room[model] = entry
+        usageByRoom[roomId] = room
+        saveUsage()
     }
 
     public func usage(for roomId: UUID, model: AIModel) -> ModelTokenUsage {
@@ -228,19 +267,9 @@ public final class TokenUsageManager: ObservableObject {
         }
     }
 
-    private func bootstrapExistingHistoryIfEmpty() {
-        guard usageByRoom.isEmpty else { return }
-        for room in ChatRoomManager.shared.rooms {
-            let messages = ChatRoomManager.shared.loadMessagesForRoom(roomId: room.id)
-            guard !messages.isEmpty else { continue }
-            var input = 0
-            var output = 0
-            for message in messages {
-                let estimate = max(Int(Double(message.text.count) * 1.6), 10)
-                if message.sender == .user { input += estimate + 250 } else { output += estimate }
-            }
-            usageByRoom[room.id] = [.gemini37Flash: ModelTokenUsage(inputTokens: input, outputTokens: output)]
-        }
-        saveUsage()
-    }
+    // 예전에는 여기서 과거 대화를 글자 수로 추정해 장부에 채워 넣었습니다.
+    // 그런데 그 추정이 실제 청구액과 구분 없이 합산되어 대시보드 숫자 전체를 믿을 수 없게 만들었고,
+    // 계수(글자수 × 1.6)도 실측한 한국어 토큰 밀도(약 2.4자당 1토큰)와 4배 가까이 어긋나 있었습니다.
+    // 이제는 API가 실제로 보고한 값만 기록합니다.
+    private func bootstrapExistingHistoryIfEmpty() {}
 }

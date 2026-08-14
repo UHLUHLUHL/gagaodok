@@ -29,6 +29,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false // 메인 창이나 대화창 하나를 닫아도 앱 유지
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 대화 저장은 0.7초 모아서 처리하므로, 종료 직전에 남은 것을 확실히 기록합니다.
+        ChatRoomManager.shared.flushPendingSaves()
+    }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {

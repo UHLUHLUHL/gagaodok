@@ -91,6 +91,24 @@ public enum AIModel: String, CaseIterable, Codable, Identifiable {
         case .gpt56Luna: return 6.00
         }
     }
+
+    /// 명시적 캐시를 1시간 보관할 때 100만 토큰당 요금입니다.
+    /// Gemini는 캐시를 올려두는 동안 별도로 보관료가 붙습니다.
+    public var cacheStoragePricePerMillionPerHour: Double {
+        switch self {
+        case .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.50 : 1.00
+        case .gpt56Luna: return 0  // OpenAI는 보관료 없이 캐시 쓰기 요금만 받습니다.
+        }
+    }
+
+    /// 캐시에 처음 써 넣을 때 입력 단가 대비 배수입니다.
+    /// OpenAI 계열에만 있는 개념이라 Gemini는 1.0으로 두고 대신 보관료로 계산합니다.
+    public var cacheWriteMultiplier: Double {
+        switch self {
+        case .gemini37Flash: return 1.0
+        case .gpt56Luna: return 1.25
+        }
+    }
 }
 
 @MainActor

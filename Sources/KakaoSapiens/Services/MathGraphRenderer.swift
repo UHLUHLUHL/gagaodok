@@ -219,19 +219,24 @@ public class MathGraphRenderer {
             
             let steps = 400
             let dt = (spec.tMax - spec.tMin) / Double(steps)
-            var first = true
-            
+            // 식은 한 번만 파싱하고 점마다 값만 구합니다.
+            let xFormula = MathExpression(spec.xExpr)
+            let yFormula = MathExpression(spec.yExpr)
+            var penIsDown = false
+
             for i in 0...steps {
                 let t = spec.tMin + Double(i) * dt
-                let (x, y) = evaluateParametric(xExpr: spec.xExpr, yExpr: spec.yExpr, t: t)
-                let sx = toScreenX(x)
-                let sy = toScreenY(y)
-                
-                if first {
-                    ctx.move(to: CGPoint(x: sx, y: sy))
-                    first = false
+                guard let x = xFormula?.value(["t": t]), let y = yFormula?.value(["t": t]) else {
+                    // 정의되지 않는 지점에서는 선을 끊습니다.
+                    penIsDown = false
+                    continue
+                }
+                let point = CGPoint(x: toScreenX(x), y: toScreenY(y))
+                if penIsDown {
+                    ctx.addLine(to: point)
                 } else {
-                    ctx.addLine(to: CGPoint(x: sx, y: sy))
+                    ctx.move(to: point)
+                    penIsDown = true
                 }
             }
             ctx.strokePath()
@@ -243,19 +248,24 @@ public class MathGraphRenderer {
             
             let steps = 500
             let dx = (xMax - xMin) / Double(steps)
-            var first = true
-            
+            let formula = MathExpression(spec.yExpr)
+            var penIsDown = false
+            // 세로 점근선을 가로지르며 화면을 종단하는 가짜 선이 생기지 않도록,
+            // 값이 표시 범위를 크게 벗어나면 선을 끊습니다. (tan(x), 1/x 등)
+            let verticalGuard = (yMax - yMin) * 4
+
             for i in 0...steps {
                 let x = xMin + Double(i) * dx
-                let y = evaluateCartesian(expr: spec.yExpr, x: x)
-                let sx = toScreenX(x)
-                let sy = toScreenY(y)
-                
-                if first {
-                    ctx.move(to: CGPoint(x: sx, y: sy))
-                    first = false
+                guard let y = formula?.value(["x": x]), abs(y) < abs(verticalGuard) + abs(yMax) + abs(yMin) else {
+                    penIsDown = false
+                    continue
+                }
+                let point = CGPoint(x: toScreenX(x), y: toScreenY(y))
+                if penIsDown {
+                    ctx.addLine(to: point)
                 } else {
-                    ctx.addLine(to: CGPoint(x: sx, y: sy))
+                    ctx.move(to: point)
+                    penIsDown = true
                 }
             }
             ctx.strokePath()
@@ -309,45 +319,21 @@ public class MathGraphRenderer {
         return image
     }
     
-    // MARK: - 간단하고 안전한 수식 평가기
-    private func evaluateParametric(xExpr: String, yExpr: String, t: Double) -> (Double, Double) {
-        // x = t*cos(t), y = t*sin(t) 등 기본 매개변수 지원
-        var x = t
-        var y = t
-        
-        let cleanX = xExpr.replacingOccurrences(of: " ", with: "").lowercased()
-        let cleanY = yExpr.replacingOccurrences(of: " ", with: "").lowercased()
-        
-        if cleanX.contains("t*cos(t)") || cleanX.contains("tcost") {
-            x = t * cos(t)
-        } else if cleanX.contains("cos(t)") {
-            x = cos(t)
+    // MARK: - 수식 평가
+    // 파싱에 실패하거나 정의역을 벗어난 지점은 nil을 돌려주고, 호출부에서 그 구간을 건너뜁니다.
+    // 예전처럼 해석 못 한 식을 y = x로 대신 그리지 않습니다.
+
+    /// 그래프를 그릴 수 있는 식인지 미리 확인합니다.
+    /// 해석하지 못하는 식이면 그래프 자체를 만들지 않는 편이 틀린 그림보다 낫습니다.
+    public static func canRender(_ spec: MathGraphSpec) -> Bool {
+        if spec.type == .parametric {
+            guard let x = MathExpression(spec.xExpr), let y = MathExpression(spec.yExpr) else { return false }
+            // 표본 몇 점이라도 값이 나와야 의미가 있습니다.
+            let samples = stride(from: spec.tMin, through: spec.tMax, by: max((spec.tMax - spec.tMin) / 12, 0.0001))
+            return samples.contains { x.value(["t": $0]) != nil && y.value(["t": $0]) != nil }
         }
-        
-        if cleanY.contains("t*sin(t)") || cleanY.contains("tsint") {
-            y = t * sin(t)
-        } else if cleanY.contains("sin(t)") {
-            y = sin(t)
-        }
-        
-        return (x, y)
-    }
-    
-    private func evaluateCartesian(expr: String, x: Double) -> Double {
-        let clean = expr.replacingOccurrences(of: " ", with: "").lowercased()
-        if clean.contains("sin(x)") || clean.contains("sinx") {
-            return sin(x)
-        } else if clean.contains("cos(x)") || clean.contains("cosx") {
-            return cos(x)
-        } else if clean.contains("tan(x)") {
-            return tan(x)
-        } else if clean.contains("x^2") {
-            return x * x
-        } else if clean.contains("e^x") || clean.contains("exp(x)") {
-            return exp(x)
-        } else if clean.contains("ln(x)") && x > 0 {
-            return log(x)
-        }
-        return x
+        guard let formula = MathExpression(spec.yExpr) else { return false }
+        let samples = stride(from: spec.xMin, through: spec.xMax, by: max((spec.xMax - spec.xMin) / 12, 0.0001))
+        return samples.contains { formula.value(["x": $0]) != nil }
     }
 }

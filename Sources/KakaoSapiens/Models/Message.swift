@@ -66,9 +66,32 @@ public struct ChatAttachment: Identifiable, Codable {
         return formatter.string(fromByteCount: fileSize)
     }
     
-    public var nsImage: NSImage? {
-        guard type == .image, let data = Data(base64Encoded: dataBase64) else { return nil }
-        return NSImage(data: data)
+    public var nsImage: NSImage? { AttachmentImageCache.image(for: self) }
+}
+
+/// 첨부 이미지를 첨부 id 기준으로 캐시합니다.
+///
+/// 예전에는 `nsImage`가 계산 프로퍼티라 SwiftUI가 본문을 다시 그릴 때마다
+/// base64를 디코드하고 `NSImage`를 새로 만들었습니다. 답변이 말풍선 단위로 붙는 동안
+/// 화면 전체가 반복해서 다시 그려지므로, 스크린샷 한 장이 초당 여러 번 디코드되면서
+/// 이미지가 깜빡이고 스크롤이 끊겼습니다.
+public enum AttachmentImageCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 80
+        // 원본 해상도 스크린샷이 쌓여도 메모리를 물고 있지 않도록 상한을 둡니다.
+        cache.totalCostLimit = 256 * 1024 * 1024
+        return cache
+    }()
+
+    public static func image(for attachment: ChatAttachment) -> NSImage? {
+        guard attachment.type == .image else { return nil }
+        let key = attachment.id.uuidString as NSString
+        if let cached = cache.object(forKey: key) { return cached }
+        guard let data = Data(base64Encoded: attachment.dataBase64),
+              let image = NSImage(data: data) else { return nil }
+        cache.setObject(image, forKey: key, cost: data.count)
+        return image
     }
 }
 
@@ -114,8 +137,24 @@ public struct ChatMessage: Identifiable, Codable {
     
     public var containsLaTeXOrMarkdown: Bool {
         let hasMath = text.contains("$") || text.contains("\\(") || text.contains("\\[") || text.contains("\\frac") || text.contains("\\sqrt")
-        let hasMarkdown = text.contains("```") || text.contains("**") || text.contains("*") || text.contains("##") || text.contains("|") || text.contains("> ")
-        return hasMath || hasMarkdown
+        let hasInlineMarkdown = text.contains("```") || text.contains("**") || text.contains("*")
+            || text.contains("##") || text.contains("|") || text.contains("> ")
+        return hasMath || hasInlineMarkdown || Self.hasBlockMarkdown(text)
+    }
+
+    // 수평선(---)이나 제목·목록처럼 줄 단위로만 의미를 갖는 문법은 위 검사에 걸리지 않습니다.
+    // 그래서 "---" 한 줄짜리 말풍선이 웹뷰 대신 일반 Text로 그려져 원문 그대로 보였습니다.
+    private static func hasBlockMarkdown(_ text: String) -> Bool {
+        text.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.count >= 3 {
+                let characters = Set(trimmed)
+                if characters.count == 1, let mark = characters.first, mark == "-" || mark == "_" {
+                    return true
+                }
+            }
+            return trimmed.hasPrefix("# ") || trimmed.hasPrefix("- ")
+        }
     }
 }
 

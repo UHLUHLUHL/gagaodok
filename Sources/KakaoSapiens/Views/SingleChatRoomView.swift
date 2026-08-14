@@ -15,6 +15,8 @@ public struct SingleChatRoomView: View {
     @State private var activeImageModal: ChatAttachment? = nil
     @State private var isProfileModalPresented: Bool = false
     @State private var editingMessage: ChatMessage? = nil
+    // 뒤늦게 확정되는 말풍선 높이를 언제까지 따라갈지 정하는 기준 시각입니다.
+    @State private var lastScrollAnchorAt = Date.distantPast
     @State private var isFileDropTargeted: Bool = false
     
     public init(roomId: UUID) {
@@ -107,11 +109,24 @@ public struct SingleChatRoomView: View {
                         }
                     }
                     .onChange(of: messages.count) {
+                        lastScrollAnchorAt = Date()
                         scrollToBottom(proxy: proxy)
                         roomManager.saveMessagesForRoom(roomId: roomId, messages: messages)
                     }
                     .onChange(of: isTyping) {
+                        lastScrollAnchorAt = Date()
                         scrollToBottom(proxy: proxy)
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .bubbleHeightSettled)) { _ in
+                        // 수식 말풍선은 KaTeX가 그려진 뒤에야 높이가 확정되어 뒤늦게 커집니다.
+                        // 새 메시지 직후 잠깐 동안만 따라 내려가고, 그 뒤에는 사용자가
+                        // 옛 대화를 훑어보는 중일 수 있으므로 화면을 건드리지 않습니다.
+                        guard Date().timeIntervalSince(lastScrollAnchorAt) < 6 else { return }
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
+                    .onAppear {
+                        lastScrollAnchorAt = Date()
+                        scrollToBottom(proxy: proxy, animated: false)
                     }
                 }
                 
@@ -273,14 +288,22 @@ public struct SingleChatRoomView: View {
         return abs(next.timestamp.timeIntervalSince(current.timestamp)) > 60
     }
     
-    private func scrollToBottom(proxy: ScrollViewProxy) {
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            withAnimation(.easeOut(duration: 0.25)) {
+            // 마지막 말풍선이 아니라 맨 끝 여백을 기준으로 내려야 바닥까지 완전히 닿습니다.
+            // 말풍선을 기준으로 잡으면 그 아래 여백만큼 덜 내려간 상태로 멈춥니다.
+            let target: () -> Void = {
                 if isTyping {
                     proxy.scrollTo("typingIndicator", anchor: .bottom)
-                } else if let lastMsg = messages.last {
-                    proxy.scrollTo(lastMsg.id, anchor: .bottom)
+                } else {
+                    proxy.scrollTo("bottomSpacer", anchor: .bottom)
                 }
+            }
+            if animated {
+                withAnimation(.easeOut(duration: 0.25)) { target() }
+            } else {
+                // 높이가 뒤늦게 확정될 때마다 애니메이션을 걸면 화면이 계속 출렁입니다.
+                target()
             }
         }
     }
@@ -347,15 +370,17 @@ public struct SingleChatRoomView: View {
         let currentBotName = room.profile.name
         let currentRoomId = roomId
         let currentModel = modelManager.selectedModel
+        let currentPersona = room.profile.persona
         let conversation = ConversationTurn.from(messages: history)
-        
+
         Task {
             do {
                 let response = try await GeminiService.shared.generateResponse(
                     conversation: conversation,
                     botName: currentBotName,
                     roomId: currentRoomId,
-                    model: currentModel
+                    model: currentModel,
+                    persona: currentPersona
                 )
                 
                 await MainActor.run {
@@ -410,6 +435,7 @@ public struct RoomProfileModal: View {
     @State private var isEditing: Bool = false
     @State private var editName: String = ""
     @State private var editStatusMessage: String = ""
+    @State private var isPersonaEditorPresented: Bool = false
     
     public init(roomId: UUID, onClose: @escaping () -> Void) {
         self.roomId = roomId
@@ -598,7 +624,7 @@ public struct RoomProfileModal: View {
                             .buttonStyle(.plain)
                             
                             Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
-                            
+
                             Button(action: {
                                 editName = room.profile.name
                                 editStatusMessage = room.profile.statusMessage
@@ -609,6 +635,22 @@ public struct RoomProfileModal: View {
                                     Text("프로필 편집").font(.custom("Pretendard-Medium", size: 12.5))
                                 }
                                 .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                            }
+                            .buttonStyle(.plain)
+
+                            Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1, height: 16)
+
+                            Button(action: { isPersonaEditorPresented = true }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "theatermasks").font(.system(size: 11))
+                                    Text("말투").font(.custom("Pretendard-Medium", size: 12.5))
+                                }
+                                // 말투가 켜져 있으면 한눈에 보이도록 강조합니다.
+                                .foregroundColor(room.profile.persona.isEnabled
+                                                 ? Color(red: 0.996, green: 0.902, blue: 0.0)
+                                                 : .white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 10)
                             }
@@ -625,6 +667,11 @@ public struct RoomProfileModal: View {
             .frame(width: 300, height: 440)
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .shadow(color: .black.opacity(0.4), radius: 24, x: 0, y: 12)
+
+            if isPersonaEditorPresented {
+                PersonaEditorView(roomId: roomId) { isPersonaEditorPresented = false }
+                    .transition(.opacity)
+            }
         }
     }
     
