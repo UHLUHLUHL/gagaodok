@@ -22,6 +22,40 @@ public struct GeneratedAIResponse {
     }
 }
 
+/// 스트림 조각을 받아 완성된 말풍선만 밖으로 내보냅니다.
+///
+/// 버퍼는 값 타입이라 스트림 콜백이 여러 번 불려도 상태를 이어가려면 담아 둘 곳이 필요합니다.
+/// 문단이 완성되면 기존 말풍선 분리기에 그대로 넘기므로, 그래프 태그 처리나
+/// 이름 접두사 제거 같은 규칙이 스트리밍에서도 똑같이 적용됩니다.
+public actor StreamBubbleSink {
+    private var buffer = StreamingBubbleBuffer()
+    private let botName: String
+    private let onBubble: @Sendable (GeneratedMessageBubble) async -> Void
+    private let makeBubbles: @Sendable (String) async -> [GeneratedMessageBubble]
+
+    public init(
+        botName: String,
+        onBubble: @escaping @Sendable (GeneratedMessageBubble) async -> Void,
+        makeBubbles: @escaping @Sendable (String) async -> [GeneratedMessageBubble]
+    ) {
+        self.botName = botName
+        self.onBubble = onBubble
+        self.makeBubbles = makeBubbles
+    }
+
+    public func consume(_ piece: String) async {
+        for paragraph in buffer.append(piece) {
+            for bubble in await makeBubbles(paragraph) { await onBubble(bubble) }
+        }
+    }
+
+    public func finish() async {
+        let rest = buffer.flush()
+        guard !rest.isEmpty else { return }
+        for bubble in await makeBubbles(rest) { await onBubble(bubble) }
+    }
+}
+
 public actor GeminiService {
     public static let shared = GeminiService()
 
@@ -83,6 +117,36 @@ public actor GeminiService {
         return GeneratedAIResponse(
             rawText: rawText,
             bubbles: parseResponseIntoBubbles(rawText: rawText, botName: botName)
+        )
+    }
+
+    /// 답변을 말풍선이 완성되는 대로 흘려보냅니다.
+    ///
+    /// 글자 단위로 올리지 않는 이유는 청크가 수식 한가운데서 끊기기 때문입니다.
+    /// `StreamingBubbleBuffer`가 구분자가 모두 닫힌 문단만 통과시키므로
+    /// 깨진 수식이 화면에 뜨는 일이 없습니다.
+    ///
+    /// Gemini만 스트리밍합니다. Luna는 지금처럼 한 번에 받습니다.
+    public func streamResponse(
+        conversation: [ConversationTurn],
+        botName: String = "사피엔스",
+        roomId: UUID? = nil,
+        model requestedModel: AIModel? = nil,
+        persona: PersonaStyle? = nil,
+        onBubble: @Sendable @escaping (GeneratedMessageBubble) async -> Void
+    ) async throws -> String {
+        let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
+        guard model == .gemini37Flash else {
+            let response = try await generateResponse(
+                conversation: conversation, botName: botName, roomId: roomId,
+                model: model, persona: persona
+            )
+            for bubble in response.bubbles { await onBubble(bubble) }
+            return response.rawText
+        }
+        return try await sendGeminiRequest(
+            conversation: conversation, botName: botName, roomId: roomId, persona: persona,
+            onBubble: onBubble
         )
     }
 
@@ -547,7 +611,13 @@ public actor GeminiService {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func sendGeminiRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil) async throws -> String {
+    private func sendGeminiRequest(
+        conversation: [ConversationTurn],
+        botName: String,
+        roomId: UUID?,
+        persona: PersonaStyle? = nil,
+        onBubble: (@Sendable (GeneratedMessageBubble) async -> Void)? = nil
+    ) async throws -> String {
         let model = AIModel.gemini37Flash
         guard let apiKey = KeychainStore.geminiAPIKey else {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
@@ -565,22 +635,49 @@ public actor GeminiService {
         let system = systemPrompt(botName: botName, persona: persona)
 
         var reusedCache = roomId.flatMap { usablePrefixCache(for: $0, contents: contents, system: system) }
-        let json: [String: Any]
-        do {
-            json = try await performGeminiRequest(
-                contents: contents, system: system, cache: reusedCache, apiKey: apiKey, model: model
-            )
-        } catch {
-            // 캐시가 서버에서 이미 만료·삭제되었으면 캐시 없이 한 번만 다시 보냅니다.
-            guard reusedCache != nil else { throw error }
-            if let roomId { prefixCaches[roomId] = nil }
-            reusedCache = nil
-            json = try await performGeminiRequest(
-                contents: contents, system: system, cache: nil, apiKey: apiKey, model: model
-            )
+
+        // 흘려보낼 곳이 있으면 스트리밍으로, 없으면 지금까지처럼 한 번에 받습니다.
+        // 스트림은 완성된 문단만 통과시키므로 화면에 깨진 수식이 뜨지 않습니다.
+        func run(cache: PrefixCache?) async throws -> (text: String, finishReason: String?, usage: [String: Any]) {
+            guard let onBubble else {
+                let json = try await performGeminiRequest(
+                    contents: contents, system: system, cache: cache, apiKey: apiKey, model: model
+                )
+                let candidate = (json["candidates"] as? [[String: Any]])?.first
+                let parts = (candidate?["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
+                return (
+                    parts.compactMap { $0["text"] as? String }.joined(separator: "\n"),
+                    candidate?["finishReason"] as? String,
+                    json["usageMetadata"] as? [String: Any] ?? [:]
+                )
+            }
+            let buffer = StreamBubbleSink(botName: botName, onBubble: onBubble) { [weak self] paragraph in
+                guard let self else { return [] }
+                return await self.parseResponseIntoBubbles(rawText: paragraph, botName: botName)
+            }
+            let outcome = try await streamGeminiRequest(
+                contents: contents, system: system, cache: cache, apiKey: apiKey, model: model
+            ) { piece in
+                await buffer.consume(piece)
+            }
+            await buffer.finish()
+            return (outcome.text, outcome.finishReason, outcome.usage)
         }
 
-        if let usage = json["usageMetadata"] as? [String: Any], let roomId {
+        var result: (text: String, finishReason: String?, usage: [String: Any])
+        do {
+            result = try await run(cache: reusedCache)
+        } catch {
+            // 캐시가 서버에서 이미 만료·삭제되었으면 캐시 없이 한 번만 다시 보냅니다.
+            // 이미 말풍선을 내보낸 뒤라면 다시 보낼 수 없으므로 그대로 올립니다.
+            guard reusedCache != nil, onBubble == nil else { throw error }
+            if let roomId { prefixCaches[roomId] = nil }
+            reusedCache = nil
+            result = try await run(cache: nil)
+        }
+
+        if !result.usage.isEmpty, let roomId {
+            let usage = result.usage
             let input = intValue(usage["promptTokenCount"])
             let output = intValue(usage["candidatesTokenCount"]) + intValue(usage["thoughtsTokenCount"])
             let cached = intValue(usage["cachedContentTokenCount"])
@@ -595,16 +692,10 @@ public actor GeminiService {
             }
         }
 
-        guard let candidates = json["candidates"] as? [[String: Any]],
-              let candidate = candidates.first else {
-            throw serviceError("Gemini 응답 형식을 읽을 수 없습니다.")
-        }
-
-        let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
-        let text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        let text = result.text
         guard !text.isEmpty else {
             // 답변이 비었을 때 "왜" 비었는지가 3.7에서는 대부분 finishReason에 담겨 옵니다.
-            throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
+            throw serviceError(geminiEmptyResponseMessage(finishReason: result.finishReason))
         }
 
         // 캐시에는 "방금 실제로 보낸 contents"를 그대로 올립니다.
@@ -629,6 +720,87 @@ public actor GeminiService {
             ["role": "user", "parts": [["text": text]]],
             ["role": "model", "parts": [["text": "이전 대화 요약을 확인했습니다. 이어서 진행하겠습니다."]]]
         ]
+    }
+
+    /// 스트림 한 건의 결과입니다. 사용량과 종료 사유는 마지막 청크에 들어옵니다.
+    struct StreamOutcome {
+        var text = ""
+        var finishReason: String?
+        var usage: [String: Any] = [:]
+    }
+
+    /// `streamGenerateContent`로 받아 도착하는 대로 흘려보냅니다.
+    ///
+    /// 완성된 말풍선을 만드는 판단은 `StreamingBubbleBuffer`가 합니다. 여기서는
+    /// 서버가 준 조각을 그대로 넘길 뿐이라, 청크가 어디서 끊기든 상관하지 않습니다.
+    private func streamGeminiRequest(
+        contents: [[String: Any]],
+        system: String,
+        cache: PrefixCache?,
+        apiKey: String,
+        model: AIModel,
+        onText: @Sendable (String) async -> Void
+    ) async throws -> StreamOutcome {
+        guard let url = URL(string:
+            "\(Self.geminiBaseURL)/models/\(model.rawValue):streamGenerateContent?alt=sse") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 120
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: streamBody(contents: contents, system: system, cache: cache))
+
+        let (bytes, response) = try await resilientSession.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw serviceError("Gemini 응답을 읽을 수 없습니다.")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            // 오류 본문도 스트림으로 오므로 모아서 기존 해석기에 넘깁니다.
+            var raw = Data()
+            for try await byte in bytes { raw.append(byte) }
+            _ = try validatedJSON(data: raw, response: response, provider: "Gemini")
+            throw serviceError("Gemini 요청이 \(http.statusCode) 상태로 끝났습니다.")
+        }
+
+        var outcome = StreamOutcome()
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard !payload.isEmpty, payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+
+            if let usage = json["usageMetadata"] as? [String: Any] { outcome.usage = usage }
+            guard let candidate = (json["candidates"] as? [[String: Any]])?.first else { continue }
+            if let reason = candidate["finishReason"] as? String { outcome.finishReason = reason }
+
+            let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
+            let piece = parts.compactMap { $0["text"] as? String }.joined()
+            guard !piece.isEmpty else { continue }
+            outcome.text += piece
+            await onText(piece)
+        }
+        return outcome
+    }
+
+    private func streamBody(contents: [[String: Any]], system: String, cache: PrefixCache?) -> [String: Any] {
+        var body: [String: Any] = [
+            "generationConfig": [
+                "maxOutputTokens": Self.geminiMaxOutputTokens,
+                "thinkingConfig": ["thinkingLevel": "medium"]
+            ]
+        ]
+        if let cache {
+            body["cachedContent"] = cache.name
+            body["contents"] = Array(contents.dropFirst(cache.coveredTurns))
+        } else {
+            body["systemInstruction"] = ["parts": [["text": system]]]
+            body["contents"] = contents
+        }
+        return body
     }
 
     private func performGeminiRequest(

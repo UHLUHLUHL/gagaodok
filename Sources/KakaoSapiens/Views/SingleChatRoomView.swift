@@ -19,6 +19,24 @@ public struct SingleChatRoomView: View {
     // 뒤늦게 확정되는 말풍선 높이를 언제까지 따라갈지 정하는 기준 시각입니다.
     @State private var lastScrollAnchorAt = Date.distantPast
     @State private var isFileDropTargeted: Bool = false
+    @State private var isSearching = false
+    @State private var searchQuery = ""
+    @State private var searchHitIndex = 0
+
+    /// 검색어를 담은 메시지들입니다. 최근 것이 1번이 되도록 뒤에서부터 셉니다.
+    private var searchHits: [UUID] {
+        let needle = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return [] }
+        return messages.reversed()
+            .filter { $0.text.range(of: needle, options: .caseInsensitive) != nil }
+            .map(\.id)
+    }
+
+    private var currentSearchHit: UUID? {
+        let hits = searchHits
+        guard !hits.isEmpty, searchHitIndex < hits.count else { return nil }
+        return hits[searchHitIndex]
+    }
     
     public init(roomId: UUID) {
         self.roomId = roomId
@@ -65,10 +83,13 @@ public struct SingleChatRoomView: View {
                     customAvatar: currentAvatar,
                     isEditingThisMessage: editingMessage?.id == msg.id,
                     isSelected: selection.isSelected(msg.id),
+                    searchQuery: isSearching ? searchQuery : "",
+                    isCurrentSearchHit: currentSearchHit == msg.id,
                     onImageTapped: { activeImageModal = $0 },
                     onEditMessage: { startEditingMessage($0) },
                     onDeleteMessage: { deleteMessage($0) },
-                    onAvatarTapped: { isProfileModalPresented = true }
+                    onAvatarTapped: { isProfileModalPresented = true },
+                    onResendMessage: { resendMessage($0) }
                 )
                 .id(msg.id)
                 .reportsBubbleFrame(id: msg.id, in: Self.chatSpace)
@@ -102,7 +123,10 @@ public struct SingleChatRoomView: View {
                     onToggleSidebar: {
                         WindowManager.shared.openMainWindow()
                     },
-                    onSearchTapped: nil,
+                    onSearchTapped: {
+                        withAnimation(.easeOut(duration: 0.16)) { isSearching.toggle() }
+                        if !isSearching { searchQuery = "" }
+                    },
                     onCallTapped: {
                         isProfileModalPresented = true
                     },
@@ -110,6 +134,21 @@ public struct SingleChatRoomView: View {
                         isProfileModalPresented = true
                     }
                 )
+
+                if isSearching {
+                    ChatSearchBar(
+                        query: $searchQuery,
+                        hitCount: searchHits.count,
+                        currentIndex: searchHitIndex,
+                        onPrevious: { moveSearch(by: 1) },   // 위 = 더 오래된 쪽
+                        onNext: { moveSearch(by: -1) },
+                        onClose: {
+                            withAnimation(.easeOut(duration: 0.16)) { isSearching = false }
+                            searchQuery = ""
+                        }
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 
                 // 메시지 스크롤뷰
                 ScrollViewReader { proxy in
@@ -143,6 +182,14 @@ public struct SingleChatRoomView: View {
                         lastScrollAnchorAt = Date()
                         scrollToBottom(proxy: proxy)
                         roomManager.saveMessagesForRoom(roomId: roomId, messages: messages)
+                    }
+                    // 검색어를 고치면 가장 최근 결과부터 다시 봅니다.
+                    .onChange(of: searchQuery) {
+                        searchHitIndex = 0
+                        scrollToSearchHit(proxy: proxy)
+                    }
+                    .onChange(of: searchHitIndex) {
+                        scrollToSearchHit(proxy: proxy)
                     }
                     .onChange(of: isTyping) {
                         lastScrollAnchorAt = Date()
@@ -404,63 +451,105 @@ public struct SingleChatRoomView: View {
         }
     }
     
+    /// 실패해도 사용자에게 알리기 전에 조용히 다시 시도하는 횟수입니다.
+    /// 네트워크가 잠깐 끊기거나 서버가 일시적으로 막는 경우가 대부분이라,
+    /// 그때마다 실패를 보여주면 멀쩡한 대화가 지저분해집니다.
+    private static let silentRetryCount = 2
+    private static let retryBackoff: [UInt64] = [800_000_000, 2_000_000_000]
+
     private func triggerAIResponse(history: [ChatMessage]) {
         let currentBotName = room.profile.name
         let currentRoomId = roomId
         let currentModel = modelManager.selectedModel
         let currentPersona = room.profile.persona
         let conversation = ConversationTurn.from(messages: history)
+        // 실패로 남길 대상은 방금 보낸 내 메시지입니다.
+        let failingMessageId = history.last(where: { $0.sender == .user })?.id
 
         Task {
-            do {
-                let response = try await GeminiService.shared.generateResponse(
-                    conversation: conversation,
-                    botName: currentBotName,
-                    roomId: currentRoomId,
-                    model: currentModel,
-                    persona: currentPersona
-                )
-                
-                await MainActor.run {
-                    self.isTyping = false
-                }
-                
-                let responseTurnId = UUID()
-                for (idx, bubble) in response.bubbles.enumerated() {
-                    if idx > 0 {
-                        try? await Task.sleep(nanoseconds: 450_000_000)
-                    }
-                    
-                    await MainActor.run {
-                        let sapiensMsg = ChatMessage(
-                            sender: .sapiens,
-                            text: bubble.text,
-                            timestamp: Date(),
-                            attachment: bubble.attachment,
-                            turnId: responseTurnId,
-                            canonicalText: idx == 0 ? response.rawText : nil
-                        )
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            self.messages.append(sapiensMsg)
+            let responseTurnId = UUID()
+            // 첫 말풍선이 붙는 순간 타이핑 표시를 끕니다. 예전에는 답변 전체를 받은 뒤였습니다.
+            var attempt = 0
+            while true {
+                do {
+                    let rawText = try await GeminiService.shared.streamResponse(
+                        conversation: conversation,
+                        botName: currentBotName,
+                        roomId: currentRoomId,
+                        model: currentModel,
+                        persona: currentPersona
+                    ) { bubble in
+                        await MainActor.run {
+                            self.isTyping = false
+                            let sapiensMsg = ChatMessage(
+                                sender: .sapiens,
+                                text: bubble.text,
+                                timestamp: Date(),
+                                attachment: bubble.attachment,
+                                turnId: responseTurnId,
+                                canonicalText: nil
+                            )
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                self.messages.append(sapiensMsg)
+                            }
                         }
                     }
-                }
-            } catch {
-                await MainActor.run {
-                    self.isTyping = false
-                    let errorMsg = ChatMessage(
-                        sender: .sapiens,
-                        text: "요청을 처리하는 중 오류가 발생했습니다: \(error.localizedDescription)",
-                        timestamp: Date(),
-                        turnId: UUID(),
-                        canonicalText: "요청을 처리하는 중 오류가 발생했습니다: \(error.localizedDescription)"
-                    )
-                    withAnimation {
-                        self.messages.append(errorMsg)
+
+                    // 원문은 스트림이 끝나야 확정됩니다. 메시지 수정과 재생성이 이 값을 쓰므로
+                    // 그 턴의 첫 말풍선에 뒤늦게 붙여 둡니다.
+                    await MainActor.run {
+                        self.isTyping = false
+                        guard let idx = self.messages.firstIndex(where: { $0.turnId == responseTurnId }) else { return }
+                        self.messages[idx].canonicalText = rawText
                     }
+                    return
+                } catch {
+                    // 말풍선이 이미 하나라도 붙었으면 다시 보낼 수 없습니다.
+                    // 처음부터 다시 받으면 앞부분이 두 번 나옵니다.
+                    let alreadyShown = await MainActor.run {
+                        self.messages.contains { $0.turnId == responseTurnId }
+                    }
+                    if !alreadyShown, attempt < Self.silentRetryCount {
+                        try? await Task.sleep(nanoseconds: Self.retryBackoff[attempt])
+                        attempt += 1
+                        continue
+                    }
+                    await MainActor.run {
+                        self.isTyping = false
+                        // 답변자 쪽에 오류 말풍선을 남기지 않습니다.
+                        // 카카오톡처럼 내 말풍선에 표시를 달아 재전송하거나 지울 수 있게 합니다.
+                        guard let failingMessageId,
+                              let idx = self.messages.firstIndex(where: { $0.id == failingMessageId }) else { return }
+                        withAnimation { self.messages[idx].deliveryFailed = true }
+                    }
+                    return
                 }
             }
         }
+    }
+
+    private func scrollToSearchHit(proxy: ScrollViewProxy) {
+        guard let hit = currentSearchHit else { return }
+        // 찾은 말풍선을 가운데로 올려 앞뒤 맥락이 함께 보이게 합니다.
+        withAnimation(.easeInOut(duration: 0.22)) {
+            proxy.scrollTo(hit, anchor: .center)
+        }
+    }
+
+    /// 검색 결과 사이를 옮겨 다닙니다. 양 끝에서는 반대편으로 돌아갑니다.
+    private func moveSearch(by step: Int) {
+        let count = searchHits.count
+        guard count > 0 else { return }
+        searchHitIndex = ((searchHitIndex + step) % count + count) % count
+    }
+
+    /// 실패 표시가 붙은 내 메시지를 다시 보냅니다.
+    private func resendMessage(_ message: ChatMessage) {
+        guard let idx = messages.firstIndex(where: { $0.id == message.id }) else { return }
+        messages[idx].deliveryFailed = false
+        isTyping = true
+        // 그 메시지까지의 이력으로 다시 요청합니다. 뒤에 다른 대화가 있어도 순서를 지킵니다.
+        triggerAIResponse(history: Array(messages.prefix(through: idx)))
     }
 }
 
