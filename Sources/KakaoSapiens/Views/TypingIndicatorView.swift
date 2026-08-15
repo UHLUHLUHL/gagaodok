@@ -30,7 +30,7 @@ public struct TypingIndicatorView: View {
                 // 발신자 이름 (현재 설정된 이름 동적 바인딩)
                 Text(botName)
                     .font(.custom("Pretendard-Regular", size: 12))
-                    .foregroundColor(Color(red: 0.35, green: 0.35, blue: 0.35))
+                    .foregroundColor(KakaoTheme.textSecondary)
                     .padding(.leading, 1)
                 
                 // 도톰한 카카오톡 타이핑 버블 (말풍선 한 줄 두께 32px)
@@ -47,7 +47,7 @@ public struct TypingIndicatorView: View {
                 .frame(height: 32)
                 .background(
                     KakaoAlignedSapiensBubbleShape(isFirst: true)
-                        .fill(Color(red: 0.46, green: 0.54, blue: 0.62)) // 카카오톡 수신 대기 둥근 회색-블루 버블
+                        .fill(KakaoTheme.dynamic(light: KakaoTheme.hex(0x758A9E), dark: KakaoTheme.hex(0x3A3A3C))) // 카카오톡 수신 대기 둥근 회색-블루 버블
                 )
             }
 
@@ -60,11 +60,11 @@ public struct TypingIndicatorView: View {
                         Text("멈추기")
                             .font(.custom("Pretendard-Medium", size: 11))
                     }
-                    .foregroundColor(Color.black.opacity(isHoveringCancel ? 0.75 : 0.5))
+                    .foregroundColor(KakaoTheme.textPrimary.opacity(isHoveringCancel ? 1.0 : 0.65))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
                     .background(
-                        Capsule().fill(Color.white.opacity(isHoveringCancel ? 0.95 : 0.75))
+                        Capsule().fill(KakaoTheme.surface.opacity(isHoveringCancel ? 0.98 : 0.82))
                     )
                     .contentShape(Capsule())
                 }

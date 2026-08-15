@@ -68,9 +68,9 @@ public struct ComposeChatIcon: View {
 /// 친구 추가 — 사람 옆에 +가 있는 모양입니다.
 public struct AddFriendIcon: View {
     var lineWidth: CGFloat = 1.6
-    var color: Color = Color.black.opacity(0.72)
+    var color: Color = KakaoTheme.textPrimary
 
-    public init(lineWidth: CGFloat = 1.6, color: Color = Color.black.opacity(0.72)) {
+    public init(lineWidth: CGFloat = 1.6, color: Color = KakaoTheme.textPrimary) {
         self.lineWidth = lineWidth
         self.color = color
     }

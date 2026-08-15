@@ -90,12 +90,12 @@ public struct ProfileEditSheet: View {
                     .padding(.bottom, 18)
                 }
                 .frame(width: sheetWidth, height: 400)
-                .background(Color.white)
+                .background(KakaoTheme.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .shadow(color: .black.opacity(0.3), radius: 22, x: 0, y: 10)
                 .overlay(alignment: .topLeading) {
                     Button(action: onCancel) {
-                        Circle().fill(Color.black.opacity(0.06))
+                        Circle().fill(KakaoTheme.hairline)
                             .frame(width: 20, height: 20)
                             .overlay(Image(systemName: "xmark")
                                 .font(.system(size: 8.5, weight: .bold))
@@ -108,7 +108,7 @@ public struct ProfileEditSheet: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         // 앱 전체가 라이트 전용이라 시스템이 다크여도 밝게 고정합니다.
-        .environment(\.colorScheme, .light)
+        
     }
 
     private var avatarPicker: some View {

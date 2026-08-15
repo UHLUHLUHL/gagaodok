@@ -16,6 +16,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // 저장된 화면 모드를 창을 만들기 전에 적용합니다. 동적 색이 이 값을 보고 갈라집니다.
+        AppearanceManager.shared.apply()
         
         // 1. 카카오톡 메인 윈도우(채팅방 목록 & 탭바) 실행
         WindowManager.shared.openMainWindow()

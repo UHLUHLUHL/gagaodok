@@ -26,7 +26,7 @@ public struct MessageBubbleView: View {
 
     /// 드래그로 고른 말풍선에 덧씌우는 회색입니다. 카카오톡과 같은 농도로 맞췄습니다.
     private var selectionTint: Color {
-        isSelected ? Color.black.opacity(0.16) : Color.clear
+        isSelected ? KakaoTheme.selection : Color.clear
     }
 
     @State private var webViewHeight: CGFloat = 30
@@ -82,7 +82,7 @@ public struct MessageBubbleView: View {
                 if isLastInGroup {
                     Text(message.formattedTime)
                         .font(.custom("Pretendard-Regular", size: 9.5))
-                        .foregroundColor(Color.black.opacity(0.45))
+                        .foregroundColor(KakaoTheme.textTertiary)
                         .padding(.bottom, 1)
                 }
                 
@@ -108,7 +108,7 @@ public struct MessageBubbleView: View {
         } else if isLastInGroup {
             Text(message.formattedTime)
                 .font(.custom("Pretendard-Regular", size: 9.5))
-                .foregroundColor(Color.black.opacity(0.45))
+                .foregroundColor(KakaoTheme.textTertiary)
                 .padding(.bottom, bottomInset - 1)
         }
     }
@@ -139,7 +139,7 @@ public struct MessageBubbleView: View {
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
-                                .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                                .foregroundColor(KakaoTheme.bubbleTheirsText)
                                 .lineSpacing(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -148,7 +148,7 @@ public struct MessageBubbleView: View {
                     .padding(.vertical, 6.5)
                     .background(
                         KakaoAlignedUserBubbleShape(isFirst: isFirstInGroup)
-                            .fill(Color(red: 0.996, green: 0.902, blue: 0.0)) // 카카오 옐로우 #FEE500
+                            .fill(KakaoTheme.bubbleMine) // 카카오 옐로우 #FEE500
                     )
                     .overlay(
                         KakaoAlignedUserBubbleShape(isFirst: isFirstInGroup)
@@ -168,9 +168,9 @@ public struct MessageBubbleView: View {
                             }) {
                                 Image(systemName: "pencil")
                                     .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(Color.black.opacity(0.58))
+                                    .foregroundColor(KakaoTheme.textSecondary)
                                     .frame(width: 22, height: 18)
-                                    .background(Capsule().fill(Color.white.opacity(0.92)))
+                                    .background(Capsule().fill(KakaoTheme.surface.opacity(0.94)))
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("메시지 수정")
@@ -182,9 +182,9 @@ public struct MessageBubbleView: View {
                             }) {
                                 Image(systemName: "doc.on.doc")
                                     .font(.system(size: 9.5, weight: .semibold))
-                                    .foregroundColor(Color.black.opacity(0.58))
+                                    .foregroundColor(KakaoTheme.textSecondary)
                                     .frame(width: 22, height: 18)
-                                    .background(Capsule().fill(Color.white.opacity(0.92)))
+                                    .background(Capsule().fill(KakaoTheme.surface.opacity(0.94)))
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("메시지 복사")
@@ -259,7 +259,7 @@ public struct MessageBubbleView: View {
                 if isFirstInGroup {
                     Text(botName)
                         .font(.custom("Pretendard-Regular", size: 12))
-                        .foregroundColor(Color(red: 0.35, green: 0.35, blue: 0.35))
+                        .foregroundColor(KakaoTheme.textSecondary)
                         .padding(.leading, 1)
                 }
                 
@@ -277,7 +277,7 @@ public struct MessageBubbleView: View {
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
-                                .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                                .foregroundColor(KakaoTheme.bubbleTheirsText)
                                 .lineSpacing(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -286,7 +286,7 @@ public struct MessageBubbleView: View {
                     .padding(.vertical, 6.5)
                     .background(
                         KakaoAlignedSapiensBubbleShape(isFirst: isFirstInGroup)
-                            .fill(Color.white)
+                            .fill(KakaoTheme.bubbleTheirs)
                     )
                     .overlay(
                         KakaoAlignedSapiensBubbleShape(isFirst: isFirstInGroup)
@@ -323,7 +323,7 @@ public struct MessageBubbleView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.black.opacity(0.12), lineWidth: 0.5)
+                            .stroke(KakaoTheme.border, lineWidth: 0.5)
                     )
             }
             .buttonStyle(.plain)
@@ -347,11 +347,11 @@ public struct MessageBubbleView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isUser ? Color(red: 0.95, green: 0.86, blue: 0.0) : Color.white)
+                    .fill(isUser ? KakaoTheme.bubbleMine.opacity(0.92) : Color.white)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
+                    .stroke(KakaoTheme.hairline, lineWidth: 0.5)
             )
         }
     }
@@ -508,12 +508,12 @@ struct DeliveryFailureBadge: View {
         Button(action: { isPresented = true }) {
             ZStack {
                 Circle()
-                    .fill(Color.white)
+                    .fill(KakaoTheme.bubbleTheirs)
                     .frame(width: 19, height: 19)
                     .shadow(color: .black.opacity(0.16), radius: 1.5, x: 0, y: 0.5)
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Color(red: 0.93, green: 0.26, blue: 0.24))
+                    .foregroundColor(Color(nsColor: KakaoTheme.hex(0xED423D)))
             }
             .scaleEffect(isHovering ? 1.08 : 1.0)
             .contentShape(Circle())
@@ -526,7 +526,7 @@ struct DeliveryFailureBadge: View {
             VStack(spacing: 0) {
                 Text("메시지를 보내지 못했습니다")
                     .font(.custom("Pretendard-Medium", size: 12))
-                    .foregroundColor(Color.black.opacity(0.6))
+                    .foregroundColor(KakaoTheme.textSecondary)
                     .padding(.horizontal, 14)
                     .padding(.top, 11)
                     .padding(.bottom, 9)
@@ -546,8 +546,8 @@ struct DeliveryFailureBadge: View {
                 }
             }
             .frame(width: 172)
-            .background(Color.white)
-            .environment(\.colorScheme, .light)
+            .background(KakaoTheme.surface)
+            
         }
     }
 
@@ -567,7 +567,7 @@ struct DeliveryFailureBadge: View {
                     .font(.custom("Pretendard-Regular", size: 13))
                 Spacer()
             }
-            .foregroundColor(isDestructive ? Color(red: 0.86, green: 0.22, blue: 0.20) : Color.black.opacity(0.85))
+            .foregroundColor(isDestructive ? Color(nsColor: KakaoTheme.hex(0xDB3833)) : KakaoTheme.textPrimary)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .contentShape(Rectangle())

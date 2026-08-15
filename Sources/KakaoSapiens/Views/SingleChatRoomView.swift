@@ -128,7 +128,7 @@ public struct SingleChatRoomView: View {
     public var body: some View {
         ZStack(alignment: .top) {
             // 카카오톡 시그니처 파스텔 연하늘색 단일 배경 (#BACEE0)
-            Color(red: 0.729, green: 0.808, blue: 0.878)
+            KakaoTheme.chatBackground
                 .ignoresSafeArea(.all)
             
             VStack(spacing: 0) {
@@ -241,7 +241,7 @@ public struct SingleChatRoomView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "pencil")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(Color.black.opacity(0.6))
+                            .foregroundColor(KakaoTheme.textSecondary)
                         
                         Text("메시지 수정 중...")
                             .font(.custom("Pretendard-Medium", size: 12))
@@ -255,7 +255,7 @@ public struct SingleChatRoomView: View {
                         }) {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 13))
-                                .foregroundColor(Color.black.opacity(0.4))
+                                .foregroundColor(KakaoTheme.textTertiary)
                         }
                         .buttonStyle(.plain)
                     }
@@ -685,7 +685,7 @@ public struct RoomProfileModal: View {
             let cardHeight = min(max(geo.size.height - 90, 380), 470)
 
             ZStack {
-                Color.black.opacity(0.55)
+                KakaoTheme.textSecondary
                     .ignoresSafeArea()
                     .onTapGesture { onClose() }
 
@@ -756,7 +756,7 @@ public struct RoomProfileModal: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .environment(\.colorScheme, .light)
+        
     }
 
 }

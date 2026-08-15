@@ -13,7 +13,7 @@ public struct ImageViewerModal: View {
     public var body: some View {
         ZStack {
             // 어두운 배경 오버레이
-            Color.black.opacity(0.85)
+            KakaoTheme.textPrimary
                 .ignoresSafeArea()
                 .onTapGesture {
                     onClose()

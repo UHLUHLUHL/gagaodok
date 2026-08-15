@@ -68,7 +68,7 @@ public struct PersonaEditorView: View {
             let sheetHeight = min(max(geo.size.height - 28, 360), 660)
 
             ZStack {
-                Color.black.opacity(0.5)
+                KakaoTheme.textSecondary
                     .ignoresSafeArea()
                     .onTapGesture { save(); onClose() }
 
@@ -91,7 +91,7 @@ public struct PersonaEditorView: View {
         }
         // 앱 전체가 라이트 전용이라 시스템이 다크여도 밝게 고정합니다.
         // 이게 없으면 입력란만 시스템을 따라 까맣게 나옵니다.
-        .environment(\.colorScheme, .light)
+        
     }
 
     private var sections: some View {

@@ -7,6 +7,7 @@ public struct KakaoUsageSettingsView: View {
     @ObservedObject private var rooms = ChatRoomManager.shared
 
     @State private var section: Section = .usage
+    @ObservedObject private var appearance = AppearanceManager.shared
     @State private var keyDrafts: [KeychainStore.Credential: String] = [:]
     @State private var keyStatuses: [KeychainStore.Credential: String] = [:]
 
@@ -32,12 +33,12 @@ public struct KakaoUsageSettingsView: View {
                 }
             }
             .frame(minWidth: 310, idealWidth: 390, maxWidth: 440, minHeight: 450, idealHeight: 560, maxHeight: 640)
-            .background(Color.white)
-            .foregroundStyle(Color(red: 0.12, green: 0.12, blue: 0.13))
+            .background(KakaoTheme.surface)
+            .foregroundStyle(KakaoTheme.textPrimary)
             .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
             .shadow(color: .black.opacity(0.25), radius: 24, y: 10)
             .padding(12)
-            .environment(\.colorScheme, .light)
+            
         }
     }
 
@@ -95,13 +96,50 @@ public struct KakaoUsageSettingsView: View {
         .padding(.vertical, 10)
     }
 
+    /// 카카오톡 환경설정의 '화면 모드'와 같은 구성입니다.
+    private var appearanceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("화면 모드")
+                .font(.custom("Pretendard-Bold", size: 12.5))
+
+            HStack(spacing: 7) {
+                ForEach(AppearanceMode.allCases) { mode in
+                    Button { appearance.mode = mode } label: {
+                        Text(mode.displayName)
+                            .font(.custom("Pretendard-Medium", size: 11.5))
+                            .foregroundColor(appearance.mode == mode ? KakaoTheme.textPrimary : KakaoTheme.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(appearance.mode == mode ? KakaoTheme.sunken : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(appearance.mode == mode ? KakaoTheme.border : KakaoTheme.hairline, lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                }
+            }
+
+            Text("시스템 설정을 고르면 맥의 화면 모드를 따라갑니다.")
+                .font(.custom("Pretendard-Regular", size: 10.5))
+                .foregroundColor(KakaoTheme.textTertiary)
+
+            Divider().opacity(0.5).padding(.vertical, 4)
+        }
+    }
+
     private var usageSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("누적 API 요금")
                         .font(.custom("Pretendard-Medium", size: 11.5))
-                        .foregroundColor(Color.black.opacity(0.58))
+                        .foregroundColor(KakaoTheme.textSecondary)
                     Spacer()
                     Text("캐시 절약 ₩\(usage.totalSavingsUSD * usage.exchangeRate, specifier: "%.2f")")
                         .font(.custom("Pretendard-Medium", size: 10))
@@ -170,6 +208,8 @@ public struct KakaoUsageSettingsView: View {
 
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            appearanceSection
+
             Text("기본 응답 모델")
                 .font(.custom("Pretendard-Bold", size: 12.5))
 
@@ -188,7 +228,7 @@ public struct KakaoUsageSettingsView: View {
                             }
                             Spacer()
                             Image(systemName: models.selectedModel == model ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(models.selectedModel == model ? Color(red: 0.996, green: 0.78, blue: 0) : Color.black.opacity(0.16))
+                                .foregroundColor(models.selectedModel == model ? Color(red: 0.996, green: 0.78, blue: 0) : KakaoTheme.border)
                         }
                         .padding(11)
                         .background(models.selectedModel == model ? Color(red: 1.0, green: 0.974, blue: 0.84) : Color(red: 0.97, green: 0.97, blue: 0.975), in: RoundedRectangle(cornerRadius: 11))
@@ -207,12 +247,12 @@ public struct KakaoUsageSettingsView: View {
                     .foregroundColor(Color(red: 0.18, green: 0.52, blue: 0.36))
                 Text("고정 시스템 지침을 요청 앞부분에 두고 대화는 순서대로 이어 붙입니다. Gemini와 Luna의 실제 캐시 토큰을 각각 추적해 요금에 반영합니다.")
                     .font(.custom("Pretendard-Regular", size: 10.5))
-                    .foregroundColor(Color.black.opacity(0.55))
+                    .foregroundColor(KakaoTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if AIModel.isIntroductoryPricingActive {
                     Text("Gemini 3.7 Flash는 2026년 12월 31일까지 도입 요금(입력 $0.75 · 출력 $3.75 / 1M 토큰)이 적용됩니다. 2027년 1월 1일부터 정가로 두 배가 되며 이 화면의 금액도 자동으로 바뀝니다.")
                         .font(.custom("Pretendard-Regular", size: 10.5))
-                        .foregroundColor(Color.black.opacity(0.55))
+                        .foregroundColor(KakaoTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -239,7 +279,7 @@ public struct KakaoUsageSettingsView: View {
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.black.opacity(0.06))
+                    Capsule().fill(KakaoTheme.hairline)
                     Capsule().fill(Color(red: 0.996, green: 0.82, blue: 0.0))
                         .frame(width: geometry.size.width * value.cacheHitRate)
                 }
@@ -274,7 +314,7 @@ public struct KakaoUsageSettingsView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var metricDivider: some View { Rectangle().fill(Color.black.opacity(0.08)).frame(width: 1, height: 25) }
+    private var metricDivider: some View { Rectangle().fill(KakaoTheme.hairline).frame(width: 1, height: 25) }
 
     private func apiKeyCard(for credential: KeychainStore.Credential) -> some View {
         let isRegistered = KeychainStore.apiKey(for: credential) != nil

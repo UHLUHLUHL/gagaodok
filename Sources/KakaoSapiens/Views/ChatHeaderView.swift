@@ -70,7 +70,7 @@ public struct ChatHeaderView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(botName)
                             .font(.custom("Pretendard-Bold", size: 15.5))
-                            .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                            .foregroundColor(KakaoTheme.onChatHeader)
                             .onTapGesture {
                                 onCallTapped?()
                             }
@@ -78,14 +78,14 @@ public struct ChatHeaderView: View {
                         HStack(spacing: 5) {
                             Image(systemName: "person.fill")
                                 .font(.system(size: 9))
-                                .foregroundColor(Color.black.opacity(0.45))
+                                .foregroundColor(KakaoTheme.onChatHeaderDim)
                             
                             Text("2")
                                 .font(.custom("Pretendard-Regular", size: 11))
-                                .foregroundColor(Color.black.opacity(0.45))
+                                .foregroundColor(KakaoTheme.onChatHeaderDim)
 
                             Circle()
-                                .fill(Color.black.opacity(0.18))
+                                .fill(KakaoTheme.onChatHeaderDim.opacity(0.4))
                                 .frame(width: 2.5, height: 2.5)
 
                             Menu {
@@ -112,7 +112,7 @@ public struct ChatHeaderView: View {
                                     Image(systemName: "chevron.down")
                                         .font(.system(size: 7, weight: .semibold))
                                 }
-                                .foregroundColor(Color.black.opacity(0.55))
+                                .foregroundColor(KakaoTheme.onChatHeaderDim)
                             }
                             .menuStyle(.borderlessButton)
                             .menuIndicator(.hidden)
@@ -148,7 +148,7 @@ public struct ChatHeaderView: View {
             }
         }
         .frame(height: 88)
-        .background(Color(red: 0.729, green: 0.808, blue: 0.878)) // 카카오톡 상단 배경색 #BACEE0
+        .background(KakaoTheme.chatHeader) // 카카오톡 상단 배경색 #BACEE0
     }
 }
 
@@ -162,7 +162,7 @@ private struct HeaderIconButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: .regular))
-                .foregroundColor(Color.black.opacity(0.75))
+                .foregroundColor(KakaoTheme.onChatHeader)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
@@ -183,15 +183,15 @@ public struct KakaoSlimSlider: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.black.opacity(0.2))
+                    .fill(KakaoTheme.onChatHeaderDim.opacity(0.45))
                     .frame(height: 2)
                 
                 Capsule()
-                    .fill(Color.black.opacity(0.45))
+                    .fill(KakaoTheme.onChatHeaderDim)
                     .frame(width: max(0, CGFloat((value - 0.35) / (1.0 - 0.35)) * geo.size.width), height: 2)
                 
                 Circle()
-                    .fill(Color.white)
+                    .fill(KakaoTheme.surface)
                     .frame(width: 8.5, height: 8.5)
                     .shadow(color: .black.opacity(0.25), radius: 1, x: 0, y: 0.5)
                     .offset(x: max(0, min(geo.size.width - 8.5, CGFloat((value - 0.35) / (1.0 - 0.35)) * (geo.size.width - 8.5))))

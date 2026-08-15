@@ -15,7 +15,7 @@
             font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
             font-size: 13.5px;
             line-height: 1.50;
-            color: #000000;
+            color: #1A1A1A;
             background-color: transparent;
             word-break: break-word;
             overflow: hidden;
@@ -103,6 +103,19 @@
             text-align: left;
         }
         th { background-color: rgba(0, 0, 0, 0.04); font-weight: 600; }
+
+        /* 다크 모드. 앱 전체 외형을 바꾸면 웹뷰도 이 규칙을 따릅니다.
+           수식은 KaTeX가 그린 노드라 색을 물려받게 두어야 합니다. */
+        @media (prefers-color-scheme: dark) {
+            body { color: #ECECEC; }
+            .katex, .katex * { color: inherit; }
+            code, pre { background-color: rgba(255, 255, 255, 0.10); }
+            blockquote { color: rgba(255, 255, 255, 0.72); }
+            th { background-color: rgba(255, 255, 255, 0.08); }
+            td, th { border-color: rgba(255, 255, 255, 0.16); }
+            hr { border-color: rgba(255, 255, 255, 0.16); }
+            a { color: #6FB3FF; }
+        }
     </style>
 </head>
 <body>

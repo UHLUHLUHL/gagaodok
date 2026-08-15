@@ -68,7 +68,7 @@ public struct KakaoMainWindowView: View {
                     Divider().overlay(hairline)
                     content
                 }
-                .background(Color.white)
+                .background(KakaoTheme.surface)
             }
 
             if isSettingsPresented {
@@ -86,7 +86,7 @@ public struct KakaoMainWindowView: View {
         .frame(minWidth: 350, idealWidth: 420, minHeight: 480, idealHeight: 680)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.all)
-        .environment(\.colorScheme, .light)
+        
     }
 
     // MARK: - 좌측 레일
@@ -140,7 +140,7 @@ public struct KakaoMainWindowView: View {
             }) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15.5))
-                    .foregroundColor(isSearchVisible ? ink : Color.black.opacity(0.72))
+                    .foregroundColor(isSearchVisible ? ink : KakaoTheme.textPrimary)
                     .frame(width: 26, height: 26)
             }
             .buttonStyle(.plain)
@@ -208,7 +208,7 @@ public struct KakaoMainWindowView: View {
                 LazyVStack(spacing: 0) { chatList }.id("chatList")
             }
         }
-        .background(Color.white)
+        .background(KakaoTheme.surface)
     }
 
     @ViewBuilder
@@ -422,7 +422,7 @@ private struct FriendRow: View {
                 if !room.profile.statusMessage.isEmpty {
                     Text(room.profile.statusMessage)
                         .font(.custom("Pretendard-Regular", size: 11))
-                        .foregroundColor(Color.black.opacity(0.45))
+                        .foregroundColor(KakaoTheme.textTertiary)
                         .lineLimit(1)
                 }
             }
@@ -467,7 +467,7 @@ public struct KakaoSettingsModal: View {
     
     public var body: some View {
         ZStack {
-            Color.black.opacity(0.4)
+            KakaoTheme.textTertiary
                 .ignoresSafeArea()
                 .onTapGesture { onClose() }
             
@@ -476,14 +476,14 @@ public struct KakaoSettingsModal: View {
                 HStack {
                     Text("설정")
                         .font(.custom("Pretendard-Bold", size: 15))
-                        .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                        .foregroundColor(KakaoTheme.textPrimary)
                     
                     Spacer()
                     
                     Button(action: onClose) {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color.black.opacity(0.5))
+                            .foregroundColor(KakaoTheme.textSecondary)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
@@ -503,7 +503,7 @@ public struct KakaoSettingsModal: View {
                             HStack {
                                 Text("API 사용 금액")
                                     .font(.custom("Pretendard-Medium", size: 12.5))
-                                    .foregroundColor(Color.black.opacity(0.6))
+                                    .foregroundColor(KakaoTheme.textSecondary)
                                 
                                 Spacer()
                                 
@@ -512,18 +512,18 @@ public struct KakaoSettingsModal: View {
                                     .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
-                                    .background(Color(red: 0.996, green: 0.902, blue: 0.0)) // 카카오 옐로우 뱃지
+                                    .background(KakaoTheme.bubbleMine) // 카카오 옐로우 뱃지
                                     .cornerRadius(4)
                             }
                             
                             HStack(alignment: .lastTextBaseline, spacing: 6) {
                                 Text(String(format: "₩%.2f", tokenManager.totalCostKRW))
                                     .font(.custom("Pretendard-Bold", size: 24))
-                                    .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                                    .foregroundColor(KakaoTheme.textPrimary)
                                 
                                 Text(String(format: "($%.4f)", tokenManager.totalCostUSD))
                                     .font(.custom("Pretendard-Regular", size: 12))
-                                    .foregroundColor(Color.black.opacity(0.45))
+                                    .foregroundColor(KakaoTheme.textTertiary)
                             }
                             
                             Divider()
@@ -532,7 +532,7 @@ public struct KakaoSettingsModal: View {
                             HStack {
                                 Text("누적 토큰")
                                     .font(.custom("Pretendard-Regular", size: 11.5))
-                                    .foregroundColor(Color.black.opacity(0.55))
+                                    .foregroundColor(KakaoTheme.textSecondary)
                                 
                                 Spacer()
                                 
@@ -544,13 +544,13 @@ public struct KakaoSettingsModal: View {
                             HStack {
                                 Text("입력 / 출력")
                                     .font(.custom("Pretendard-Regular", size: 11))
-                                    .foregroundColor(Color.black.opacity(0.45))
+                                    .foregroundColor(KakaoTheme.textTertiary)
                                 
                                 Spacer()
                                 
                                 Text("\(tokenManager.totalPromptTokens.formatted()) / \(tokenManager.totalCandidatesTokens.formatted())")
                                     .font(.custom("Pretendard-Regular", size: 11))
-                                    .foregroundColor(Color.black.opacity(0.55))
+                                    .foregroundColor(KakaoTheme.textSecondary)
                             }
                         }
                         .padding(14)
@@ -561,7 +561,7 @@ public struct KakaoSettingsModal: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("대화방별 사용 내역")
                                 .font(.custom("Pretendard-Bold", size: 12.5))
-                                .foregroundColor(Color.black.opacity(0.75))
+                                .foregroundColor(KakaoTheme.textPrimary)
                                 .padding(.leading, 2)
                             
                             VStack(spacing: 0) {
@@ -573,12 +573,12 @@ public struct KakaoSettingsModal: View {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(room.title)
                                                 .font(.custom("Pretendard-Bold", size: 12.5))
-                                                .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                                                .foregroundColor(KakaoTheme.textPrimary)
                                                 .lineLimit(1)
                                             
                                             Text("\(usage.totalTokens.formatted()) tokens (입력 \(usage.promptTokens.formatted()) · 출력 \(usage.candidatesTokens.formatted()))")
                                                 .font(.custom("Pretendard-Regular", size: 10))
-                                                .foregroundColor(Color.black.opacity(0.45))
+                                                .foregroundColor(KakaoTheme.textTertiary)
                                         }
                                         
                                         Spacer()
@@ -597,11 +597,11 @@ public struct KakaoSettingsModal: View {
                                 }
                             }
                             .padding(.horizontal, 8)
-                            .background(Color.white)
+                            .background(KakaoTheme.surface)
                             .cornerRadius(8)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.black.opacity(0.06), lineWidth: 0.5)
+                                    .stroke(KakaoTheme.hairline, lineWidth: 0.5)
                             )
                         }
                         
@@ -609,17 +609,17 @@ public struct KakaoSettingsModal: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("단가 기준 (Google AI Studio 공식 요율)")
                                 .font(.custom("Pretendard-Bold", size: 10.5))
-                                .foregroundColor(Color.black.opacity(0.45))
+                                .foregroundColor(KakaoTheme.textTertiary)
                             
                             Text("• 입력: $1.50 / 1M tokens · 출력(사고 포함): $7.50 / 1M tokens")
                                 .font(.custom("Pretendard-Regular", size: 10))
-                                .foregroundColor(Color.black.opacity(0.45))
+                                .foregroundColor(KakaoTheme.textTertiary)
                             Text("• 컨텍스트 캐싱: $0.15 / 1M tokens (90% 할인)")
                                 .font(.custom("Pretendard-Regular", size: 10))
-                                .foregroundColor(Color.black.opacity(0.45))
+                                .foregroundColor(KakaoTheme.textTertiary)
                             Text("• 적용 환율: 1 USD = 1,420.00 KRW")
                                 .font(.custom("Pretendard-Regular", size: 10))
-                                .foregroundColor(Color.black.opacity(0.45))
+                                .foregroundColor(KakaoTheme.textTertiary)
                         }
                         .padding(.horizontal, 4)
                         
@@ -640,7 +640,7 @@ public struct KakaoSettingsModal: View {
                 }
             }
             .frame(width: 310, height: 480)
-            .background(Color.white)
+            .background(KakaoTheme.surface)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 12)
         }
@@ -669,13 +669,13 @@ private struct KakaoChatRoomRow: View {
                 HStack(spacing: 4) {
                     Text(room.profile.name)
                         .font(.custom("Pretendard-Bold", size: 14))
-                        .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                        .foregroundColor(KakaoTheme.textPrimary)
                         .lineLimit(1)
 
                     if room.isPinned {
                         Image(systemName: "pin.fill")
                             .font(.system(size: 8.5))
-                            .foregroundColor(Color.black.opacity(0.35))
+                            .foregroundColor(KakaoTheme.textTertiary)
                     }
                     if room.profile.persona.isEnabled {
                         Image(systemName: "theatermasks.fill")
@@ -687,13 +687,13 @@ private struct KakaoChatRoomRow: View {
                     
                     Text(formattedTime(room.lastMessageTime))
                         .font(.custom("Pretendard-Regular", size: 10.5))
-                        .foregroundColor(Color.black.opacity(0.4))
+                        .foregroundColor(KakaoTheme.textTertiary)
                 }
                 
                 HStack {
                     Text(cleanSnippet(previewText ?? room.lastMessageText))
                         .font(.custom("Pretendard-Regular", size: 12))
-                        .foregroundColor(Color.black.opacity(0.55))
+                        .foregroundColor(KakaoTheme.textSecondary)
                         .lineLimit(1)
                     
                     Spacer()
@@ -702,7 +702,7 @@ private struct KakaoChatRoomRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(isHovered ? Color(red: 0.94, green: 0.95, blue: 0.97) : Color.white)
+        .background(isHovered ? KakaoTheme.rowHover : Color.white)
         .onHover { isHovered = $0 }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onOpen() }

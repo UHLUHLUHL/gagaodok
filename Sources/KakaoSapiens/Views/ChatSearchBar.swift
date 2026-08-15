@@ -37,19 +37,19 @@ public struct ChatSearchBar: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color.black.opacity(0.4))
+                .foregroundColor(KakaoTheme.textTertiary)
 
             ZStack(alignment: .leading) {
                 if query.isEmpty {
                     Text("대화 내용 검색")
                         .font(.custom("Pretendard-Regular", size: 13))
-                        .foregroundColor(Color.black.opacity(0.32))
+                        .foregroundColor(KakaoTheme.textTertiary)
                         .allowsHitTesting(false)
                 }
                 TextField("", text: $query)
                     .textFieldStyle(.plain)
                     .font(.custom("Pretendard-Regular", size: 13))
-                    .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
+                    .foregroundColor(KakaoTheme.textPrimary)
                     .focused($isFocused)
                     .onSubmit(onNext)
             }
@@ -57,7 +57,7 @@ public struct ChatSearchBar: View {
             if hasQuery {
                 Text(hitCount == 0 ? "없음" : "\(currentIndex + 1)/\(hitCount)")
                     .font(.custom("Pretendard-Regular", size: 11.5))
-                    .foregroundColor(Color.black.opacity(hitCount == 0 ? 0.35 : 0.55))
+                    .foregroundColor(KakaoTheme.textSecondary.opacity(hitCount == 0 ? 0.6 : 1))
                     .monospacedDigit()
 
                 arrowButton("chevron.up", action: onPrevious)
@@ -67,7 +67,7 @@ public struct ChatSearchBar: View {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color.black.opacity(0.45))
+                    .foregroundColor(KakaoTheme.textSecondary)
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
@@ -77,9 +77,9 @@ public struct ChatSearchBar: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 38)
-        .background(Color.white)
+        .background(KakaoTheme.surface)
         .overlay(Divider(), alignment: .bottom)
-        .environment(\.colorScheme, .light)
+        
         .onAppear { isFocused = true }
     }
 
@@ -88,7 +88,7 @@ public struct ChatSearchBar: View {
         Button(action: action) {
             Image(systemName: name)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(hitCount == 0 ? Color.black.opacity(0.2) : Color.black.opacity(0.6))
+                .foregroundColor(hitCount == 0 ? KakaoTheme.textTertiary.opacity(0.5) : KakaoTheme.textSecondary)
                 .frame(width: 20, height: 20)
                 .contentShape(Rectangle())
         }
@@ -114,8 +114,8 @@ public enum SearchHighlighter {
                 // 노란 말풍선 위에서도 보여야 하므로 노랑 계열을 쓰지 않습니다.
                 // 흰 배경과 카카오 옐로우 양쪽에서 모두 눈에 띄는 파랑으로 칠합니다.
                 result[lower..<upper].backgroundColor = isCurrent
-                    ? Color(red: 0.35, green: 0.66, blue: 1.0)
-                    : Color(red: 0.66, green: 0.85, blue: 1.0)
+                    ? KakaoTheme.searchHitCurrent
+                    : KakaoTheme.searchHit
             }
             guard found.upperBound < text.endIndex else { break }
             searchRange = found.upperBound..<text.endIndex

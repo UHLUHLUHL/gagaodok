@@ -25,7 +25,7 @@ public struct ChatInputView: View {
     public var body: some View {
         VStack(spacing: 0) {
             Divider()
-                .background(Color.black.opacity(0.08))
+                .background(KakaoTheme.hairline)
             
             // 첨부파일 미리보기 바
             if let attachment = selectedAttachment {
@@ -58,14 +58,14 @@ public struct ChatInputView: View {
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 16))
-                            .foregroundColor(Color.black.opacity(0.45))
+                            .foregroundColor(KakaoTheme.textTertiary)
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
-                .background(Color(red: 0.96, green: 0.96, blue: 0.96))
+                .background(KakaoTheme.sunken)
                 .overlay(
                     Divider(), alignment: .top
                 )
@@ -76,7 +76,7 @@ public struct ChatInputView: View {
                 if text.isEmpty {
                     Text("메시지 입력")
                         .font(.custom("Pretendard-Regular", size: 13.5))
-                        .foregroundColor(Color.black.opacity(0.35))
+                        .foregroundColor(KakaoTheme.textTertiary)
                         .padding(.leading, 14)
                         .padding(.top, 9)
                         .allowsHitTesting(false)
@@ -107,7 +107,7 @@ public struct ChatInputView: View {
                 }) {
                     Image(systemName: "plus")
                         .font(.system(size: 16.5, weight: .regular))
-                        .foregroundColor(Color.black.opacity(0.65))
+                        .foregroundColor(KakaoTheme.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -116,7 +116,7 @@ public struct ChatInputView: View {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: "face.smiling")
                         .font(.system(size: 16.5, weight: .regular))
-                        .foregroundColor(Color.black.opacity(0.65))
+                        .foregroundColor(KakaoTheme.textSecondary)
                     
                     Circle()
                         .fill(Color(red: 0.96, green: 0.30, blue: 0.25)) // 빨간 알림 점
@@ -130,7 +130,7 @@ public struct ChatInputView: View {
                 }) {
                     Image(systemName: "doc")
                         .font(.system(size: 15.5, weight: .regular))
-                        .foregroundColor(Color.black.opacity(0.65))
+                        .foregroundColor(KakaoTheme.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -146,7 +146,7 @@ public struct ChatInputView: View {
                     }) {
                         Text("전송")
                             .font(.custom("Pretendard-Medium", size: 12.5))
-                            .foregroundColor(canSend ? Color(red: 0.1, green: 0.1, blue: 0.1) : Color(red: 0.72, green: 0.72, blue: 0.72))
+                            .foregroundColor(canSend ? KakaoTheme.textPrimary : Color(red: 0.72, green: 0.72, blue: 0.72))
                             .padding(.horizontal, 14)
                             .padding(.vertical, 5.5)
                     }
@@ -181,18 +181,18 @@ public struct ChatInputView: View {
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(canSend ? Color(red: 0.996, green: 0.902, blue: 0.0) : Color(red: 0.93, green: 0.93, blue: 0.93))
+                        .fill(canSend ? KakaoTheme.bubbleMine : KakaoTheme.sunken)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(canSend ? Color.black.opacity(0.06) : Color.black.opacity(0.04), lineWidth: 0.5)
+                        .stroke(canSend ? KakaoTheme.hairline : KakaoTheme.hairline, lineWidth: 0.5)
                 )
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 9)
             .padding(.top, 4)
         }
-        .background(Color.white)
+        .background(KakaoTheme.surface)
     }
     
     private func selectFile(allowImagesOnly: Bool) {
