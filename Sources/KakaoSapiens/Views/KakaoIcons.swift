@@ -1,141 +1,287 @@
 import SwiftUI
 
-// 카카오톡 모양에 맞춰 직접 그린 아이콘입니다.
+// 카카오톡 아이콘을 실측 치수로 다시 그립니다.
 //
-// 처음에는 헤더 아이콘을 전부 직접 그렸는데, 확대해서 원본과 나란히 놓아 보니
-// 돋보기·수화기·비디오·햄버거는 SF Symbols 쪽이 오히려 더 가깝고 깔끔했습니다.
-// 특히 수화기는 직접 그린 경로가 스스로 겹쳐 뭉개진 덩어리가 됐습니다.
-// 그래서 SF Symbols에 같은 모양이 아예 없는 둘만 남깁니다.
+// 눈대중으로 맞추다 계속 어긋나서, 실제 카카오톡 캡처를 화소 단위로 훑어
+// 잉크 상자·획 굵기·곡선의 반지름을 직접 뽑았습니다. 아래 숫자는 전부 그렇게 잰
+// 값이고, 주석의 좌표는 각 아이콘의 설계 상자 안에서의 pt입니다.
+//
+//   돋보기      16.5 x 16.5,  획 1.5
+//   새 대화     19.5 x 16.0,  획 1.5
+//   친구 추가   22.0 x 17.0,  획 1.5
+//   레일 친구   23.0 x 23.0,  채움
+//   레일 채팅   22.0 x 22.0,  채움
+//   헤더 아이콘 중심 간격 41.0
+//
+// SF Symbols를 쓰지 않는 이유도 재 보고 알았습니다. 예를 들어 magnifyingglass는
+// 원 부분 획이 1.4로 원본과 같은데 손잡이만 2.75로 두 배 가까이 굵습니다.
+// 그래서 나란히 놓으면 우리 것만 뭉툭해 보였습니다.
 
-/// 새 대화 — 둥근 말풍선에 꼬리가 왼쪽 아래로 나오고, 오른쪽에 +가 붙습니다.
-///
-/// 원본을 확대해 보니 사각형이 아니라 거의 원에 가깝고, +가 놓인 자리에서
-/// 테두리가 끊겨 있습니다. 그 끊김이 이 아이콘의 인상을 만듭니다.
-/// SF Symbols에는 이렇게 테두리가 열린 말풍선이 없습니다.
-public struct ComposeChatIcon: View {
-    var lineWidth: CGFloat
-    var color: Color
+// MARK: - 설계 좌표
 
-    public init(lineWidth: CGFloat = 1.5, color: Color) {
-        self.lineWidth = lineWidth
-        self.color = color
+/// 실측 치수를 그대로 적고, 실제 프레임 크기에 맞춰 비율만 옮깁니다.
+/// 호출부가 설계 크기와 같은 프레임을 주면 배율은 1이 됩니다.
+private struct Canvas {
+    let design: CGSize
+    let bounds: CGRect
+
+    var scale: CGFloat {
+        min(bounds.width / design.width, bounds.height / design.height)
     }
 
-    public var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let h = geo.size.height
-            // 원본 실측: 전체 20 x 16.5pt, 말풍선 지름 약 13pt, +는 오른쪽 끝에 붙습니다.
-            let r = h * 0.40
-            let c = CGPoint(x: r + lineWidth / 2, y: h * 0.45)
-            let plusHalf = h * 0.21
-            let plusCenter = CGPoint(x: w - plusHalf - lineWidth / 2, y: h * 0.50)
-
-            ZStack {
-                BubbleOutline(center: c, radius: r)
-                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
-
-                Path { p in
-                    p.move(to: CGPoint(x: plusCenter.x - plusHalf, y: plusCenter.y))
-                    p.addLine(to: CGPoint(x: plusCenter.x + plusHalf, y: plusCenter.y))
-                    p.move(to: CGPoint(x: plusCenter.x, y: plusCenter.y - plusHalf))
-                    p.addLine(to: CGPoint(x: plusCenter.x, y: plusCenter.y + plusHalf))
-                }
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-            }
-        }
+    /// 설계 상자를 실제 프레임 가운데에 놓습니다.
+    private var origin: CGPoint {
+        CGPoint(
+            x: bounds.midX - design.width * scale / 2,
+            y: bounds.midY - design.height * scale / 2
+        )
     }
 
-    /// 오른쪽에 +가 들어갈 만큼 테두리를 비우고, 왼쪽 아래에 꼬리를 답니다.
-    private struct BubbleOutline: Shape {
-        let center: CGPoint
-        let radius: CGFloat
+    func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        CGPoint(x: origin.x + x * scale, y: origin.y + y * scale)
+    }
 
-        func path(in rect: CGRect) -> Path {
-            // 화면 좌표는 y가 아래로 커지므로 0°가 오른쪽, 90°가 아래입니다.
-            // +가 놓일 오른쪽을 비우고 나머지를 두 토막으로 그립니다.
-            var p = Path()
-            p.addArc(center: center, radius: radius,
-                     startAngle: .degrees(30), endAngle: .degrees(116),
-                     clockwise: false)
-            p.addLine(to: CGPoint(x: center.x - radius * 0.98, y: center.y + radius * 1.24))
-            p.addArc(center: center, radius: radius,
-                     startAngle: .degrees(156), endAngle: .degrees(300),
-                     clockwise: false)
-            return p
+    func len(_ v: CGFloat) -> CGFloat { v * scale }
+}
+
+/// 초타원 위 한 점입니다. `n`이 2면 보통 타원이고, 커질수록 위가 평평하고
+/// 옆구리가 곧아집니다. 카카오톡의 어깨 곡선이 정확히 n=2.5였습니다.
+private func superellipsePoint(
+    center: CGPoint, rx: CGFloat, ry: CGFloat, n: CGFloat, angle: CGFloat
+) -> CGPoint {
+    let c = cos(angle), s = sin(angle)
+    let e = 2 / n
+    return CGPoint(
+        x: center.x + rx * copysign(pow(abs(c), e), c),
+        y: center.y + ry * copysign(pow(abs(s), e), s)
+    )
+}
+
+private extension Path {
+    /// 초타원 호를 잘게 쪼개 잇습니다. SwiftUI의 addArc는 정원만 그려서
+    /// 타원 호가 필요하면 이렇게 직접 떠야 합니다.
+    mutating func addSuperellipseArc(
+        canvas: Canvas, center: CGPoint, rx: CGFloat, ry: CGFloat,
+        n: CGFloat = 2, from: CGFloat, to: CGFloat, steps: Int = 72, moveFirst: Bool
+    ) {
+        for i in 0...steps {
+            let a = (from + (to - from) * CGFloat(i) / CGFloat(steps)) * .pi / 180
+            let p = superellipsePoint(center: center, rx: rx, ry: ry, n: n, angle: a)
+            let screen = canvas.pt(p.x, p.y)
+            if i == 0 && moveFirst { move(to: screen) } else { addLine(to: screen) }
         }
     }
 }
 
-/// 사이드바의 채팅 아이콘 — 꼬리가 왼쪽 아래로 난 둥근 말풍선을 통째로 채웁니다.
+// MARK: - 헤더: 돋보기
+
+/// 돋보기 — 원 하나에 45°로 뻗은 손잡이입니다.
 ///
-/// 원본은 선택 여부로 채움/외곽선을 나누지 않고, 둘 다 채운 채 색만 바꿉니다.
-/// SF Symbols의 bubble.left는 모서리가 각지고 꼬리 위치가 달라 나란히 놓으면 티가 납니다.
-public struct ChatBubbleGlyph: View {
+/// 실측 16.5 x 16.5. 원의 바깥지름 12.5, 획 1.5, 손잡이도 같은 1.5입니다.
+/// SF Symbols는 손잡이만 2.75로 굵어 이 자리에서 혼자 뭉툭해 보입니다.
+public struct MagnifierIcon: View {
     var color: Color
 
-    public init(color: Color) {
-        self.color = color
-    }
+    public init(color: Color) { self.color = color }
 
     public var body: some View {
         GeometryReader { geo in
-            let w = geo.size.width
-            let h = geo.size.height
-            // 원본 실측: 전체 21.5 x 22pt. 몸통은 모서리를 크게 굴린 사각형이고
-            // 꼬리는 왼쪽 아래로 짧게 빠집니다.
-            let body = CGRect(x: 0, y: 0, width: w, height: h * 0.80)
-            let radius = body.height * 0.34
+            let c = Canvas(design: CGSize(width: 16.5, height: 16.5),
+                           bounds: CGRect(origin: .zero, size: geo.size))
+            let center = CGPoint(x: 6.25, y: 6.25)
+            let r: CGFloat = 5.5           // 획 중심선 반지름. 바깥지름 12.5.
+            let exit = r / (2.0).squareRoot()
 
             Path { p in
-                p.addRoundedRect(in: body, cornerSize: CGSize(width: radius, height: radius),
-                                 style: .continuous)
-                p.move(to: CGPoint(x: w * 0.13, y: body.maxY - radius * 0.35))
-                p.addLine(to: CGPoint(x: w * 0.03, y: h))
-                p.addLine(to: CGPoint(x: w * 0.40, y: body.maxY - radius * 0.35))
-                p.closeSubpath()
+                p.addEllipse(in: CGRect(
+                    x: c.pt(center.x - r, center.y - r).x,
+                    y: c.pt(center.x - r, center.y - r).y,
+                    width: c.len(r * 2), height: c.len(r * 2)
+                ))
+                p.move(to: c.pt(center.x + exit, center.y + exit))
+                p.addLine(to: c.pt(15.75, 15.75))
             }
-            .fill(color)
+            .stroke(color, style: StrokeStyle(lineWidth: c.len(1.5), lineCap: .round))
         }
     }
 }
 
-/// 사이드바의 친구 아이콘 — 동그란 머리와 넓은 어깨가 떨어져 있는 채운 실루엣입니다.
+// MARK: - 헤더: 새 대화
+
+/// 새 대화 — 오른쪽이 트인 말풍선에 +가 붙습니다.
 ///
-/// SF Symbols의 person.fill은 머리와 어깨가 붙어 있고 어깨도 좁아서, 원본과 나란히
-/// 놓으면 다른 아이콘으로 보입니다. 원본은 둘 사이에 뚜렷한 틈이 있고 어깨가
-/// 머리 지름의 두 배 가까이 넓습니다.
+/// 실측 19.5 x 16.0. 몸통은 정원이 아니라 가로로 눌린 타원(중심선 반지름 7.5 x 6.25)이고,
+/// +가 놓이는 오른쪽 72°가 통째로 비어 있습니다. 그 트임이 이 아이콘의 인상을 만듭니다.
+/// 꼬리는 왼쪽 아래에서 곧게 내려갔다가 비스듬히 몸통으로 돌아옵니다.
+public struct ComposeChatIcon: View {
+    var color: Color
+
+    public init(color: Color) { self.color = color }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let c = Canvas(design: CGSize(width: 19.5, height: 16.0),
+                           bounds: CGRect(origin: .zero, size: geo.size))
+            let center = CGPoint(x: 8.25, y: 7.0)
+            let rx: CGFloat = 7.5, ry: CGFloat = 6.25
+
+            Path { p in
+                // 오른쪽 아래에서 시작해 바닥까지. 화면 좌표라 각도가 커지면 아래로 돕니다.
+                p.addSuperellipseArc(canvas: c, center: center, rx: rx, ry: ry,
+                                     from: 41, to: 110, moveFirst: true)
+                // 꼬리: 뾰족한 끝을 찍고 몸통 왼쪽 아래로 되돌아옵니다.
+                // 끝점은 (3.9, 15.3). 둥근 마감을 더하면 아이콘 바닥 16.0에 맞습니다.
+                p.addLine(to: c.pt(3.9, 15.3))
+                p.addSuperellipseArc(canvas: c, center: center, rx: rx, ry: ry,
+                                     from: 134, to: 329, moveFirst: false)
+
+                // +. 실측으로 중심 (15.5, 8.0), 획 중심선 팔 길이 3.25입니다.
+                // 둥근 마감 0.75를 더하면 오른쪽 끝이 정확히 19.5, 곧 아이콘 폭이 됩니다.
+                let plus = CGPoint(x: 15.5, y: 8.0)
+                let arm: CGFloat = 3.25
+                p.move(to: c.pt(plus.x - arm, plus.y))
+                p.addLine(to: c.pt(plus.x + arm, plus.y))
+                p.move(to: c.pt(plus.x, plus.y - arm))
+                p.addLine(to: c.pt(plus.x, plus.y + arm))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: c.len(1.5),
+                                              lineCap: .round, lineJoin: .round))
+        }
+    }
+}
+
+// MARK: - 헤더: 친구 추가
+
+/// 친구 추가 — 외곽선 사람에 +가 붙습니다.
+///
+/// 실측 22.0 x 17.0. 머리는 바깥지름 9의 원이고, 어깨는 초타원(n=2.5)의 윗반쪽을
+/// 상자 아래에서 잘라 낸 호입니다. 어깨가 사람 폭의 전부를 쓰기 때문에
+/// 아래로 갈수록 옆구리가 곧게 서고 위는 평평합니다. 보통 타원으로는 이 느낌이 안 납니다.
+public struct AddFriendIcon: View {
+    var color: Color
+
+    public init(color: Color) { self.color = color }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let c = Canvas(design: CGSize(width: 22.0, height: 17.0),
+                           bounds: CGRect(origin: .zero, size: geo.size))
+
+            Path { p in
+                // 머리. 중심선 반지름 3.75, 획 1.5 → 바깥지름 9.
+                let head = CGPoint(x: 8.0, y: 4.5)
+                let hr: CGFloat = 3.75
+                p.addEllipse(in: CGRect(
+                    x: c.pt(head.x - hr, head.y - hr).x,
+                    y: c.pt(head.x - hr, head.y - hr).y,
+                    width: c.len(hr * 2), height: c.len(hr * 2)
+                ))
+
+                // 어깨. 중심을 상자 아래(17.5)에 두고 윗반쪽만 그리되,
+                // 상자 바닥에 닿는 지점(y≈16.25)에서 끊습니다.
+                // 그 각도를 초타원 식에서 거꾸로 풀면 아래 값이 나옵니다.
+                let cut: CGFloat = 7.7    // 180°+7.7° ~ 360°-7.7°
+                p.addSuperellipseArc(canvas: c, center: CGPoint(x: 8.0, y: 17.5),
+                                     rx: 7.5, ry: 6.25, n: 2.5,
+                                     from: 180 + cut, to: 360 - cut, moveFirst: true)
+
+                // +. 실측으로 중심 (18.25, 8.5), 획 중심선 팔 길이 2.9입니다.
+                let plus = CGPoint(x: 18.25, y: 8.5)
+                let arm: CGFloat = 2.9
+                p.move(to: c.pt(plus.x - arm, plus.y))
+                p.addLine(to: c.pt(plus.x + arm, plus.y))
+                p.move(to: c.pt(plus.x, plus.y - arm))
+                p.addLine(to: c.pt(plus.x, plus.y + arm))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: c.len(1.5),
+                                              lineCap: .round, lineJoin: .round))
+        }
+    }
+}
+
+// MARK: - 레일: 친구
+
+/// 사이드바의 친구 아이콘 — 머리와 어깨가 떨어져 있는 채운 실루엣입니다.
+///
+/// 실측 23 x 23. 머리 지름 12, 틈 2, 어깨 23 x 9입니다.
+/// 어깨는 아래 2.5가 곧은 옆구리이고 위 6.5가 타원 돔입니다. 행마다 폭을 재
+/// 맞춰 보니 초타원이 아니라 보통 타원이 정확했습니다.
 public struct PersonGlyph: View {
     var color: Color
 
-    public init(color: Color) {
-        self.color = color
-    }
+    public init(color: Color) { self.color = color }
 
     public var body: some View {
         GeometryReader { geo in
-            let s = min(geo.size.width, geo.size.height)
-            // 원본 실측: 전체 23pt 안에서 머리 지름 12, 틈 2, 어깨 폭 23 x 높이 9.
-            // 어깨가 머리의 약 두 배로 넓고 위가 납작한 돔입니다.
-            let headR = s * 0.261
-            let headCenter = CGPoint(x: s * 0.5, y: s * 0.261)
-            let shoulderTop = s * 0.609
-            let shoulderBottom = s
+            let c = Canvas(design: CGSize(width: 23, height: 23),
+                           bounds: CGRect(origin: .zero, size: geo.size))
 
             Path { p in
-                p.addEllipse(in: CGRect(x: headCenter.x - headR, y: headCenter.y - headR,
-                                        width: headR * 2, height: headR * 2))
-                // 폭에 비해 높이가 낮아 반원이 아니라 눌린 돔입니다.
-                p.move(to: CGPoint(x: 0, y: shoulderBottom))
-                p.addLine(to: CGPoint(x: 0, y: shoulderTop + (shoulderBottom - shoulderTop) * 0.45))
-                p.addQuadCurve(to: CGPoint(x: s * 0.5, y: shoulderTop),
-                               control: CGPoint(x: 0, y: shoulderTop))
-                p.addQuadCurve(to: CGPoint(x: s, y: shoulderTop + (shoulderBottom - shoulderTop) * 0.45),
-                               control: CGPoint(x: s, y: shoulderTop))
-                p.addLine(to: CGPoint(x: s, y: shoulderBottom))
+                let hr: CGFloat = 6
+                p.addEllipse(in: CGRect(
+                    x: c.pt(11.5 - hr, 6 - hr).x, y: c.pt(11.5 - hr, 6 - hr).y,
+                    width: c.len(hr * 2), height: c.len(hr * 2)
+                ))
+
+                // 어깨: 왼쪽 아래 → 곧은 옆구리 → 돔 → 오른쪽 아래.
+                let domeBottom: CGFloat = 20.5
+                p.move(to: c.pt(0, 23))
+                p.addLine(to: c.pt(0, domeBottom))
+                p.addSuperellipseArc(canvas: c,
+                                     center: CGPoint(x: 11.5, y: domeBottom),
+                                     rx: 11.5, ry: 6.5, n: 2,
+                                     from: 180, to: 360, moveFirst: false)
+                p.addLine(to: c.pt(23, 23))
                 p.closeSubpath()
             }
             .fill(color)
+        }
+    }
+}
+
+// MARK: - 레일: 채팅
+
+/// 사이드바의 채팅 아이콘 — 왼쪽 아래로 꼬리가 난 채운 말풍선입니다.
+///
+/// 실측 22 x 22. 몸통은 22 x 18.6에 반지름 9.3, 곧 높이의 절반이라 양옆이 반원인
+/// 알약 모양입니다. 행마다 폭을 재서 알았습니다. 맨 윗줄의 폭이 3.4밖에 안 되고
+/// 폭이 다 차는 줄이 한 줄뿐인데, 모서리를 굴린 사각형으로는 이 두 가지가 같이 안 나옵니다.
+/// 꼬리는 왼쪽 모서리에서 곧게 내려와 끝을 찍고 비스듬히 바닥으로 돌아옵니다.
+///
+/// 몸통과 꼬리를 한 Path에 넣으면 안 됩니다. 두 도형의 감는 방향이 반대라
+/// 겹친 자리가 비어 하얀 쐐기가 생깁니다. 실제로 그렇게 났었습니다.
+/// 겹쳐 그리면 그런 다툼이 없습니다.
+public struct ChatBubbleGlyph: View {
+    var color: Color
+
+    public init(color: Color) { self.color = color }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let c = Canvas(design: CGSize(width: 22, height: 22),
+                           bounds: CGRect(origin: .zero, size: geo.size))
+
+            ZStack {
+                Path { p in
+                    p.addRoundedRect(
+                        in: CGRect(x: c.pt(0, 0).x, y: c.pt(0, 0).y,
+                                   width: c.len(22), height: c.len(18.6)),
+                        cornerSize: CGSize(width: c.len(9.3), height: c.len(9.3)),
+                        style: .circular
+                    )
+                }
+                .fill(color)
+
+                Path { p in
+                    // 위쪽 두 점은 몸통 안에 넉넉히 물려 둡니다. 경계에 딱 붙이면
+                    // 모서리 곡선을 따라 실틈이 보입니다.
+                    p.move(to: c.pt(4.0, 15.5))
+                    p.addLine(to: c.pt(10.0, 18.0))
+                    p.addLine(to: c.pt(4.4, 22.0))
+                    p.closeSubpath()
+                }
+                .fill(color)
+            }
         }
     }
 }

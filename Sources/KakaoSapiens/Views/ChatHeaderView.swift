@@ -128,10 +128,19 @@ public struct ChatHeaderView: View {
                     Spacer()
                     
                     // 우측 아이콘 버튼 그룹 (돋보기, 전화기, 비디오, 햄버거 메뉴)
-                    // 이 넷은 SF Symbols가 원본과 거의 같습니다. 직접 그려 봤더니
-                    // 특히 수화기가 훨씬 조잡해져서, 모양이 정말 다른 것만 직접 그립니다.
+                    // 수화기·비디오·햄버거는 SF Symbols가 원본과 거의 같습니다. 직접 그려 봤더니
+                    // 특히 수화기가 훨씬 조잡해져서 그대로 둡니다.
+                    // 돋보기만 직접 그린 것을 씁니다. SF 쪽은 원 부분 획은 원본과 같은 1.5인데
+                    // 손잡이만 2.75로 굵어서, 재 보면 이 줄에서 혼자 뭉툭합니다.
                     HStack(spacing: 15) {
-                        HeaderIconButton(systemName: "magnifyingglass", size: 15.5) { onSearchTapped?() }
+                        Button { onSearchTapped?() } label: {
+                            MagnifierIcon(color: KakaoTheme.onChatHeader)
+                                .frame(width: 15.5, height: 15.5)
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
                         HeaderIconButton(systemName: "phone", size: 15.5) { onCallTapped?() }
                         HeaderIconButton(systemName: "video", size: 15.5) { onVideoTapped?() }
                         HeaderIconButton(systemName: "line.3.horizontal", size: 16.5) { onMenuTapped?() }

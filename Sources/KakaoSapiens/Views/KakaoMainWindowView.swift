@@ -100,7 +100,7 @@ public struct KakaoMainWindowView: View {
                 PersonGlyph(color: color).frame(width: 23, height: 23)
             }
             railButton(selected: tab == .chats) { tab = .chats } content: { color in
-                ChatBubbleGlyph(color: color).frame(width: 21.5, height: 22)
+                ChatBubbleGlyph(color: color).frame(width: 22, height: 22)
             }
             Spacer()
             // 아래쪽 톱니는 원본도 가는 선입니다.
@@ -147,13 +147,11 @@ public struct KakaoMainWindowView: View {
                     searchText = ""
                 }
             }) {
-                // 원본 실측: 17 x 17pt. 눈대중 대신 잉크 높이를 직접 맞춥니다.
-                Image(systemName: "magnifyingglass")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(height: 17)
-                    .foregroundColor(isSearchVisible ? ink : KakaoTheme.textPrimary)
+                // 원본 실측: 16.5 x 16.5pt.
+                MagnifierIcon(color: isSearchVisible ? ink : KakaoTheme.textPrimary)
+                    .frame(width: 16.5, height: 16.5)
                     .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusable(false)
@@ -165,16 +163,13 @@ public struct KakaoMainWindowView: View {
             Button(action: { isAddingFriend = true }) {
                 Group {
                     if tab == .friends {
-                        // 원본 실측: 22 x 17pt. 돋보기와 높이를 같게 두고 폭만 자연스럽게 넓힙니다.
-                        Image(systemName: "person.badge.plus")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(height: 17)
-                            .foregroundColor(KakaoTheme.textPrimary)
+                        // 원본 실측: 22 x 17pt.
+                        AddFriendIcon(color: KakaoTheme.textPrimary)
+                            .frame(width: 22, height: 17)
                     } else {
-                        // 원본 실측: 20 x 16.5pt.
-                        ComposeChatIcon(lineWidth: 1.5, color: KakaoTheme.textPrimary)
-                            .frame(width: 20, height: 16.5)
+                        // 원본 실측: 19.5 x 16pt.
+                        ComposeChatIcon(color: KakaoTheme.textPrimary)
+                            .frame(width: 19.5, height: 16)
                     }
                 }
                 .frame(width: 28, height: 28)
