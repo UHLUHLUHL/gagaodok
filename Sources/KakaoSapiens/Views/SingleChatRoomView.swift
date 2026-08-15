@@ -22,6 +22,8 @@ public struct SingleChatRoomView: View {
     @State private var isSearching = false
     @State private var searchQuery = ""
     @State private var searchHitIndex = 0
+    /// 답변을 받는 중인 작업입니다. 취소를 누르면 이걸 끊습니다.
+    @State private var responseTask: Task<Void, Never>?
 
     /// 검색어를 담은 메시지들입니다. 최근 것이 1번이 되도록 뒤에서부터 셉니다.
     private var searchHits: [UUID] {
@@ -49,6 +51,11 @@ public struct SingleChatRoomView: View {
         roomManager.getRoom(id: roomId) ?? ChatRoom(id: roomId)
     }
     
+    /// 이 방이 쓰는 모델입니다. 고른 적이 없으면 전역 기본값을 따릅니다.
+    private var activeModel: AIModel {
+        room.resolvedModel(default: modelManager.selectedModel)
+    }
+
     private var currentAvatar: NSImage? {
         roomManager.loadAvatarForRoom(profile: room.profile)
     }
@@ -96,7 +103,11 @@ public struct SingleChatRoomView: View {
             }
 
             if isTyping {
-                TypingIndicatorView(botName: room.profile.name, customAvatar: currentAvatar)
+                TypingIndicatorView(
+                    botName: room.profile.name,
+                    customAvatar: currentAvatar,
+                    onCancel: { cancelResponse() }
+                )
                     .id("typingIndicator")
                     .transition(.opacity)
             }
@@ -132,7 +143,9 @@ public struct SingleChatRoomView: View {
                     },
                     onMenuTapped: {
                         isProfileModalPresented = true
-                    }
+                    },
+                    activeModel: activeModel,
+                    onModelSelected: { roomManager.updateRoomModel(roomId: roomId, model: $0) }
                 )
 
                 if isSearching {
@@ -460,13 +473,13 @@ public struct SingleChatRoomView: View {
     private func triggerAIResponse(history: [ChatMessage]) {
         let currentBotName = room.profile.name
         let currentRoomId = roomId
-        let currentModel = modelManager.selectedModel
+        let currentModel = activeModel
         let currentPersona = room.profile.persona
         let conversation = ConversationTurn.from(messages: history)
         // 실패로 남길 대상은 방금 보낸 내 메시지입니다.
         let failingMessageId = history.last(where: { $0.sender == .user })?.id
 
-        Task {
+        responseTask = Task {
             let responseTurnId = UUID()
             // 첫 말풍선이 붙는 순간 타이핑 표시를 끕니다. 예전에는 답변 전체를 받은 뒤였습니다.
             var attempt = 0
@@ -503,7 +516,15 @@ public struct SingleChatRoomView: View {
                         self.messages[idx].canonicalText = rawText
                     }
                     return
+                } catch is CancellationError {
+                    await MainActor.run { self.isTyping = false }
+                    return
                 } catch {
+                    // 사용자가 멈춘 것은 실패가 아닙니다. 표시를 남기지 않습니다.
+                    if Task.isCancelled {
+                        await MainActor.run { self.isTyping = false }
+                        return
+                    }
                     // 말풍선이 이미 하나라도 붙었으면 다시 보낼 수 없습니다.
                     // 처음부터 다시 받으면 앞부분이 두 번 나옵니다.
                     let alreadyShown = await MainActor.run {
@@ -534,6 +555,13 @@ public struct SingleChatRoomView: View {
         withAnimation(.easeInOut(duration: 0.22)) {
             proxy.scrollTo(hit, anchor: .center)
         }
+    }
+
+    /// 답변 받기를 멈춥니다. 그때까지 붙은 말풍선은 그대로 둡니다.
+    private func cancelResponse() {
+        responseTask?.cancel()
+        responseTask = nil
+        isTyping = false
     }
 
     /// 검색 결과 사이를 옮겨 다닙니다. 양 끝에서는 반대편으로 돌아갑니다.

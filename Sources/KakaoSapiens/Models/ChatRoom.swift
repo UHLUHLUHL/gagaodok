@@ -117,7 +117,12 @@ public struct ChatRoom: Identifiable, Codable, Equatable {
     public var lastMessageTime: Date
     public var isPinned: Bool
     public var unreadCount: Int
-    
+    /// 이 방에서 쓰는 모델입니다. 비어 있으면 전역 설정을 따릅니다.
+    ///
+    /// 말투가 방마다 다른데 모델은 전역이라, 방을 옮길 때마다 모델이 따라와서
+    /// 어느 방이 무엇으로 답했는지 헷갈렸습니다. 방에 붙여 둡니다.
+    public var modelIdentifier: String?
+
     public init(
         id: UUID = UUID(),
         title: String = "사피엔스",
@@ -125,7 +130,8 @@ public struct ChatRoom: Identifiable, Codable, Equatable {
         lastMessageText: String = "반갑습니다. 수학 학습 파트너입니다.",
         lastMessageTime: Date = Date(),
         isPinned: Bool = false,
-        unreadCount: Int = 0
+        unreadCount: Int = 0,
+        modelIdentifier: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -135,6 +141,13 @@ public struct ChatRoom: Identifiable, Codable, Equatable {
         self.lastMessageTime = lastMessageTime
         self.isPinned = isPinned
         self.unreadCount = unreadCount
+        self.modelIdentifier = modelIdentifier
+    }
+
+    /// 이 방이 실제로 쓸 모델입니다. 아직 고른 적이 없으면 전역 기본값입니다.
+    public func resolvedModel(default fallback: AIModel) -> AIModel {
+        guard let modelIdentifier, let model = AIModel(storedValue: modelIdentifier) else { return fallback }
+        return model
     }
 }
 
@@ -263,6 +276,13 @@ public class ChatRoomManager: ObservableObject {
         }
     }
     
+    public func updateRoomModel(roomId: UUID, model: AIModel) {
+        guard let idx = rooms.firstIndex(where: { $0.id == roomId }) else { return }
+        guard rooms[idx].modelIdentifier != model.rawValue else { return }
+        rooms[idx].modelIdentifier = model.rawValue
+        saveRooms()
+    }
+
     public func updateRoomPersona(roomId: UUID, persona: PersonaStyle) {
         guard let idx = rooms.firstIndex(where: { $0.id == roomId }) else { return }
         guard rooms[idx].profile.persona != persona else { return }

@@ -11,7 +11,9 @@ public struct ChatHeaderView: View {
     var onCallTapped: (() -> Void)?
     var onVideoTapped: (() -> Void)?
     var onMenuTapped: (() -> Void)?
-    @ObservedObject private var modelManager = ModelSelectionManager.shared
+    /// 이 방이 쓰는 모델입니다. 모델은 방마다 따로 기억합니다.
+    var activeModel: AIModel = .gemini37Flash
+    var onModelSelected: ((AIModel) -> Void)? = nil
     
     public init(
         botName: String = "사피엔스",
@@ -22,8 +24,12 @@ public struct ChatHeaderView: View {
         onSearchTapped: (() -> Void)? = nil,
         onCallTapped: (() -> Void)? = nil,
         onVideoTapped: (() -> Void)? = nil,
-        onMenuTapped: (() -> Void)? = nil
+        onMenuTapped: (() -> Void)? = nil,
+        activeModel: AIModel = .gemini37Flash,
+        onModelSelected: ((AIModel) -> Void)? = nil
     ) {
+        self.activeModel = activeModel
+        self.onModelSelected = onModelSelected
         self.botName = botName
         self.customAvatar = customAvatar
         self.onAvatarTapped = onAvatarTapped
@@ -84,9 +90,9 @@ public struct ChatHeaderView: View {
                             Menu {
                                 ForEach(AIModel.allCases) { model in
                                     Button {
-                                        modelManager.selectedModel = model
+                                        onModelSelected?(model)
                                     } label: {
-                                        if modelManager.selectedModel == model {
+                                        if activeModel == model {
                                             Label(model.displayName, systemImage: "checkmark")
                                         } else {
                                             Text(model.displayName)
@@ -96,11 +102,11 @@ public struct ChatHeaderView: View {
                             } label: {
                                 HStack(spacing: 3) {
                                     Circle()
-                                        .fill(modelManager.selectedModel == .gemini37Flash
+                                        .fill(activeModel == .gemini37Flash
                                               ? Color(red: 0.26, green: 0.53, blue: 0.95)
                                               : Color(red: 0.39, green: 0.26, blue: 0.76))
                                         .frame(width: 5, height: 5)
-                                    Text(modelManager.selectedModel.shortName)
+                                    Text(activeModel.shortName)
                                         .font(.custom("Pretendard-Medium", size: 10.5))
                                     Image(systemName: "chevron.down")
                                         .font(.system(size: 7, weight: .semibold))
