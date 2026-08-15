@@ -96,12 +96,11 @@ public struct KakaoMainWindowView: View {
             Spacer().frame(height: 54)
             // 원본은 선택 여부로 채움/외곽선을 나누지 않습니다. 둘 다 채운 채 색만 바꿉니다.
             railButton(selected: tab == .friends) { tab = .friends } content: { color in
-                Image(systemName: "person.fill")
-                    .font(.system(size: 21))
-                    .foregroundColor(color)
+                PersonGlyph(color: color).frame(width: 22, height: 22)
             }
             railButton(selected: tab == .chats) { tab = .chats } content: { color in
-                ChatBubbleGlyph(color: color).frame(width: 23, height: 23)
+                // 말풍선은 가로로 넓어 같은 크기라도 더 커 보입니다. 조금 줄여 사람과 무게를 맞춥니다.
+                ChatBubbleGlyph(color: color).frame(width: 21, height: 21)
             }
             Spacer()
             // 아래쪽 톱니는 원본도 가는 선입니다.
@@ -160,17 +159,20 @@ public struct KakaoMainWindowView: View {
             Button(action: { isAddingFriend = true }) {
                 Group {
                     if tab == .friends {
-                        // 원본과 모양이 같아 SF Symbols를 그대로 씁니다.
+                        // 가로로 퍼진 글리프라 돋보기와 같은 크기면 더 커 보입니다. 한 단 줄입니다.
+                        // +가 오른쪽 위에 붙어 무게중심이 위로 쏠리므로 살짝 내려 맞춥니다.
                         Image(systemName: "person.badge.plus")
-                            .font(.system(size: 16))
+                            .font(.system(size: 15, weight: .regular))
                             .foregroundColor(KakaoTheme.textPrimary)
+                            .offset(y: 0.5)
                     } else {
                         // 이건 SF Symbols에 같은 모양이 없어 직접 그립니다.
-                        ComposeChatIcon(color: KakaoTheme.textPrimary)
+                        // 꼬리가 아래로 빠져 무게중심이 내려가므로 살짝 올려 맞춥니다.
+                        ComposeChatIcon(lineWidth: 1.4, color: KakaoTheme.textPrimary)
+                            .frame(width: 19, height: 19)
+                            .offset(y: -0.5)
                     }
                 }
-                // 돋보기보다 살짝 크게 잡아 원본과 비슷한 무게로 보이게 합니다.
-                .frame(width: 21, height: 21)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
             }

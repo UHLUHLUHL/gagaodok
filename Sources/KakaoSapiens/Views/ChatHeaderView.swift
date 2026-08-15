@@ -44,8 +44,8 @@ public struct ChatHeaderView: View {
     public var body: some View {
         ZStack(alignment: .top) {
             // 상단 헤더 영역만 마우스 드래그로 창 이동 가능
-            // 오른쪽 끝은 투명도 슬라이더 자리라 비워 둡니다 (슬라이더 58 + 여백 14 + 여유).
-            WindowDragArea(excludedFromRight: 86)
+            // 슬라이더가 NSView라 자기 클릭을 스스로 삼킵니다. 예외 구간이 필요 없습니다.
+            WindowDragArea()
             
             VStack(spacing: 0) {
                 // 1. 최상단 신호등 버튼 높이 라인 & 우상단 미니 슬라이더
@@ -53,7 +53,8 @@ public struct ChatHeaderView: View {
                     Spacer()
                     
                     // 우상단 카카오톡 특유의 미니멀 슬림 슬라이더 (신호등과 완벽 동일한 수평선)
-                    KakaoSlimSlider(value: $opacity)
+                    BrightnessSlider(value: $opacity)
+                        .frame(width: 62, height: 16)
                         .padding(.trailing, 14)
                 }
                 .frame(height: 14)
@@ -159,45 +160,6 @@ private struct HeaderIconButton: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-    }
-}
-
-// MARK: - 카카오톡 초슬림 투명도 슬라이더
-public struct KakaoSlimSlider: View {
-    @Binding var value: Double
-    
-    public init(value: Binding<Double>) {
-        self._value = value
-    }
-    
-    public var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(KakaoTheme.onChatHeaderDim.opacity(0.45))
-                    .frame(height: 2)
-                
-                Capsule()
-                    .fill(KakaoTheme.onChatHeaderDim)
-                    .frame(width: max(0, CGFloat((value - 0.35) / (1.0 - 0.35)) * geo.size.width), height: 2)
-                
-                Circle()
-                    .fill(KakaoTheme.surface)
-                    .frame(width: 8.5, height: 8.5)
-                    .shadow(color: .black.opacity(0.25), radius: 1, x: 0, y: 0.5)
-                    .offset(x: max(0, min(geo.size.width - 8.5, CGFloat((value - 0.35) / (1.0 - 0.35)) * (geo.size.width - 8.5))))
-            }
-            .frame(height: geo.size.height)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { gesture in
-                        let progress = max(0, min(1, gesture.location.x / geo.size.width))
-                        value = 0.35 + (1.0 - 0.35) * Double(progress)
-                    }
-            )
-        }
-        .frame(width: 58, height: 12)
     }
 }
 

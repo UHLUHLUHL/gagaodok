@@ -81,14 +81,57 @@ public struct ChatBubbleGlyph: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let r = min(w, h) * 0.40
-            let c = CGPoint(x: w * 0.50, y: h * 0.44)
+            // 원본은 원이 아니라 모서리를 크게 굴린 사각형에 가깝고, 가로가 조금 더 깁니다.
+            let body = CGRect(x: w * 0.04, y: h * 0.10, width: w * 0.92, height: h * 0.62)
+            let radius = body.height * 0.46
 
             Path { p in
-                p.addArc(center: c, radius: r,
-                         startAngle: .degrees(122), endAngle: .degrees(96),
-                         clockwise: false)
-                p.addLine(to: CGPoint(x: c.x - r * 0.52, y: c.y + r * 1.62))
+                p.addRoundedRect(in: body, cornerSize: CGSize(width: radius, height: radius),
+                                 style: .continuous)
+                // 왼쪽 아래로 빠지는 짧은 꼬리
+                p.move(to: CGPoint(x: body.minX + body.width * 0.20, y: body.maxY - 2))
+                p.addLine(to: CGPoint(x: body.minX + body.width * 0.10, y: h * 0.94))
+                p.addLine(to: CGPoint(x: body.minX + body.width * 0.46, y: body.maxY - 2))
+                p.closeSubpath()
+            }
+            .fill(color)
+        }
+    }
+}
+
+/// 사이드바의 친구 아이콘 — 동그란 머리와 넓은 어깨가 떨어져 있는 채운 실루엣입니다.
+///
+/// SF Symbols의 person.fill은 머리와 어깨가 붙어 있고 어깨도 좁아서, 원본과 나란히
+/// 놓으면 다른 아이콘으로 보입니다. 원본은 둘 사이에 뚜렷한 틈이 있고 어깨가
+/// 머리 지름의 두 배 가까이 넓습니다.
+public struct PersonGlyph: View {
+    var color: Color
+
+    public init(color: Color) {
+        self.color = color
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let s = min(geo.size.width, geo.size.height)
+            let headR = s * 0.158
+            let headCenter = CGPoint(x: s * 0.5, y: s * 0.265)
+            let shoulderW = s * 0.68
+            let shoulderTop = s * 0.505
+            let shoulderBottom = s * 0.80
+            let shoulderR = shoulderW / 2
+
+            Path { p in
+                p.addEllipse(in: CGRect(x: headCenter.x - headR, y: headCenter.y - headR,
+                                        width: headR * 2, height: headR * 2))
+                // 어깨는 위가 반원, 아래가 평평한 반쪽 알약입니다.
+                let cx = s * 0.5
+                let arcCenter = CGPoint(x: cx, y: shoulderTop + shoulderR)
+                p.move(to: CGPoint(x: cx - shoulderR, y: shoulderBottom))
+                p.addLine(to: CGPoint(x: cx - shoulderR, y: arcCenter.y))
+                p.addArc(center: arcCenter, radius: shoulderR,
+                         startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+                p.addLine(to: CGPoint(x: cx + shoulderR, y: shoulderBottom))
                 p.closeSubpath()
             }
             .fill(color)

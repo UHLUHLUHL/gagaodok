@@ -272,7 +272,7 @@ public struct SingleChatRoomView: View {
                     onSend: handleSendOrEdit
                 )
             }
-            .opacity(windowOpacity)
+            .background(WindowAlphaSetter(alpha: windowOpacity))
             
             // 이미지 확대 모달
             if let attachment = activeImageModal {

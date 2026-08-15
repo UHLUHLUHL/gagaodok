@@ -139,7 +139,7 @@ public struct MessageBubbleView: View {
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
-                                .foregroundColor(KakaoTheme.bubbleTheirsText)
+                                .foregroundColor(KakaoTheme.bubbleMineText)
                                 .lineSpacing(2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -336,7 +336,7 @@ public struct MessageBubbleView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(attachment.fileName)
                         .font(.custom("Pretendard-Medium", size: 12.5))
-                        .foregroundColor(KakaoTheme.bubbleTheirsText)
+                        .foregroundColor(isUser ? KakaoTheme.bubbleMineText : KakaoTheme.bubbleTheirsText)
                         .lineLimit(1)
                     
                     Text(attachment.formattedSize)

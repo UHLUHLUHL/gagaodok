@@ -52,7 +52,7 @@ public struct KakaoUsageSettingsView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color(red: 0.996, green: 0.898, blue: 0.0))
-                Image(systemName: "chart.bar.fill")
+                Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(KakaoTheme.textPrimary)
             }
@@ -236,7 +236,11 @@ public struct KakaoUsageSettingsView: View {
                                 .foregroundColor(models.selectedModel == model ? Color(red: 0.996, green: 0.78, blue: 0) : KakaoTheme.border)
                         }
                         .padding(11)
-                        .background(models.selectedModel == model ? Color(red: 1.0, green: 0.974, blue: 0.84) : KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))
+                        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(models.selectedModel == model ? KakaoTheme.bubbleMine : Color.clear, lineWidth: 1.6)
+                        )
                     }
                     .buttonStyle(.plain)
                 }
