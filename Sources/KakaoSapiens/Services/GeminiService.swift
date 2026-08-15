@@ -691,7 +691,7 @@ public actor GeminiService {
             let roleplaySoFar = mode == .companion && roleplayInProgress
             guard let onBubble else {
                 let json = try await performGeminiRequest(
-                    contents: contents, system: system, cache: cache, apiKey: apiKey, model: model
+                    contents: contents, system: system, cache: cache, apiKey: apiKey, model: model, mode: mode
                 )
                 let candidate = (json["candidates"] as? [[String: Any]])?.first
                 let parts = (candidate?["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
@@ -712,7 +712,7 @@ public actor GeminiService {
                 )
             }
             let outcome = try await streamGeminiRequest(
-                contents: contents, system: system, cache: cache, apiKey: apiKey, model: model
+                contents: contents, system: system, cache: cache, apiKey: apiKey, model: model, mode: mode
             ) { piece in
                 await buffer.consume(piece)
             }
@@ -795,6 +795,7 @@ public actor GeminiService {
         cache: PrefixCache?,
         apiKey: String,
         model: AIModel,
+        mode: ChatMode,
         onText: @Sendable (String) async -> Void
     ) async throws -> StreamOutcome {
         guard let url = URL(string:
@@ -807,7 +808,7 @@ public actor GeminiService {
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.timeoutInterval = 120
         request.httpBody = try JSONSerialization.data(
-            withJSONObject: streamBody(contents: contents, system: system, cache: cache))
+            withJSONObject: streamBody(contents: contents, system: system, cache: cache, mode: mode))
 
         let (bytes, response) = try await resilientSession.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -842,13 +843,15 @@ public actor GeminiService {
         return outcome
     }
 
-    private func streamBody(contents: [[String: Any]], system: String, cache: PrefixCache?) -> [String: Any] {
+    private func streamBody(contents: [[String: Any]], system: String, cache: PrefixCache?, mode: ChatMode) -> [String: Any] {
         var body: [String: Any] = [
             "generationConfig": [
                 "maxOutputTokens": Self.geminiMaxOutputTokens,
                 "thinkingConfig": ["thinkingLevel": "medium"]
             ]
         ]
+        // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
+        if let safety = mode.geminiSafetySettings { body["safetySettings"] = safety }
         if let cache {
             body["cachedContent"] = cache.name
             body["contents"] = Array(contents.dropFirst(cache.coveredTurns))
@@ -864,7 +867,8 @@ public actor GeminiService {
         system: String,
         cache: PrefixCache?,
         apiKey: String,
-        model: AIModel
+        model: AIModel,
+        mode: ChatMode
     ) async throws -> [String: Any] {
         guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
             throw URLError(.badURL)
@@ -884,6 +888,8 @@ public actor GeminiService {
                 "thinkingConfig": ["thinkingLevel": "medium"]
             ]
         ]
+        // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
+        if let safety = mode.geminiSafetySettings { body["safetySettings"] = safety }
         if let cache {
             // 캐시에 시스템 지침과 앞부분 대화가 들어 있으므로 남은 턴만 보냅니다.
             // 이때 systemInstruction을 함께 보내면 요청이 거부됩니다.

@@ -26,6 +26,32 @@ public enum ChatMode: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    // MARK: - Gemini 안전 필터
+
+    /// Gemini 요청에 함께 보낼 `safetySettings`입니다. 기본값을 쓸 때는 nil입니다.
+    ///
+    /// 챗봇 모드에서만 내립니다. 성인 이용자와 단둘이 하는 사적인 대화에서 답변이
+    /// 통째로 잘려 나가는 것을 막습니다. 프롬프트로는 해결되지 않는 부분입니다.
+    /// 이건 모델 바깥에서 응답을 검사하는 필터라 지침을 고쳐도 걸릴 때는 그대로 걸립니다.
+    ///
+    /// 꺼지는 것은 응답 차단 필터까지입니다. 모델이 학습으로 갖고 있는 거절 성향은
+    /// 남아 있으므로 무엇이든 다 받아준다는 뜻은 아닙니다.
+    ///
+    /// CIVIC_INTEGRITY는 일부 모델만 받습니다. 넣으면 400이 나므로 넣지 않습니다.
+    public var geminiSafetySettings: [[String: String]]? {
+        switch self {
+        case .mathMentor:
+            return nil
+        case .companion:
+            return [
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT"
+            ].map { ["category": $0, "threshold": "BLOCK_NONE"] }
+        }
+    }
+
     // MARK: - 시스템 지침
 
     /// 방 이름 같은 동적 값이 섞이지 않은 고정 접두사입니다. 캐시가 이 부분을 그대로 재사용합니다.
