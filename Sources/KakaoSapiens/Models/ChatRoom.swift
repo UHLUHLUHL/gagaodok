@@ -263,6 +263,7 @@ public class ChatRoomManager: ObservableObject {
         // 대화 기록과 아바타 파일도 같이 정리합니다.
         try? fileManager.removeItem(at: messagesURLForRoom(roomId: id))
         try? fileManager.removeItem(at: digestURLForRoom(roomId: id))
+        invalidateSearchIndex(roomId: id)
         try? fileManager.removeItem(at: appSupportURL.appendingPathComponent("avatar_\(id.uuidString).png"))
         saveRooms()
     }
@@ -294,7 +295,9 @@ public class ChatRoomManager: ObservableObject {
         guard let idx = rooms.firstIndex(where: { $0.id == roomId }) else { return }
         let fileName = "avatar_\(rooms[idx].id.uuidString).png"
         let fileURL = appSupportURL.appendingPathComponent(fileName)
-        
+        // 파일 이름이 그대로라 캐시를 비우지 않으면 옛 사진이 계속 보입니다.
+        Self.invalidateAvatarCache(fileName: fileName)
+
         if let image = image,
            let tiff = image.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiff),
@@ -308,11 +311,66 @@ public class ChatRoomManager: ObservableObject {
         saveRooms()
     }
     
+    /// 방 아바타를 파일 이름으로 캐시합니다.
+    ///
+    /// 이 함수는 말풍선 한 줄을 그릴 때마다 불립니다. 캐시가 없을 때는 400줄짜리 방에서
+    /// 1MB 사진을 400번 읽고 디코드해서, 스크롤과 검색이 눈에 띄게 버벅였습니다.
+    private static let avatarCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 40
+        return cache
+    }()
+
     public func loadAvatarForRoom(profile: RoomProfile) -> NSImage? {
         guard let fileName = profile.avatarImageFileName else { return nil }
+        if let cached = Self.avatarCache.object(forKey: fileName as NSString) { return cached }
         let url = appSupportURL.appendingPathComponent(fileName)
-        guard fileManager.fileExists(atPath: url.path), let data = try? Data(contentsOf: url) else { return nil }
-        return NSImage(data: data)
+        guard fileManager.fileExists(atPath: url.path), let data = try? Data(contentsOf: url),
+              let image = NSImage(data: data) else { return nil }
+        Self.avatarCache.setObject(image, forKey: fileName as NSString)
+        return image
+    }
+
+    /// 아바타를 새로 저장하거나 지웠을 때 캐시를 버립니다.
+    public static func invalidateAvatarCache(fileName: String?) {
+        guard let fileName else { return }
+        avatarCache.removeObject(forKey: fileName as NSString)
+    }
+
+    // MARK: - 대화 내용 검색 색인
+    //
+    // 메시지 파일에는 사진이 base64로 함께 들어 있어 통째로 읽으면 수 MB입니다.
+    // 타자마다 읽을 수는 없으므로 글자만 뽑아 방마다 한 번씩 담아 둡니다.
+    private var searchIndex: [UUID: [(id: UUID, text: String, lowercased: String)]] = [:]
+
+    private func searchEntries(roomId: UUID) -> [(id: UUID, text: String, lowercased: String)] {
+        if let cached = searchIndex[roomId] { return cached }
+        let entries = loadMessagesForRoom(roomId: roomId)
+            .filter { !$0.text.isEmpty }
+            .map { (id: $0.id, text: $0.text, lowercased: $0.text.lowercased()) }
+        searchIndex[roomId] = entries
+        return entries
+    }
+
+    /// 그 방에서 검색어를 담은 첫 메시지입니다. 없으면 nil입니다.
+    public func firstMatch(roomId: UUID, query: String) -> String? {
+        let needle = query.lowercased()
+        guard !needle.isEmpty else { return nil }
+        return searchEntries(roomId: roomId).last { $0.lowercased.contains(needle) }?.text
+    }
+
+    /// 창을 열 때 미리 만들어 둡니다. 첫 검색에서 한꺼번에 읽느라 멈추지 않도록요.
+    public func primeSearchIndex() {
+        let ids = rooms.map(\.id)
+        Task.detached(priority: .utility) { [weak self] in
+            for id in ids {
+                await MainActor.run { _ = self?.searchEntries(roomId: id) }
+            }
+        }
+    }
+
+    private func invalidateSearchIndex(roomId: UUID) {
+        searchIndex[roomId] = nil
     }
     
     // MARK: - 룸별 독립 대화 내역 영구 저장 및 로드
@@ -372,6 +430,10 @@ public class ChatRoomManager: ObservableObject {
 
     public func saveMessagesForRoom(roomId: UUID, messages: [ChatMessage]) {
         let url = messagesURLForRoom(roomId: roomId)
+        // 대화가 바뀌면 검색 색인도 다시 만들어야 합니다.
+        searchIndex[roomId] = messages
+            .filter { !$0.text.isEmpty }
+            .map { (id: $0.id, text: $0.text, lowercased: $0.text.lowercased()) }
 
         pendingSaves[roomId]?.work.cancel()
         let work = DispatchWorkItem { [weak self] in

@@ -70,28 +70,9 @@ public struct MessageBubbleView: View {
             if message.sender == .user {
                 Spacer(minLength: 36)
 
-                // 전송에 실패하면 카카오톡처럼 말풍선 왼편에 표시가 붙습니다.
-                // 누르면 재전송과 삭제를 고를 수 있습니다.
-                if message.deliveryFailed {
-                    DeliveryFailureBadge(
-                        onResend: { onResendMessage?(message) },
-                        onDelete: { onDeleteMessage?(message) }
-                    )
-                    // 글이 있는 말풍선 아래에는 호버용 액션 줄이 투명하게 깔려 있습니다.
-                    // 바닥 정렬이 그 줄까지 포함하므로, 그만큼(간격 2 + 높이 18) 올려
-                    // 말풍선 자체와 나란히 놓습니다.
-                    .padding(.bottom, message.text.isEmpty ? 2 : 22)
-                }
-
-                // 보낸 시간 (실패한 메시지에는 아직 시간을 붙이지 않습니다)
-                if isLastInGroup && !message.deliveryFailed {
-                    Text(message.formattedTime)
-                        .font(.custom("Pretendard-Regular", size: 9.5))
-                        .foregroundColor(Color.black.opacity(0.45))
-                        .padding(.bottom, 1)
-                }
-
-                // 내 말풍선 (카카오 옐로우 #FEE500)
+                // 시간과 실패 표시는 userBubbleContent 안에서 말풍선 바로 옆에 붙입니다.
+                // 여기 바깥에 두면 사진이 붙은 메시지에서 사진 폭만큼 밀려나
+                // 말풍선과 저 멀리 떨어져 보입니다.
                 userBubbleContent
             } else {
                 // 사피엔스/챗봇 말풍선 (화이트 #FFFFFF)
@@ -113,16 +94,42 @@ public struct MessageBubbleView: View {
         .padding(.bottom, isLastInGroup ? 4 : 1)
     }
     
+    /// 내 말풍선 왼편에 붙는 표시입니다. 실패했으면 재전송 배지를, 아니면 보낸 시간을 놓습니다.
+    ///
+    /// 말풍선과 같은 HStack 안에 두어야 사진이 붙은 메시지에서도 말풍선 옆에 딱 붙습니다.
+    @ViewBuilder
+    private func sideMarkers(bottomInset: CGFloat) -> some View {
+        if message.deliveryFailed {
+            DeliveryFailureBadge(
+                onResend: { onResendMessage?(message) },
+                onDelete: { onDeleteMessage?(message) }
+            )
+            .padding(.bottom, bottomInset)
+        } else if isLastInGroup {
+            Text(message.formattedTime)
+                .font(.custom("Pretendard-Regular", size: 9.5))
+                .foregroundColor(Color.black.opacity(0.45))
+                .padding(.bottom, bottomInset - 1)
+        }
+    }
+
     // MARK: - 내 말풍선 (User) - 플로팅 툴바로 찌그러짐 원천 방지
     @ViewBuilder
     private var userBubbleContent: some View {
         VStack(alignment: .trailing, spacing: 3) {
             if let attachment = message.attachment {
-                attachmentView(attachment: attachment, isUser: true)
+                // 사진만 보낸 메시지는 사진 옆에 시간이 붙습니다.
+                HStack(alignment: .bottom, spacing: 4) {
+                    if message.text.isEmpty { sideMarkers(bottomInset: 2) }
+                    attachmentView(attachment: attachment, isUser: true)
+                }
             }
-            
+
             if !message.text.isEmpty {
-                VStack(alignment: .trailing, spacing: 2) {
+                HStack(alignment: .bottom, spacing: 4) {
+                    // 말풍선 아래 투명한 액션 줄(간격 2 + 높이 18)만큼 끌어올립니다.
+                    sideMarkers(bottomInset: 22)
+                    VStack(alignment: .trailing, spacing: 2) {
                     Group {
                         if message.containsLaTeXOrMarkdown {
                             LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight,
@@ -203,6 +210,7 @@ public struct MessageBubbleView: View {
                     Button("삭제", role: .destructive) {
                         onDeleteMessage?(message)
                     }
+                }
                 }
             }
         }

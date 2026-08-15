@@ -71,7 +71,8 @@ public struct TypingIndicatorView: View {
                 .buttonStyle(.plain)
                 .focusable(false)
                 .onHover { isHoveringCancel = $0 }
-                .padding(.top, 20)
+                // 이름 줄(약 17pt) + 말풍선 절반(16pt)만큼 내려 말풍선 가운데에 맞춥니다.
+                .padding(.top, 25)
                 .help("답변 받기를 멈춥니다")
             }
 

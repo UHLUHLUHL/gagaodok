@@ -31,12 +31,26 @@ public struct KakaoMainWindowView: View {
 
     // MARK: - 검색
 
+    private var trimmedQuery: String {
+        searchText.trimmingCharacters(in: .whitespaces)
+    }
+
     private func matches(_ room: ChatRoom) -> Bool {
-        let query = searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = trimmedQuery.lowercased()
         guard !query.isEmpty else { return true }
-        return room.profile.name.lowercased().contains(query)
-            || room.profile.statusMessage.lowercased().contains(query)
-            || room.lastMessageText.lowercased().contains(query)
+        if room.profile.name.lowercased().contains(query)
+            || room.profile.statusMessage.lowercased().contains(query) { return true }
+        // 방 이름뿐 아니라 주고받은 말도 뒤집니다.
+        return roomManager.firstMatch(roomId: room.id, query: query) != nil
+    }
+
+    /// 검색 중에는 마지막 대화 대신 찾은 문장을 보여줍니다. 카카오톡과 같은 방식입니다.
+    private func previewText(for room: ChatRoom) -> String {
+        guard !trimmedQuery.isEmpty,
+              let hit = roomManager.firstMatch(roomId: room.id, query: trimmedQuery) else {
+            return room.lastMessageText
+        }
+        return hit
     }
 
     private var chatRooms: [ChatRoom] { roomManager.conversationRooms.filter(matches) }
@@ -117,7 +131,12 @@ public struct KakaoMainWindowView: View {
             Spacer()
             Button(action: {
                 isSearchVisible.toggle()
-                if !isSearchVisible { searchText = "" }
+                if isSearchVisible {
+                    // 첫 타자에서 모든 방을 한꺼번에 읽느라 멈추지 않도록 미리 만들어 둡니다.
+                    roomManager.primeSearchIndex()
+                } else {
+                    searchText = ""
+                }
             }) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15.5))
@@ -129,10 +148,17 @@ public struct KakaoMainWindowView: View {
             .help("검색")
 
             Button(action: { isAddingFriend = true }) {
-                Image(systemName: tab == .friends ? "person.badge.plus" : "square.and.pencil")
-                    .font(.system(size: 15.5))
-                    .foregroundColor(Color.black.opacity(0.72))
-                    .frame(width: 26, height: 26)
+                Group {
+                    if tab == .friends {
+                        AddFriendIcon()
+                    } else {
+                        ComposeChatIcon()
+                    }
+                }
+                // 돋보기보다 살짝 크게 잡아 원본과 비슷한 무게로 보이게 합니다.
+                .frame(width: 19, height: 19)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusable(false)
@@ -216,6 +242,7 @@ public struct KakaoMainWindowView: View {
                 KakaoChatRoomRow(
                     room: room,
                     avatarImage: roomManager.loadAvatarForRoom(profile: room.profile),
+                    previewText: previewText(for: room),
                     onOpen: { WindowManager.shared.openChatRoom(roomId: room.id) },
                     onDelete: { roomManager.deleteRoom(id: room.id) },
                     onTogglePin: { roomManager.togglePinned(roomId: room.id) },
@@ -624,6 +651,8 @@ public struct KakaoSettingsModal: View {
 private struct KakaoChatRoomRow: View {
     let room: ChatRoom
     let avatarImage: NSImage?
+    /// 검색 중에는 마지막 대화 대신 찾은 문장을 보여줍니다.
+    var previewText: String? = nil
     let onOpen: () -> Void
     let onDelete: () -> Void
     let onTogglePin: () -> Void
@@ -662,7 +691,7 @@ private struct KakaoChatRoomRow: View {
                 }
                 
                 HStack {
-                    Text(cleanSnippet(room.lastMessageText))
+                    Text(cleanSnippet(previewText ?? room.lastMessageText))
                         .font(.custom("Pretendard-Regular", size: 12))
                         .foregroundColor(Color.black.opacity(0.55))
                         .lineLimit(1)

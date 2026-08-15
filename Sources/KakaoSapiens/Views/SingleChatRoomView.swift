@@ -26,18 +26,25 @@ public struct SingleChatRoomView: View {
     @State private var responseTask: Task<Void, Never>?
 
     /// 검색어를 담은 메시지들입니다. 최근 것이 1번이 되도록 뒤에서부터 셉니다.
-    private var searchHits: [UUID] {
+    ///
+    /// 계산 프로퍼티로 두면 말풍선 한 줄마다 전체 대화를 다시 훑어 O(n²)이 됩니다.
+    /// 검색어가 바뀔 때 한 번만 계산해 담아 둡니다.
+    @State private var searchHits: [UUID] = []
+
+    private func recomputeSearchHits() {
         let needle = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return [] }
-        return messages.reversed()
+        guard !needle.isEmpty else {
+            searchHits = []
+            return
+        }
+        searchHits = messages.reversed()
             .filter { $0.text.range(of: needle, options: .caseInsensitive) != nil }
             .map(\.id)
     }
 
     private var currentSearchHit: UUID? {
-        let hits = searchHits
-        guard !hits.isEmpty, searchHitIndex < hits.count else { return nil }
-        return hits[searchHitIndex]
+        guard !searchHits.isEmpty, searchHitIndex < searchHits.count else { return nil }
+        return searchHits[searchHitIndex]
     }
     
     public init(roomId: UUID) {
@@ -198,6 +205,7 @@ public struct SingleChatRoomView: View {
                     }
                     // 검색어를 고치면 가장 최근 결과부터 다시 봅니다.
                     .onChange(of: searchQuery) {
+                        recomputeSearchHits()
                         searchHitIndex = 0
                         scrollToSearchHit(proxy: proxy)
                     }

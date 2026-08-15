@@ -44,7 +44,8 @@ public struct ChatHeaderView: View {
     public var body: some View {
         ZStack(alignment: .top) {
             // 상단 헤더 영역만 마우스 드래그로 창 이동 가능
-            WindowDragArea()
+            // 오른쪽 끝은 투명도 슬라이더 자리라 비워 둡니다 (슬라이더 58 + 여백 14 + 여유).
+            WindowDragArea(excludedFromRight: 86)
             
             VStack(spacing: 0) {
                 // 1. 최상단 신호등 버튼 높이 라인 & 우상단 미니 슬라이더
@@ -210,16 +211,41 @@ public struct KakaoSlimSlider: View {
 }
 
 // MARK: - Header Window Drag Area
+/// 헤더를 잡고 창을 옮깁니다.
+///
+/// `excludedFromRight`만큼의 오른쪽 띠는 비워 둡니다. 그 자리에 투명도 슬라이더가 있는데,
+/// 이 뷰가 헤더 전체를 덮고 있으면 슬라이더를 끌 때 AppKit이 창 이동을 먼저 잡아
+/// 슬라이더는 안 움직이고 창만 따라옵니다.
 public struct WindowDragArea: NSViewRepresentable {
-    public init() {}
+    var excludedFromRight: CGFloat
+
+    public init(excludedFromRight: CGFloat = 0) {
+        self.excludedFromRight = excludedFromRight
+    }
+
     public func makeNSView(context: Context) -> NSView {
         let view = CustomDragNSView()
+        view.excludedFromRight = excludedFromRight
         return view
     }
-    public func updateNSView(_ nsView: NSView, context: Context) {}
+
+    public func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? CustomDragNSView)?.excludedFromRight = excludedFromRight
+    }
 }
 
 class CustomDragNSView: NSView {
+    var excludedFromRight: CGFloat = 0
+
+    /// 비워 둔 띠 안쪽은 아예 이 뷰가 받지 않습니다. 그러면 그 위에 있는
+    /// SwiftUI 컨트롤이 마우스를 정상적으로 가져갑니다.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard excludedFromRight > 0 else { return super.hitTest(point) }
+        let local = convert(point, from: superview)
+        if local.x > bounds.maxX - excludedFromRight { return nil }
+        return super.hitTest(point)
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
     }
