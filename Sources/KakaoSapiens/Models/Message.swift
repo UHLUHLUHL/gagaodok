@@ -7,6 +7,16 @@ public enum MessageSender: String, Codable {
     case sapiens
 }
 
+/// 이 말풍선이 인물이 입 밖으로 낸 말인지, 상황 묘사인지입니다.
+///
+/// 상황극에서 묘사를 대사와 같은 말풍선에 넣으면 인물이 자기 행동을 소리 내어
+/// 읊는 꼴이 됩니다. 카카오톡에는 이미 가운데 정렬된 안내문 자리가 있으므로
+/// 묘사는 그 자리를 씁니다. 새 시각 언어를 만들지 않아도 "말이 아닌 것"으로 읽힙니다.
+public enum MessageKind: String, Codable {
+    case speech
+    case narration
+}
+
 public enum AttachmentType: String, Codable {
     case image
     case file
@@ -155,6 +165,8 @@ public struct ChatMessage: Identifiable, Codable {
     public var canonicalText: String?
     // 답변을 받지 못한 내 메시지에만 씁니다. 기본값이 있어 기존 JSON도 그대로 읽힙니다.
     public var deliveryFailed: Bool
+    // 상황극에서만 갈립니다. 기존 JSON에는 없으므로 없으면 대사로 읽습니다.
+    public var kind: MessageKind
 
     public init(
         id: UUID = UUID(),
@@ -165,7 +177,8 @@ public struct ChatMessage: Identifiable, Codable {
         isUnread: Bool = false,
         turnId: UUID? = nil,
         canonicalText: String? = nil,
-        deliveryFailed: Bool = false
+        deliveryFailed: Bool = false,
+        kind: MessageKind = .speech
     ) {
         self.id = id
         self.sender = sender
@@ -176,6 +189,7 @@ public struct ChatMessage: Identifiable, Codable {
         self.turnId = turnId
         self.canonicalText = canonicalText
         self.deliveryFailed = deliveryFailed
+        self.kind = kind
     }
 
     public init(from decoder: Decoder) throws {
@@ -189,6 +203,7 @@ public struct ChatMessage: Identifiable, Codable {
         turnId = try c.decodeIfPresent(UUID.self, forKey: .turnId)
         canonicalText = try c.decodeIfPresent(String.self, forKey: .canonicalText)
         deliveryFailed = try c.decodeIfPresent(Bool.self, forKey: .deliveryFailed) ?? false
+        kind = try c.decodeIfPresent(MessageKind.self, forKey: .kind) ?? .speech
     }
     
     public var formattedTime: String {

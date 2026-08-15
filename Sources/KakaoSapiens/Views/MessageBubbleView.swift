@@ -66,6 +66,35 @@ public struct MessageBubbleView: View {
     }
     
     public var body: some View {
+        if message.kind == .narration {
+            narrationLine
+        } else {
+            speechRow
+        }
+    }
+
+    /// 상황 묘사는 말풍선에 넣지 않습니다.
+    ///
+    /// 카카오톡에는 이미 "누가 들어왔습니다" 같은 안내를 가운데에 흐리게 놓는 자리가
+    /// 있습니다. 그 자리를 그대로 빌려 씁니다. 새 모양을 만들지 않아도 사람들이 이미
+    /// "이건 누가 한 말이 아니다"로 읽는 자리라서, 설명 없이도 바로 통합니다.
+    ///
+    /// 프로필 사진도 이름도 시간도 붙이지 않습니다. 말한 사람이 없기 때문입니다.
+    private var narrationLine: some View {
+        Text(highlightedText)
+            .font(.custom("Pretendard-Regular", size: 12))
+            .foregroundColor(KakaoTheme.dateDividerText)
+            .multilineTextAlignment(.center)
+            .lineSpacing(3)
+            .frame(maxWidth: .infinity)
+            // 말풍선보다 확실히 안쪽으로 넣습니다. 폭이 다르면 훑어볼 때 먼저 갈립니다.
+            .padding(.horizontal, 46)
+            .padding(.vertical, 7)
+            .background(selectionTint)
+            .contentShape(Rectangle())
+    }
+
+    private var speechRow: some View {
         HStack(alignment: .bottom, spacing: 4) {
             if message.sender == .user {
                 Spacer(minLength: 36)

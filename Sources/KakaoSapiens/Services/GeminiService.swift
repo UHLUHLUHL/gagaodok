@@ -5,10 +5,12 @@ import CryptoKit
 public struct GeneratedMessageBubble {
     public let text: String
     public let attachment: ChatAttachment?
+    public let kind: MessageKind
 
-    public init(text: String, attachment: ChatAttachment? = nil) {
+    public init(text: String, attachment: ChatAttachment? = nil, kind: MessageKind = .speech) {
         self.text = text
         self.attachment = attachment
+        self.kind = kind
     }
 }
 
@@ -31,28 +33,41 @@ public actor StreamBubbleSink {
     private var buffer = StreamingBubbleBuffer()
     private let botName: String
     private let onBubble: @Sendable (GeneratedMessageBubble) async -> Void
-    private let makeBubbles: @Sendable (String) async -> [GeneratedMessageBubble]
+    private let makeBubbles: @Sendable (String, Bool) async -> [GeneratedMessageBubble]
+
+    /// 이 턴이 상황극이라고 이미 아는지.
+    ///
+    /// 문단은 완성되는 대로 화면에 붙기 때문에, 첫 문단을 붙일 때는 뒤에 따옴표 대사가
+    /// 나올지 알 수 없습니다. 그래서 지난 턴에서 얻은 값으로 시작합니다.
+    /// 상황극을 처음 시작하는 턴에서만, 첫 대사가 나오기 전의 묘사가 대사 말풍선으로
+    /// 나옵니다. 그 다음 턴부터는 앞 턴이 근거가 되어 첫 문단부터 제대로 갈립니다.
+    private var roleplayEstablished: Bool
 
     public init(
         botName: String,
+        roleplayEstablished: Bool = false,
         onBubble: @escaping @Sendable (GeneratedMessageBubble) async -> Void,
-        makeBubbles: @escaping @Sendable (String) async -> [GeneratedMessageBubble]
+        makeBubbles: @escaping @Sendable (String, Bool) async -> [GeneratedMessageBubble]
     ) {
         self.botName = botName
+        self.roleplayEstablished = roleplayEstablished
         self.onBubble = onBubble
         self.makeBubbles = makeBubbles
     }
 
     public func consume(_ piece: String) async {
-        for paragraph in buffer.append(piece) {
-            for bubble in await makeBubbles(paragraph) { await onBubble(bubble) }
-        }
+        for paragraph in buffer.append(piece) { await handle(paragraph) }
     }
 
     public func finish() async {
         let rest = buffer.flush()
         guard !rest.isEmpty else { return }
-        for bubble in await makeBubbles(rest) { await onBubble(bubble) }
+        await handle(rest)
+    }
+
+    private func handle(_ paragraph: String) async {
+        if RoleplayParser.establishesRoleplay(paragraph) { roleplayEstablished = true }
+        for bubble in await makeBubbles(paragraph, roleplayEstablished) { await onBubble(bubble) }
     }
 }
 
@@ -75,7 +90,8 @@ public actor GeminiService {
         roomId: UUID? = nil,
         model requestedModel: AIModel? = nil,
         persona: PersonaStyle? = nil,
-        mode: ChatMode = .mathMentor
+        mode: ChatMode = .mathMentor,
+        roleplayInProgress: Bool = false
     ) async throws -> GeneratedAIResponse {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
         let rawText: String
@@ -91,7 +107,10 @@ public actor GeminiService {
         }
         return GeneratedAIResponse(
             rawText: rawText,
-            bubbles: parseResponseIntoBubbles(rawText: rawText, botName: botName)
+            bubbles: parseResponseIntoBubbles(
+                rawText: rawText, botName: botName,
+                roleplay: mode == .companion && roleplayInProgress
+            )
         )
     }
 
@@ -109,20 +128,21 @@ public actor GeminiService {
         model requestedModel: AIModel? = nil,
         persona: PersonaStyle? = nil,
         mode: ChatMode = .mathMentor,
+        roleplayInProgress: Bool = false,
         onBubble: @Sendable @escaping (GeneratedMessageBubble) async -> Void
     ) async throws -> String {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
         guard model == .gemini37Flash else {
             let response = try await generateResponse(
                 conversation: conversation, botName: botName, roomId: roomId,
-                model: model, persona: persona, mode: mode
+                model: model, persona: persona, mode: mode, roleplayInProgress: roleplayInProgress
             )
             for bubble in response.bubbles { await onBubble(bubble) }
             return response.rawText
         }
         return try await sendGeminiRequest(
             conversation: conversation, botName: botName, roomId: roomId, persona: persona,
-            mode: mode, onBubble: onBubble
+            mode: mode, roleplayInProgress: roleplayInProgress, onBubble: onBubble
         )
     }
 
@@ -643,6 +663,7 @@ public actor GeminiService {
         roomId: UUID?,
         persona: PersonaStyle? = nil,
         mode: ChatMode = .mathMentor,
+        roleplayInProgress: Bool = false,
         onBubble: (@Sendable (GeneratedMessageBubble) async -> Void)? = nil
     ) async throws -> String {
         let model = AIModel.gemini37Flash
@@ -667,6 +688,7 @@ public actor GeminiService {
         // 흘려보낼 곳이 있으면 스트리밍으로, 없으면 지금까지처럼 한 번에 받습니다.
         // 스트림은 완성된 문단만 통과시키므로 화면에 깨진 수식이 뜨지 않습니다.
         func run(cache: PrefixCache?) async throws -> (text: String, finishReason: String?, usage: [String: Any]) {
+            let roleplaySoFar = mode == .companion && roleplayInProgress
             guard let onBubble else {
                 let json = try await performGeminiRequest(
                     contents: contents, system: system, cache: cache, apiKey: apiKey, model: model
@@ -679,9 +701,15 @@ public actor GeminiService {
                     json["usageMetadata"] as? [String: Any] ?? [:]
                 )
             }
-            let buffer = StreamBubbleSink(botName: botName, onBubble: onBubble) { [weak self] paragraph in
+            let buffer = StreamBubbleSink(
+                botName: botName,
+                roleplayEstablished: roleplaySoFar,
+                onBubble: onBubble
+            ) { [weak self] paragraph, roleplay in
                 guard let self else { return [] }
-                return await self.parseResponseIntoBubbles(rawText: paragraph, botName: botName)
+                return await self.parseResponseIntoBubbles(
+                    rawText: paragraph, botName: botName, roleplay: roleplay
+                )
             }
             let outcome = try await streamGeminiRequest(
                 contents: contents, system: system, cache: cache, apiKey: apiKey, model: model
@@ -1245,13 +1273,25 @@ public actor GeminiService {
         NSError(domain: "KakaoSapiens.AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
-    private func parseResponseIntoBubbles(rawText: String, botName: String) -> [GeneratedMessageBubble] {
+    /// - Parameter roleplay: 이 턴이 상황극임이 확인됐는지. 참일 때만 따옴표 없는
+    ///   문단을 묘사로 봅니다. 잡담에서는 대사에 따옴표를 치지 않으므로, 이 조건이
+    ///   없으면 평범한 대화가 통째로 묘사가 됩니다.
+    private func parseResponseIntoBubbles(
+        rawText: String,
+        botName: String,
+        roleplay: Bool = false
+    ) -> [GeneratedMessageBubble] {
         let cleanText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         var paragraphs = cleanText.components(separatedBy: "\n\n")
         if paragraphs.count == 1 {
             let lines = cleanText.components(separatedBy: "\n")
             if lines.contains(where: { $0.hasPrefix("\(botName):") || $0.hasPrefix("사피엔스:") }) { paragraphs = lines }
         }
+
+        // 한 번에 받는 경로에서는 답변 전체가 여기 들어오므로, 뒤쪽 문단의 따옴표를
+        // 보고 앞쪽 문단까지 제대로 가를 수 있습니다. 스트리밍 경로는 문단이 하나씩
+        // 들어오므로 호출하는 쪽이 지금까지 본 것을 `roleplay`로 알려 줍니다.
+        let isRoleplay = roleplay || paragraphs.contains { RoleplayParser.establishesRoleplay($0) }
 
         var chunks: [String] = []
         for paragraph in paragraphs { chunks.append(contentsOf: splitTextAndComplexMath(paragraph: paragraph)) }
@@ -1262,8 +1302,12 @@ public actor GeminiService {
                 text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 break
             }
+            let classified = RoleplayParser.classify(text, roleplayEstablished: isRoleplay)
+            text = classified.text
             let (cleanedText, allSpecs) = MathGraphRenderer.extractGraphSpecs(from: text)
-            if !cleanedText.isEmpty { bubbles.append(GeneratedMessageBubble(text: cleanedText)) }
+            if !cleanedText.isEmpty {
+                bubbles.append(GeneratedMessageBubble(text: cleanedText, kind: classified.kind))
+            }
             // 해석하지 못하는 식은 그래프를 만들지 않습니다. 틀린 그림을 내보내는 것보다 낫습니다.
             let specs = allSpecs.filter { MathGraphRenderer.canRender($0) }
             for spec in specs {

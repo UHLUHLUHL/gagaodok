@@ -488,6 +488,8 @@ public struct SingleChatRoomView: View {
         let currentModel = activeModel
         let currentMode = activeMode
         let currentPersona = room.profile.persona
+        // 지난 턴이 상황극이었으면 이번 턴의 첫 문단부터 묘사를 갈라낼 수 있습니다.
+        let wasRoleplaying = RoleplayParser.roleplayInProgress(messages: history)
         let conversation = ConversationTurn.from(messages: history)
         // 실패로 남길 대상은 방금 보낸 내 메시지입니다.
         let failingMessageId = history.last(where: { $0.sender == .user })?.id
@@ -504,7 +506,8 @@ public struct SingleChatRoomView: View {
                         roomId: currentRoomId,
                         model: currentModel,
                         persona: currentPersona,
-                        mode: currentMode
+                        mode: currentMode,
+                        roleplayInProgress: wasRoleplaying
                     ) { bubble in
                         await MainActor.run {
                             self.isTyping = false
@@ -514,7 +517,8 @@ public struct SingleChatRoomView: View {
                                 timestamp: Date(),
                                 attachment: bubble.attachment,
                                 turnId: responseTurnId,
-                                canonicalText: nil
+                                canonicalText: nil,
+                                kind: bubble.kind
                             )
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                                 self.messages.append(sapiensMsg)
