@@ -249,6 +249,7 @@ public class ChatRoomManager: ObservableObject {
         roomsWithConversation.remove(id)
         // 대화 기록과 아바타 파일도 같이 정리합니다.
         try? fileManager.removeItem(at: messagesURLForRoom(roomId: id))
+        try? fileManager.removeItem(at: digestURLForRoom(roomId: id))
         try? fileManager.removeItem(at: appSupportURL.appendingPathComponent("avatar_\(id.uuidString).png"))
         saveRooms()
     }
@@ -297,6 +298,36 @@ public class ChatRoomManager: ObservableObject {
     // MARK: - 룸별 독립 대화 내역 영구 저장 및 로드
     public func messagesURLForRoom(roomId: UUID) -> URL {
         appSupportURL.appendingPathComponent("room_\(roomId.uuidString)_messages.json")
+    }
+
+    // MARK: - 구간 요약
+    // 방 목록 파일이 아니라 방마다 따로 둡니다. 요약은 방 하나에 수만 자까지 자라는데,
+    // 방 목록은 앱을 켤 때 전부 읽어들이므로 거기 섞으면 시작이 느려집니다.
+    public func digestURLForRoom(roomId: UUID) -> URL {
+        appSupportURL.appendingPathComponent("room_\(roomId.uuidString)_digest.json")
+    }
+
+    public func loadDigestForRoom(roomId: UUID) -> ConversationDigest {
+        let url = digestURLForRoom(roomId: roomId)
+        guard fileManager.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let digest = try? JSONDecoder().decode(ConversationDigest.self, from: data) else {
+            return ConversationDigest()
+        }
+        return digest
+    }
+
+    public func saveDigestForRoom(roomId: UUID, digest: ConversationDigest) {
+        let url = digestURLForRoom(roomId: roomId)
+        Self.persistenceQueue.async {
+            guard let data = try? JSONEncoder().encode(digest) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// 방을 지울 때 요약도 같이 지웁니다.
+    public func removeDigestForRoom(roomId: UUID) {
+        try? fileManager.removeItem(at: digestURLForRoom(roomId: roomId))
     }
     
     public func loadMessagesForRoom(roomId: UUID) -> [ChatMessage] {

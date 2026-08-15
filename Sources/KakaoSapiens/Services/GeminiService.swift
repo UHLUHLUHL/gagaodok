@@ -437,6 +437,22 @@ public actor GeminiService {
         return text
     }
 
+    /// generateContent에 한 번 보내고 JSON을 돌려줍니다.
+    private func postGemini(body: [String: Any], apiKey: String, model: AIModel) async throws -> [String: Any] {
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 120
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await resilientSession.data(for: request)
+        return try validatedJSON(data: data, response: response, provider: "Gemini")
+    }
+
     private func systemPrompt(botName: String, persona: PersonaStyle? = nil) -> String {
         var prompt = stableSystemPrompt
         // 말투는 방마다 고정이라 캐시 접두사 안쪽에 두어도 적중률이 떨어지지 않습니다.
@@ -464,10 +480,72 @@ public actor GeminiService {
 
     private var prefixCaches: [UUID: PrefixCache] = [:]
     private var refreshingRooms: Set<UUID> = []
+    /// 같은 방의 요약을 두 번 겹쳐 만들지 않도록 막습니다.
+    private var summarizingRooms: Set<UUID> = []
     private static let cacheTTLSeconds = 900
     // 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 어림값이 실제보다 조금 클 수 있으므로
     // 여유를 둡니다. 그래도 거부되면 캐시 없이 그냥 진행하므로 대화에는 영향이 없습니다.
     private static let minimumCacheTokens = 1200
+
+    /// 한 구간을 요약해 방의 요약 목록 뒤에 붙입니다.
+    ///
+    /// 실패하면 아무것도 바꾸지 않습니다. 그러면 다음 요청에서 같은 구간을 다시 시도하고,
+    /// 그때까지는 그 구간이 원문으로 나가므로 대화에는 영향이 없습니다.
+    private func appendDigestSegment(roomId: UUID, pending: ConversationCompactor.PendingSegment, apiKey: String) async {
+        guard !summarizingRooms.contains(roomId) else { return }
+        summarizingRooms.insert(roomId)
+        defer { summarizingRooms.remove(roomId) }
+
+        // 그 사이 다른 요청이 같은 구간을 이미 채웠을 수 있습니다.
+        let current = await MainActor.run { ChatRoomManager.shared.loadDigestForRoom(roomId: roomId) }
+        guard current.coveredTurns < pending.lastTurn else { return }
+
+        guard let text = try? await requestSegmentSummary(
+            turns: pending.turns, startingTurn: pending.firstTurn, apiKey: apiKey),
+              !text.isEmpty else { return }
+
+        let updated = ConversationDigest(segments: current.segments + [
+            ConversationSegment(firstTurn: pending.firstTurn, lastTurn: pending.lastTurn, text: text)
+        ])
+        await MainActor.run {
+            ChatRoomManager.shared.saveDigestForRoom(roomId: roomId, digest: updated)
+        }
+    }
+
+    private func requestSegmentSummary(turns: [ConversationTurn], startingTurn: Int, apiKey: String) async throws -> String {
+        let transcript = ConversationCompactor.transcript(for: turns, startingTurn: startingTurn)
+        guard !transcript.isEmpty else { return "" }
+
+        let userText = "다음은 정리할 대화 구간이다.\n\n" + transcript
+        let body: [String: Any] = [
+            "systemInstruction": ["parts": [["text": ConversationCompactor.summaryInstruction]]],
+            "contents": [["role": "user", "parts": [["text": userText]]]],
+            "generationConfig": [
+                // 지시한 분량보다 넉넉히 잡습니다. 3.7은 사고 토큰도 이 예산에서 함께 쓰고,
+                // 모자라면 문장 한가운데서 잘린 글이 나옵니다.
+                "maxOutputTokens": ConversationCompactor.segmentTokenBudget + 1200,
+                "thinkingConfig": ["thinkingLevel": "low"]
+            ]
+        ]
+
+        let json = try await postGemini(body: body, apiKey: apiKey, model: AIModel.gemini37Flash)
+        guard let candidates = json["candidates"] as? [[String: Any]],
+              let candidate = candidates.first,
+              let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
+            return ""
+        }
+
+        // 잘린 요약은 저장하지 않습니다. 한 번 넣으면 고치지 않는 기록이라
+        // 중간에서 끊긴 글이 그 구간의 기억으로 영영 남습니다.
+        // 빈 값을 돌려주면 다음 요청에서 같은 구간을 다시 시도합니다.
+        if let reason = candidate["finishReason"] as? String, reason != "STOP" {
+            return ""
+        }
+
+        return parts.compactMap { $0["text"] as? String }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private func sendGeminiRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil) async throws -> String {
         let model = AIModel.gemini37Flash
@@ -475,7 +553,15 @@ public actor GeminiService {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
         }
 
-        let contents = buildGeminiContents(conversation)
+        // 대화가 아주 길어진 방에서는 앞부분을 구간 요약으로 갈아끼웁니다.
+        // 기준에 못 미치면 plan이 원본을 그대로 돌려주므로 짧은 방은 지금까지와 똑같이 동작합니다.
+        let digest = roomId.map { ChatRoomManager.shared.loadDigestForRoom(roomId: $0) }
+        let plan = ConversationCompactor.plan(conversation: conversation, digest: digest)
+
+        var contents = buildGeminiContents(plan.verbatimTurns)
+        if let digestText = plan.digestText {
+            contents = digestPreamble(digestText) + contents
+        }
         let system = systemPrompt(botName: botName, persona: persona)
 
         var reusedCache = roomId.flatMap { usablePrefixCache(for: $0, contents: contents, system: system) }
@@ -529,7 +615,20 @@ public actor GeminiService {
         if let roomId {
             Task { await self.refreshPrefixCache(roomId: roomId, contents: contents, system: system, apiKey: apiKey) }
         }
+
+        // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
+        if let roomId, let pending = plan.pending {
+            Task { await self.appendDigestSegment(roomId: roomId, pending: pending, apiKey: apiKey) }
+        }
         return text
+    }
+
+    /// 요약을 대화 맨 앞에 놓습니다. Gemini는 첫 턴이 user여야 해서 model 턴으로 한 번 받아 줍니다.
+    private func digestPreamble(_ text: String) -> [[String: Any]] {
+        [
+            ["role": "user", "parts": [["text": text]]],
+            ["role": "model", "parts": [["text": "이전 대화 요약을 확인했습니다. 이어서 진행하겠습니다."]]]
+        ]
     }
 
     private func performGeminiRequest(
