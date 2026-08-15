@@ -24,3 +24,11 @@ dist/
 tools/iconcheck/out_*.png
 tools/iconcheck/iconshot
 tools/iconcheck/KakaoIcons.swift
+
+# 안드로이드
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml

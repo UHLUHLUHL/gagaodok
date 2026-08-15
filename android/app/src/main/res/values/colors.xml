@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="window_background">#FFFFFFFF</color>
+    <!-- 맥 판 아이콘의 스퀘어클에서 실제로 뽑은 값입니다. 네 지점을 재서 #291717이 나왔습니다. -->
+    <color name="ic_launcher_background">#FF291717</color>
+</resources>

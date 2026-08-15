@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 화면 색은 Compose 쪽에서 전부 정합니다. 여기서는 시작 화면이 흰 판으로
+         번쩍이지 않도록 배경만 잡아 둡니다. -->
+    <style name="Theme.Gagaodok" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
