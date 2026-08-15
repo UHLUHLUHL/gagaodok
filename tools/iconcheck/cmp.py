@@ -7,13 +7,19 @@ from PIL import Image
 
 
 def rows(path, scale, dark_ink=True, thresh=160, box=None):
-    im = Image.open(path).convert("L")
+    im = Image.open(path).convert("RGB")
     px = im.load()
     W, H = im.size
     x0b, x1b, y0b, y1b = box if box else (0, W - 1, 0, H - 1)
 
     def on(x, y):
-        v = px[x, y]
+        r, g, b = px[x, y]
+        # 색이 있는 화소는 잉크로 세지 않습니다. 레일 캡처에는 안 읽은 개수를
+        # 알리는 빨간 배지가 말풍선 오른쪽 위를 덮고 있어, 그냥 밝기로만 재면
+        # 배지가 아이콘의 일부로 잡혀 폭이 엉뚱하게 넓어집니다.
+        if max(r, g, b) - min(r, g, b) > 40:
+            return False
+        v = 0.299 * r + 0.587 * g + 0.114 * b
         return v < thresh if dark_ink else v > thresh
 
     pts = [(x, y) for y in range(y0b, y1b + 1) for x in range(x0b, x1b + 1) if on(x, y)]

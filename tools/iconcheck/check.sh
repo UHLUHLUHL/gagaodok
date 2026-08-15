@@ -37,8 +37,17 @@ echo "── 새 대화: 원본 대 우리 ────────────�
 "$PY" cmp.py reference/header_chats.png 2 compose dark 106,144,28,59
 
 echo
+echo "── 친구 추가: 원본 대 우리 ────────────"
+# 이 캡처만 다크 모드라 잉크가 흽니다.
+"$PY" cmp.py reference/header_addfriend.png 2 addfriend light
+
+echo
 echo "── 레일 친구: 원본 대 우리 ────────────"
 "$PY" cmp.py reference/rail.png 2 rail_person dark 0,123,55,110
+
+echo
+echo "── 레일 채팅: 원본 대 우리 ────────────"
+"$PY" cmp.py reference/rail.png 2 rail_chat dark 0,123,170,225
 
 echo
 echo "차이가 ±0.5pt 이내면 맞은 것입니다. 2배 화면의 1화소입니다."

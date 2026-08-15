@@ -24,24 +24,33 @@ import SwiftUI
 private struct Canvas {
     let design: CGSize
     let bounds: CGRect
+    /// 참이면 가로·세로 배율을 따로 잡아 설계 상자를 프레임에 꽉 채웁니다.
+    /// SVG에서 옮겨 온 도형은 원본 카카오톡과 가로세로 비가 몇 %씩 다른데,
+    /// 비율을 지키며 맞추면 잉크 상자가 실측 크기에서 벗어납니다.
+    var stretch: Bool = false
 
-    var scale: CGFloat {
+    private var uniform: CGFloat {
         min(bounds.width / design.width, bounds.height / design.height)
     }
+    var scaleX: CGFloat { stretch ? bounds.width / design.width : uniform }
+    var scaleY: CGFloat { stretch ? bounds.height / design.height : uniform }
+    var scale: CGFloat { uniform }
 
     /// 설계 상자를 실제 프레임 가운데에 놓습니다.
     private var origin: CGPoint {
         CGPoint(
-            x: bounds.midX - design.width * scale / 2,
-            y: bounds.midY - design.height * scale / 2
+            x: bounds.midX - design.width * scaleX / 2,
+            y: bounds.midY - design.height * scaleY / 2
         )
     }
 
     func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        CGPoint(x: origin.x + x * scale, y: origin.y + y * scale)
+        CGPoint(x: origin.x + x * scaleX, y: origin.y + y * scaleY)
     }
 
-    func len(_ v: CGFloat) -> CGFloat { v * scale }
+    func len(_ v: CGFloat) -> CGFloat { v * uniform }
+    func lenX(_ v: CGFloat) -> CGFloat { v * scaleX }
+    func lenY(_ v: CGFloat) -> CGFloat { v * scaleY }
 }
 
 /// 초타원 위 한 점입니다. `n`이 2면 보통 타원이고, 커질수록 위가 평평하고
@@ -203,9 +212,14 @@ public struct AddFriendIcon: View {
 
 /// 사이드바의 친구 아이콘 — 머리와 어깨가 떨어져 있는 채운 실루엣입니다.
 ///
-/// 실측 23 x 23. 머리 지름 12, 틈 2, 어깨 23 x 9입니다.
-/// 어깨는 아래 2.5가 곧은 옆구리이고 위 6.5가 타원 돔입니다. 행마다 폭을 재
-/// 맞춰 보니 초타원이 아니라 보통 타원이 정확했습니다.
+/// 도형은 `kakao-style-svg-icons/sidebar-profile.svg`를 그대로 옮겼습니다.
+/// SVG는 64 x 64 상자 안에 잉크가 48 x 50으로 들어 있어서, 그 48 x 50만 떼어
+/// 설계 상자로 씁니다. 좌표는 SVG 값에서 (8, 7)을 뺀 것입니다.
+///
+/// 가로세로를 따로 늘려 23 x 23에 맞춥니다. 실측한 원본이 23 x 23인데 SVG는
+/// 48 x 50이라 비율이 4%쯤 다릅니다. 비율을 지키면 폭이 22.1로 줄어 레일에서
+/// 말풍선보다 작아 보입니다. 게다가 원본 머리는 실측 12 x 11로 원래 세로가
+/// 눌려 있어서, 늘리는 쪽이 원본에 더 가깝습니다.
 public struct PersonGlyph: View {
     var color: Color
 
@@ -213,25 +227,24 @@ public struct PersonGlyph: View {
 
     public var body: some View {
         GeometryReader { geo in
-            let c = Canvas(design: CGSize(width: 23, height: 23),
-                           bounds: CGRect(origin: .zero, size: geo.size))
+            let c = Canvas(design: CGSize(width: 48, height: 50),
+                           bounds: CGRect(origin: .zero, size: geo.size),
+                           stretch: true)
 
             Path { p in
-                let hr: CGFloat = 6
-                p.addEllipse(in: CGRect(
-                    x: c.pt(11.5 - hr, 6 - hr).x, y: c.pt(11.5 - hr, 6 - hr).y,
-                    width: c.len(hr * 2), height: c.len(hr * 2)
-                ))
+                // 머리: SVG는 r 13인데 12.5로 줄였습니다. 13이면 화면에서 지름이
+                // 12.5가 되어 실측 12.0보다 굵고, 아래로도 0.5 더 내려와 어깨와의
+                // 틈을 먹습니다. 12.5면 폭 12.0, 아래 끝 11.5로 원본과 같습니다.
+                p.addEllipse(in: CGRect(origin: c.pt(11.5, 0),
+                                        size: CGSize(width: c.lenX(25), height: c.lenY(25))))
 
-                // 어깨: 왼쪽 아래 → 곧은 옆구리 → 돔 → 오른쪽 아래.
-                let domeBottom: CGFloat = 20.5
-                p.move(to: c.pt(0, 23))
-                p.addLine(to: c.pt(0, domeBottom))
-                p.addSuperellipseArc(canvas: c,
-                                     center: CGPoint(x: 11.5, y: domeBottom),
-                                     rx: 11.5, ry: 6.5, n: 2,
-                                     from: 180, to: 360, moveFirst: false)
-                p.addLine(to: c.pt(23, 23))
+                // 어깨: 돔을 올리고 바닥은 반지름 1.5로 살짝 굴립니다.
+                p.move(to: c.pt(0, 48.5))
+                p.addCurve(to: c.pt(24, 30), control1: c.pt(0, 37.73), control2: c.pt(10.75, 30))
+                p.addCurve(to: c.pt(48, 48.5), control1: c.pt(37.25, 30), control2: c.pt(48, 37.73))
+                p.addCurve(to: c.pt(46.5, 50), control1: c.pt(48, 49.33), control2: c.pt(47.33, 50))
+                p.addLine(to: c.pt(1.5, 50))
+                p.addCurve(to: c.pt(0, 48.5), control1: c.pt(0.67, 50), control2: c.pt(0, 49.33))
                 p.closeSubpath()
             }
             .fill(color)
@@ -243,10 +256,20 @@ public struct PersonGlyph: View {
 
 /// 사이드바의 채팅 아이콘 — 왼쪽 아래로 꼬리가 난 채운 말풍선입니다.
 ///
-/// 실측 22 x 22. 몸통은 22 x 18.6에 반지름 9.3, 곧 높이의 절반이라 양옆이 반원인
-/// 알약 모양입니다. 행마다 폭을 재서 알았습니다. 맨 윗줄의 폭이 3.4밖에 안 되고
-/// 폭이 다 차는 줄이 한 줄뿐인데, 모서리를 굴린 사각형으로는 이 두 가지가 같이 안 나옵니다.
-/// 꼬리는 왼쪽 모서리에서 곧게 내려와 끝을 찍고 비스듬히 바닥으로 돌아옵니다.
+/// 도형은 `kakao-style-svg-icons/sidebar-chat.svg`를 그대로 옮겼습니다.
+/// SVG의 잉크는 49.68 x 47이라 그만큼만 떼어 설계 상자로 쓰고, 좌표는 SVG 값에서
+/// (8, 9)를 뺀 것입니다. 실측 22 x 22에 맞추려고 가로세로를 따로 늘립니다.
+///
+/// 전에는 몸통을 알약(높이의 절반이 반지름인 둥근 사각형)으로 그렸는데 틀렸습니다.
+/// 그렇게 판단한 근거가 "원본 맨 윗줄의 폭이 3.4뿐"이었는데, 그 캡처는 안 읽은
+/// 개수를 알리는 빨간 배지가 말풍선 오른쪽 위를 덮고 있어서 윗줄이 잘려 보인
+/// 것이었습니다. 가리지 않은 왼쪽 가장자리만 행마다 다시 재 보면 알약이 아니라
+/// 타원입니다. y=1에서 5.5, y=2에서 4.0, y=3에서 2.5, y=4에서 2.0 — 알약은 여기서
+/// 각각 4.5, 3.0, 2.0, 1.5로 매번 넓습니다.
+///
+/// 꼬리만 SVG를 그대로 두지 않았습니다. SVG는 꼬리의 곧은 왼쪽 변이 x=5.2인데
+/// 원본은 4.0이라 꼬리가 1.2만큼 여위어 보입니다. 그래서 몸통은 SVG대로 두고
+/// 꼬리는 실측 좌표로 따로 겹쳐 그립니다.
 ///
 /// 몸통과 꼬리를 한 Path에 넣으면 안 됩니다. 두 도형의 감는 방향이 반대라
 /// 겹친 자리가 비어 하얀 쐐기가 생깁니다. 실제로 그렇게 났었습니다.
@@ -258,26 +281,39 @@ public struct ChatBubbleGlyph: View {
 
     public var body: some View {
         GeometryReader { geo in
-            let c = Canvas(design: CGSize(width: 22, height: 22),
-                           bounds: CGRect(origin: .zero, size: geo.size))
+            let c = Canvas(design: CGSize(width: 49.68, height: 47),
+                           bounds: CGRect(origin: .zero, size: geo.size),
+                           stretch: true)
+            // 꼬리는 실측값이라 22 단위로 따로 잡습니다. 잉크 상자가 같으니
+            // 두 좌표계는 화면에서 정확히 겹칩니다.
+            let m = Canvas(design: CGSize(width: 22, height: 22),
+                           bounds: CGRect(origin: .zero, size: geo.size),
+                           stretch: true)
 
             ZStack {
+                // 몸통: SVG의 바깥선에서 꼬리만 빼고, 그 자리는 오른쪽 아래 곡선을
+                // 좌우로 뒤집어 이어 붙였습니다.
                 Path { p in
-                    p.addRoundedRect(
-                        in: CGRect(x: c.pt(0, 0).x, y: c.pt(0, 0).y,
-                                   width: c.len(22), height: c.len(18.6)),
-                        cornerSize: CGSize(width: c.len(9.3), height: c.len(9.3)),
-                        style: .circular
-                    )
+                    p.move(to: c.pt(24.84, 0))
+                    p.addCurve(to: c.pt(0, 19.98),
+                               control1: c.pt(11.12, 0), control2: c.pt(0, 8.48))
+                    p.addCurve(to: c.pt(24.84, 40.57),
+                               control1: c.pt(0, 32.09), control2: c.pt(11.12, 40.57))
+                    p.addCurve(to: c.pt(49.68, 19.98),
+                               control1: c.pt(38.56, 40.57), control2: c.pt(49.68, 32.09))
+                    p.addCurve(to: c.pt(24.84, 0),
+                               control1: c.pt(49.68, 8.48), control2: c.pt(38.56, 0))
+                    p.closeSubpath()
                 }
                 .fill(color)
 
+                // 꼬리: 곧은 왼쪽 변 x=4.0, 끝점 y=22.0, 몸통으로 돌아가는 빗변.
+                // 위쪽 두 점은 몸통 안에 넉넉히 물려 둡니다. 경계에 딱 붙이면
+                // 곡선을 따라 실틈이 보입니다.
                 Path { p in
-                    // 위쪽 두 점은 몸통 안에 넉넉히 물려 둡니다. 경계에 딱 붙이면
-                    // 모서리 곡선을 따라 실틈이 보입니다.
-                    p.move(to: c.pt(4.0, 15.5))
-                    p.addLine(to: c.pt(10.0, 18.0))
-                    p.addLine(to: c.pt(4.4, 22.0))
+                    p.move(to: m.pt(4.0, 15.0))
+                    p.addLine(to: m.pt(11.0, 18.0))
+                    p.addLine(to: m.pt(4.05, 22.0))
                     p.closeSubpath()
                 }
                 .fill(color)
