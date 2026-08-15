@@ -3,13 +3,21 @@ import SwiftUI
 public struct TypingIndicatorView: View {
     let botName: String
     let customAvatar: NSImage?
-    
+    /// 답변 받기를 멈춥니다. 없으면 멈춤 버튼을 보이지 않습니다.
+    var onCancel: (() -> Void)? = nil
+
     @State private var dotScales: [CGFloat] = [1.0, 1.0, 1.0]
     @State private var dotOpacities: [Double] = [0.4, 0.4, 0.4]
-    
-    public init(botName: String = "사피엔스", customAvatar: NSImage? = nil) {
+    @State private var isHoveringCancel = false
+
+    public init(
+        botName: String = "사피엔스",
+        customAvatar: NSImage? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
         self.botName = botName
         self.customAvatar = customAvatar
+        self.onCancel = onCancel
     }
     
     public var body: some View {
@@ -42,7 +50,31 @@ public struct TypingIndicatorView: View {
                         .fill(Color(red: 0.46, green: 0.54, blue: 0.62)) // 카카오톡 수신 대기 둥근 회색-블루 버블
                 )
             }
-            
+
+            // 답변이 길어질 때 멈출 수 있게 합니다. 답변을 받는 동안에만 보입니다.
+            if let onCancel {
+                Button(action: onCancel) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 8.5, weight: .bold))
+                        Text("멈추기")
+                            .font(.custom("Pretendard-Medium", size: 11))
+                    }
+                    .foregroundColor(Color.black.opacity(isHoveringCancel ? 0.75 : 0.5))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.white.opacity(isHoveringCancel ? 0.95 : 0.75))
+                    )
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .onHover { isHoveringCancel = $0 }
+                .padding(.top, 20)
+                .help("답변 받기를 멈춥니다")
+            }
+
             Spacer()
         }
         .padding(.horizontal, 11)
