@@ -32,7 +32,13 @@ public class WindowManager: ObservableObject {
         // NSWindow의 실제 상단 제목 표시줄만 기본 macOS 방식으로 창 이동을 처리합니다.
         window.isMovableByWindowBackground = false
         window.isOpaque = false
-        window.backgroundColor = .white
+        // 창 배경도 화면 모드를 따라야 합니다. 흰색으로 굳혀 두면 반투명한
+        // 구분선 뒤로 그 흰색이 비쳐 다크 모드에서 흰 줄로 남습니다.
+        window.backgroundColor = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(srgbRed: 0x1A/255, green: 0x1A/255, blue: 0x1A/255, alpha: 1)
+                : .white
+        }
         window.minSize = NSSize(width: 350, height: 480)
         window.contentView = hostingView
         window.center()
@@ -66,7 +72,11 @@ public class WindowManager: ObservableObject {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = false
         window.isOpaque = false
-        window.backgroundColor = NSColor(red: 0.729, green: 0.808, blue: 0.878, alpha: 1.0)
+        window.backgroundColor = NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(srgbRed: 0x11/255, green: 0x11/255, blue: 0x11/255, alpha: 1)
+                : NSColor(srgbRed: 0.729, green: 0.808, blue: 0.878, alpha: 1)
+        }
         window.minSize = NSSize(width: 350, height: 500)
         window.contentView = hostingView
         

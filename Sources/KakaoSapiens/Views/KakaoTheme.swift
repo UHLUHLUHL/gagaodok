@@ -123,3 +123,26 @@ public final class AppearanceManager: ObservableObject {
         NSApp?.appearance = mode.nsAppearance
     }
 }
+
+/// 얇은 구분선입니다.
+///
+/// SwiftUI의 `Divider()`는 다크 모드에서 순백(#FFFFFF)으로 그려져 화면을 가릅니다.
+/// 실제로 재 보고 알았습니다. 색을 직접 정해 그립니다.
+public struct HairlineDivider: View {
+    var axis: Axis
+    var color: Color
+
+    public init(_ axis: Axis = .horizontal, color: Color = KakaoTheme.hairline) {
+        self.axis = axis
+        self.color = color
+    }
+
+    public var body: some View {
+        Rectangle()
+            .fill(color)
+            .frame(
+                width: axis == .vertical ? 1 : nil,
+                height: axis == .horizontal ? 1 : nil
+            )
+    }
+}

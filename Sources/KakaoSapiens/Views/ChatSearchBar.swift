@@ -78,7 +78,7 @@ public struct ChatSearchBar: View {
         .padding(.horizontal, 12)
         .frame(height: 38)
         .background(KakaoTheme.surface)
-        .overlay(Divider(), alignment: .bottom)
+        .overlay(HairlineDivider(), alignment: .bottom)
         
         .onAppear { isFocused = true }
     }

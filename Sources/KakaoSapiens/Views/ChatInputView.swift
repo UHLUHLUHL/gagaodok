@@ -66,9 +66,7 @@ public struct ChatInputView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background(KakaoTheme.sunken)
-                .overlay(
-                    Divider(), alignment: .top
-                )
+                .overlay(HairlineDivider(), alignment: .top)
             }
             
             // 텍스트 입력창 + 플레이스홀더 ZStack (커서와 플레이스홀더 위치 1:1 완벽 정렬)

@@ -7,8 +7,11 @@ cd "$DIR"
 echo "🔨 building KakaoSapiens macOS Native App..."
 swift build -c release
 
-APP_NAME="KakaoSapiens"
-APP_BUNDLE="${APP_NAME}.app"
+APP_NAME="KakaoSapiens"          # 빌드 산출물·실행 파일 이름 (내부용)
+# 화면에 보이는 이름입니다. 번들 ID와 데이터 폴더는 그대로 두어야
+# 저장된 대화와 설정을 잃지 않습니다.
+DISPLAY_NAME="가가오독"
+APP_BUNDLE="${DISPLAY_NAME}.app"
 CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
@@ -72,9 +75,9 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleIdentifier</key>
     <string>com.sapiens.kakaotalk</string>
     <key>CFBundleName</key>
-    <string>${APP_NAME}</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleDisplayName</key>
-    <string>사피엔스 (카카오톡)</string>
+    <string>${DISPLAY_NAME}</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
@@ -120,9 +123,11 @@ else
 fi
 
 # 6. /Applications 디렉토리에 정식 설치
-echo "🚀 Installing KakaoSapiens to /Applications..."
+echo "🚀 Installing ${DISPLAY_NAME} to /Applications..."
+# 이름을 바꾸기 전 설치본이 남아 있으면 지웁니다. 데이터는 별도 폴더라 안전합니다.
+rm -rf "/Applications/KakaoSapiens.app"
 rm -rf "/Applications/${APP_BUNDLE}"
 cp -R "${APP_BUNDLE}" "/Applications/${APP_BUNDLE}"
 touch "/Applications/${APP_BUNDLE}"
 
-echo "✅ KakaoSapiens.app 정식 설치가 완료되었습니다!"
+echo "✅ ${APP_BUNDLE} 정식 설치가 완료되었습니다!"

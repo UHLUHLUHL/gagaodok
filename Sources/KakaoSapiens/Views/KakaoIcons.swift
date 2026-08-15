@@ -137,3 +137,117 @@ public struct ChatBubbleGlyph: View {
         }
     }
 }
+
+/// 돋보기 — 정원에 45° 손잡이가 오른쪽 아래로 뻗습니다.
+public struct MagnifierIcon: View {
+    var lineWidth: CGFloat = 1.5
+    var color: Color
+
+    public init(lineWidth: CGFloat = 1.5, color: Color) {
+        self.lineWidth = lineWidth
+        self.color = color
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let s = min(geo.size.width, geo.size.height)
+            let r = s * 0.30
+            let c = CGPoint(x: s * 0.42, y: s * 0.42)
+            let start = CGPoint(x: c.x + r * 0.707, y: c.y + r * 0.707)
+            Path { p in
+                p.addEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+                p.move(to: start)
+                p.addLine(to: CGPoint(x: start.x + r * 0.72, y: start.y + r * 0.72))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+        }
+    }
+}
+
+/// 햄버거 — 길이가 같은 가로줄 셋.
+public struct HamburgerIcon: View {
+    var lineWidth: CGFloat = 1.5
+    var color: Color
+
+    public init(lineWidth: CGFloat = 1.5, color: Color) {
+        self.lineWidth = lineWidth
+        self.color = color
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            Path { p in
+                for i in 0..<3 {
+                    let y = h * (0.26 + 0.24 * CGFloat(i))
+                    p.move(to: CGPoint(x: w * 0.10, y: y))
+                    p.addLine(to: CGPoint(x: w * 0.90, y: y))
+                }
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+        }
+    }
+}
+
+/// 전화 — 고전적인 수화기 모양입니다.
+public struct PhoneIcon: View {
+    var lineWidth: CGFloat = 1.5
+    var color: Color
+
+    public init(lineWidth: CGFloat = 1.5, color: Color) {
+        self.lineWidth = lineWidth
+        self.color = color
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let s = min(geo.size.width, geo.size.height)
+            Path { p in
+                // 왼쪽 위 귀 부분에서 시작해 아래로 휘어 오른쪽 아래 입 부분까지
+                p.move(to: CGPoint(x: s * 0.22, y: s * 0.16))
+                p.addLine(to: CGPoint(x: s * 0.36, y: s * 0.30))
+                p.addLine(to: CGPoint(x: s * 0.28, y: s * 0.44))
+                p.addCurve(to: CGPoint(x: s * 0.56, y: s * 0.72),
+                           control1: CGPoint(x: s * 0.34, y: s * 0.56),
+                           control2: CGPoint(x: s * 0.44, y: s * 0.66))
+                p.addLine(to: CGPoint(x: s * 0.70, y: s * 0.64))
+                p.addLine(to: CGPoint(x: s * 0.84, y: s * 0.78))
+                // 손잡이 곡선
+                p.addCurve(to: CGPoint(x: s * 0.22, y: s * 0.16),
+                           control1: CGPoint(x: s * 0.62, y: s * 1.02),
+                           control2: CGPoint(x: s * -0.02, y: s * 0.40))
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+        }
+    }
+}
+
+/// 화상통화 — 둥근 네모에 오른쪽으로 렌즈가 튀어나온 모양입니다.
+public struct VideoIcon: View {
+    var lineWidth: CGFloat = 1.5
+    var color: Color
+
+    public init(lineWidth: CGFloat = 1.5, color: Color) {
+        self.lineWidth = lineWidth
+        self.color = color
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let body = CGRect(x: w * 0.06, y: h * 0.26, width: w * 0.60, height: h * 0.48)
+            Path { p in
+                p.addRoundedRect(in: body, cornerSize: CGSize(width: h * 0.11, height: h * 0.11))
+                // 오른쪽 렌즈
+                p.move(to: CGPoint(x: w * 0.94, y: h * 0.32))
+                p.addLine(to: CGPoint(x: w * 0.70, y: h * 0.44))
+                p.addLine(to: CGPoint(x: w * 0.70, y: h * 0.56))
+                p.addLine(to: CGPoint(x: w * 0.94, y: h * 0.68))
+                p.closeSubpath()
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+        }
+    }
+}

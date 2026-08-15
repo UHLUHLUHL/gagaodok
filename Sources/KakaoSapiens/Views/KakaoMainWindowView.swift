@@ -61,11 +61,11 @@ public struct KakaoMainWindowView: View {
         ZStack {
             HStack(spacing: 0) {
                 sideRail
-                Divider().overlay(hairline)
+                HairlineDivider(.vertical)
                 VStack(spacing: 0) {
                     header
                     if isSearchVisible { searchBar }
-                    Divider().overlay(hairline)
+                    HairlineDivider()
                     content
                 }
                 .background(KakaoTheme.surface)

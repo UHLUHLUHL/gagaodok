@@ -262,7 +262,7 @@ public struct SingleChatRoomView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
                     .background(Color(red: 0.98, green: 0.94, blue: 0.75))
-                    .overlay(Divider(), alignment: .bottom)
+                    .overlay(HairlineDivider(), alignment: .bottom)
                 }
                 
                 // 하단 입력창

@@ -74,12 +74,12 @@ public struct PersonaEditorView: View {
 
                 VStack(spacing: 0) {
                     header
-                    Divider().overlay(hairline)
+                    HairlineDivider()
 
                     ScrollView { sections }
                         .background(pageBackground)
 
-                    Divider().overlay(hairline)
+                    HairlineDivider()
                     footer
                 }
                 .frame(width: sheetWidth, height: sheetHeight)
@@ -336,7 +336,7 @@ public struct PersonaEditorView: View {
 
             // 뽑아낸 규칙을 말로 손보는 자리입니다.
             // 규칙을 통째로 다시 만들지 않고 요청한 부분만 고칩니다.
-            Divider().overlay(hairline).padding(.vertical, 1)
+            HairlineDivider().padding(.vertical, 1)
             Text("말로 교정하기").font(.custom("Pretendard-Bold", size: 11.5))
                 .foregroundColor(inkPrimary)
             inputField("예) 좀 더 딱딱하게 · 이모지 빼줘 · 존댓말로", text: $refineInstruction) { refine() }

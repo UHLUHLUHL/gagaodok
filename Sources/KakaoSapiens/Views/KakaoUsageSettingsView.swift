@@ -27,7 +27,7 @@ public struct KakaoUsageSettingsView: View {
 
             VStack(spacing: 0) {
                 header
-                Divider().opacity(0.65)
+                HairlineDivider()
                 sectionTabs
                 ScrollView {
                     switch section {
@@ -59,7 +59,7 @@ public struct KakaoUsageSettingsView: View {
             .frame(width: 34, height: 34)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("사피엔스 설정")
+                Text("가가오독 설정")
                     .font(.custom("Pretendard-Bold", size: 15))
                 Text("모델과 API 사용량을 관리합니다")
                     .font(.custom("Pretendard-Regular", size: 10.5))
@@ -162,7 +162,7 @@ public struct KakaoUsageSettingsView: View {
                         .font(.custom("Pretendard-Regular", size: 11))
                         .foregroundColor(Color.black.opacity(0.48))
                 }
-                Divider().opacity(0.6)
+                HairlineDivider()
                 HStack(spacing: 0) {
                     metric(title: "전체 토큰", value: usage.totalTokens.formatted())
                     metricDivider
@@ -202,7 +202,7 @@ public struct KakaoUsageSettingsView: View {
                         }
                         .padding(.horizontal, 11)
                         .padding(.vertical, 8)
-                        Divider().padding(.leading, 52)
+                        HairlineDivider().padding(.leading, 52)
                     }
                 }
                 .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
