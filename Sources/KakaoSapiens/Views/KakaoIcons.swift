@@ -6,12 +6,15 @@ import SwiftUI
 /// 자주 보이는 것부터 하나씩 옮깁니다.
 public enum KakaoIcon {}
 
-/// 새 대화 — 말풍선 안에 +가 있는 모양입니다.
+/// 새 대화 — 둥근 말풍선에 꼬리가 왼쪽 아래로 나오고, 오른쪽에 +가 붙습니다.
+///
+/// 원본을 확대해 보니 사각형이 아니라 거의 원에 가깝고, +가 놓인 자리에서
+/// 테두리가 끊겨 있습니다. 그 끊김이 이 아이콘의 인상을 만듭니다.
 public struct ComposeChatIcon: View {
-    var lineWidth: CGFloat = 1.6
-    var color: Color = Color.black.opacity(0.72)
+    var lineWidth: CGFloat = 1.5
+    var color: Color = Color.black.opacity(0.78)
 
-    public init(lineWidth: CGFloat = 1.6, color: Color = Color.black.opacity(0.72)) {
+    public init(lineWidth: CGFloat = 1.5, color: Color = Color.black.opacity(0.78)) {
         self.lineWidth = lineWidth
         self.color = color
     }
@@ -20,60 +23,44 @@ public struct ComposeChatIcon: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            // 말풍선 몸통은 아래쪽에 꼬리 자리를 남기고 그립니다.
-            let bodyHeight = h * 0.80
-            let plus = min(w, bodyHeight) * 0.42
+            let r = min(w, h) * 0.33
+            let c = CGPoint(x: w * 0.38, y: h * 0.42)
+            let plusCenter = CGPoint(x: w * 0.84, y: h * 0.46)
+            let plusHalf = min(w, h) * 0.17
 
             ZStack {
-                BubbleWithTail(bodyHeight: bodyHeight)
+                BubbleOutline(center: c, radius: r)
                     .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
 
-                Path { path in
-                    let cx = w / 2
-                    let cy = bodyHeight / 2
-                    path.move(to: CGPoint(x: cx - plus / 2, y: cy))
-                    path.addLine(to: CGPoint(x: cx + plus / 2, y: cy))
-                    path.move(to: CGPoint(x: cx, y: cy - plus / 2))
-                    path.addLine(to: CGPoint(x: cx, y: cy + plus / 2))
+                Path { p in
+                    p.move(to: CGPoint(x: plusCenter.x - plusHalf, y: plusCenter.y))
+                    p.addLine(to: CGPoint(x: plusCenter.x + plusHalf, y: plusCenter.y))
+                    p.move(to: CGPoint(x: plusCenter.x, y: plusCenter.y - plusHalf))
+                    p.addLine(to: CGPoint(x: plusCenter.x, y: plusCenter.y + plusHalf))
                 }
                 .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
             }
         }
     }
 
-    private struct BubbleWithTail: Shape {
-        let bodyHeight: CGFloat
+    /// 오른쪽에 +가 들어갈 만큼 테두리를 비우고, 왼쪽 아래에 꼬리를 답니다.
+    private struct BubbleOutline: Shape {
+        let center: CGPoint
+        let radius: CGFloat
 
         func path(in rect: CGRect) -> Path {
-            let w = rect.width
-            let r = bodyHeight * 0.30
-            let body = CGRect(x: 0, y: 0, width: w, height: bodyHeight)
-
-            var path = Path()
-            // 왼쪽 아래 모서리에서 시작해 시계 방향으로 돌되, 꼬리 자리를 비워 둡니다.
-            let tailStart = CGPoint(x: w * 0.30, y: bodyHeight)
-            let tailTip = CGPoint(x: w * 0.20, y: rect.height)
-            let tailEnd = CGPoint(x: w * 0.44, y: bodyHeight)
-
-            path.move(to: CGPoint(x: r, y: bodyHeight))
-            path.addLine(to: tailStart)
-            path.addLine(to: tailTip)
-            path.addLine(to: tailEnd)
-            path.addLine(to: CGPoint(x: w - r, y: bodyHeight))
-            path.addArc(center: CGPoint(x: w - r, y: bodyHeight - r), radius: r,
-                        startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-            path.addLine(to: CGPoint(x: w, y: r))
-            path.addArc(center: CGPoint(x: w - r, y: r), radius: r,
-                        startAngle: .degrees(0), endAngle: .degrees(-90), clockwise: true)
-            path.addLine(to: CGPoint(x: r, y: 0))
-            path.addArc(center: CGPoint(x: r, y: r), radius: r,
-                        startAngle: .degrees(-90), endAngle: .degrees(180), clockwise: true)
-            path.addLine(to: CGPoint(x: 0, y: bodyHeight - r))
-            path.addArc(center: CGPoint(x: r, y: bodyHeight - r), radius: r,
-                        startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
-            path.closeSubpath()
-            _ = body
-            return path
+            // 화면 좌표는 y가 아래로 커지므로 0°가 오른쪽, 90°가 아래입니다.
+            // +가 놓일 오른쪽(약 -42°~42°)을 비우고 나머지를 두 토막으로 그립니다.
+            var p = Path()
+            p.addArc(center: center, radius: radius,
+                     startAngle: .degrees(30), endAngle: .degrees(116),
+                     clockwise: false)
+            // 왼쪽 아래로 뾰족하게 빠지는 꼬리
+            p.addLine(to: CGPoint(x: center.x - radius * 0.98, y: center.y + radius * 1.24))
+            p.addArc(center: center, radius: radius,
+                     startAngle: .degrees(156), endAngle: .degrees(300),
+                     clockwise: false)
+            return p
         }
     }
 }

@@ -247,6 +247,13 @@ class CustomDragNSView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // hitTest만으로는 막히지 않는 경우가 있어 받는 시점에서 한 번 더 확인합니다.
+        // 여기서 막지 않으면 슬라이더를 끌 때 창까지 같이 끌려옵니다.
+        let local = convert(event.locationInWindow, from: nil)
+        if excludedFromRight > 0, local.x > bounds.maxX - excludedFromRight {
+            super.mouseDown(with: event)
+            return
+        }
         window?.performDrag(with: event)
     }
 }
