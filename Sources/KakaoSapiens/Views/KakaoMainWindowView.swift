@@ -297,7 +297,7 @@ public struct KakaoMainWindowView: View {
                 RoomAvatarView(image: myProfile.customImage, size: 54)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(myProfile.name)
-                        .font(.custom("Pretendard-Bold", size: 14))
+                        .font(.custom("Pretendard-Regular", size: 14))
                         .foregroundColor(ink)
                     if !myProfile.statusMessage.isEmpty {
                         Text(myProfile.statusMessage)
@@ -426,7 +426,7 @@ private struct FriendRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(room.profile.name)
-                        .font(.custom("Pretendard-Bold", size: 13))
+                        .font(.custom("Pretendard-Regular", size: 13))
                         .foregroundColor(KakaoTheme.textPrimary)
                         .lineLimit(1)
                     if room.profile.persona.isEnabled {
@@ -684,7 +684,7 @@ private struct KakaoChatRoomRow: View {
             VStack(alignment: .leading, spacing: 3.5) {
                 HStack(spacing: 4) {
                     Text(room.profile.name)
-                        .font(.custom("Pretendard-Bold", size: 14))
+                        .font(.custom("Pretendard-Regular", size: 14))
                         .foregroundColor(KakaoTheme.textPrimary)
                         .lineLimit(1)
 
