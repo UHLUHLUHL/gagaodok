@@ -19,3 +19,8 @@ output/
 
 # Distribution artifacts
 dist/
+
+# 아이콘 대조 도구가 만드는 것들 (reference/는 원본 캡처라 남깁니다)
+tools/iconcheck/out_*.png
+tools/iconcheck/iconshot
+tools/iconcheck/KakaoIcons.swift
