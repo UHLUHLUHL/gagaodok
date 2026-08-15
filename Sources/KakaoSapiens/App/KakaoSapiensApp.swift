@@ -19,13 +19,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 저장된 화면 모드를 창을 만들기 전에 적용합니다. 동적 색이 이 값을 보고 갈라집니다.
         AppearanceManager.shared.apply()
         
-        // 1. 카카오톡 메인 윈도우(채팅방 목록 & 탭바) 실행
+        // 목록 창만 띄웁니다.
+        //
+        // 예전에는 여기서 rooms.first의 대화방 창도 같이 열었습니다. 방이 하나뿐이던
+        // 시절에 만든 줄인데, 방이 여럿이 된 뒤로는 저장된 배열의 0번이 뜬금없이 열립니다.
+        // 게다가 목록은 고정한 방을 위로 올려 보여주므로 화면 맨 위에 있는 방과
+        // 열리는 방이 서로 다릅니다. 원본 카카오톡도 켤 때 목록만 띄웁니다.
         WindowManager.shared.openMainWindow()
-        
-        // 2. 첫 번째 활성 채팅방 창도 함께 띄우기
-        if let firstRoom = ChatRoomManager.shared.rooms.first {
-            WindowManager.shared.openChatRoom(roomId: firstRoom.id)
-        }
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
