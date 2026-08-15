@@ -14,7 +14,10 @@ public struct ChatHeaderView: View {
     /// 이 방이 쓰는 모델입니다. 모델은 방마다 따로 기억합니다.
     var activeModel: AIModel = .gemini37Flash
     var onModelSelected: ((AIModel) -> Void)? = nil
-    
+    /// 이 방이 수학 멘토인지 챗봇인지입니다. 모델과 같은 메뉴에서 고릅니다.
+    var activeMode: ChatMode = .mathMentor
+    var onModeSelected: ((ChatMode) -> Void)? = nil
+
     public init(
         botName: String = "사피엔스",
         customAvatar: NSImage? = nil,
@@ -26,10 +29,14 @@ public struct ChatHeaderView: View {
         onVideoTapped: (() -> Void)? = nil,
         onMenuTapped: (() -> Void)? = nil,
         activeModel: AIModel = .gemini37Flash,
-        onModelSelected: ((AIModel) -> Void)? = nil
+        onModelSelected: ((AIModel) -> Void)? = nil,
+        activeMode: ChatMode = .mathMentor,
+        onModeSelected: ((ChatMode) -> Void)? = nil
     ) {
         self.activeModel = activeModel
         self.onModelSelected = onModelSelected
+        self.activeMode = activeMode
+        self.onModeSelected = onModeSelected
         self.botName = botName
         self.customAvatar = customAvatar
         self.onAvatarTapped = onAvatarTapped
@@ -93,15 +100,33 @@ public struct ChatHeaderView: View {
                                 .fill(KakaoTheme.onChatHeaderDim.opacity(0.4))
                                 .frame(width: 2.5, height: 2.5)
 
+                            // 모드와 모델을 한 메뉴에 담습니다. 둘 다 "이 방이 어떻게 답하는가"를
+                            // 정하는 값이라 서로 붙어 있는 편이 찾기 쉽습니다. 모드를 위에 둔 것은
+                            // 대화의 성격을 통째로 바꾸는 쪽이 모델 교체보다 큰 결정이기 때문입니다.
                             Menu {
-                                ForEach(AIModel.allCases) { model in
-                                    Button {
-                                        onModelSelected?(model)
-                                    } label: {
-                                        if activeModel == model {
-                                            Label(model.displayName, systemImage: "checkmark")
-                                        } else {
-                                            Text(model.displayName)
+                                Section("모드") {
+                                    ForEach(ChatMode.allCases) { mode in
+                                        Button {
+                                            onModeSelected?(mode)
+                                        } label: {
+                                            if activeMode == mode {
+                                                Label(mode.displayName, systemImage: "checkmark")
+                                            } else {
+                                                Text(mode.displayName)
+                                            }
+                                        }
+                                    }
+                                }
+                                Section("모델") {
+                                    ForEach(AIModel.allCases) { model in
+                                        Button {
+                                            onModelSelected?(model)
+                                        } label: {
+                                            if activeModel == model {
+                                                Label(model.displayName, systemImage: "checkmark")
+                                            } else {
+                                                Text(model.displayName)
+                                            }
                                         }
                                     }
                                 }
@@ -112,7 +137,7 @@ public struct ChatHeaderView: View {
                                               ? Color(red: 0.26, green: 0.53, blue: 0.95)
                                               : Color(red: 0.39, green: 0.26, blue: 0.76))
                                         .frame(width: 5, height: 5)
-                                    Text(activeModel.shortName)
+                                    Text("\(activeModel.shortName) · \(activeMode.shortName)")
                                         .font(.custom("Pretendard-Medium", size: 10.5))
                                     Image(systemName: "chevron.down")
                                         .font(.system(size: 7, weight: .semibold))

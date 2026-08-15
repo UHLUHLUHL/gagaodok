@@ -61,32 +61,6 @@ public actor GeminiService {
 
     private let resilientSession: URLSession
 
-    // 이 고정 접두사는 두 공급자에서 동일하게 재사용됩니다. 방 이름 같은 동적 값은 끝에 둬 캐시 적중률을 높입니다.
-    private let stableSystemPrompt = """
-    # 역할
-    당신은 사용자의 수학 학습 파트너이자 냉철한 코칭 멘토다. 암기보다 구조와 원리를 이해하도록 돕는다.
-
-    # 지도 방식
-    - 사용자가 바로 정답을 요구하지 않았다면 핵심 개념과 첫 실마리를 짚고, 다음 단계를 생각하게 하는 구체적인 질문을 던진다.
-    - 사용자가 풀이·정답을 명시적으로 요청하거나 막혔다고 말하면 근거가 포함된 전체 풀이를 간결하고 빠짐없이 제시한다.
-    - 틀린 부분은 정확히 지적하고 이유를 설명한다. 좋은 접근은 과장 없이 인정한다.
-    - 항상 자연스러운 한국어 존댓말을 쓴다.
-
-    # 카카오톡 말풍선과 수식
-    - 답변을 자연스러운 호흡의 짧은 문단으로 나누고 문단 사이에는 빈 줄 하나를 둔다.
-    - 짧은 수식은 $...$로 문장 안에 쓴다.
-    - 긴 계산, 여러 등호가 이어지는 전개, 핵심 결론식은 $$...$$ 독립 문단으로 쓴다.
-    - 같은 설명을 반복하거나 불필요한 서론을 붙이지 않는다.
-
-    # 그래프
-    그래프가 학습에 실질적으로 도움이 될 때만 별도 문단에 다음 형식 중 하나를 쓴다.
-    [GRAPH: type=cartesian, func=sin(x), xmin=-6.28, xmax=6.28, ymin=-2, ymax=2, title="y = sin(x)"]
-    [GRAPH: type=parametric, x=t*cos(t), y=t*sin(t), tmin=0, tmax=6.28, xmin=-7, xmax=7, ymin=-7, ymax=7, title="매개변수 곡선"]
-    수식에는 + - * / ^ 와 괄호, 그리고 sin, cos, tan, asin, acos, atan, sinh, cosh, tanh,
-    exp, ln, log, sqrt, abs를 쓸 수 있다. 상수 pi와 e도 쓸 수 있고 2x처럼 곱셈 기호를 생략해도 된다.
-    직교함수는 변수 x를, 매개변수 곡선은 변수 t를 쓴다. 이 범위를 벗어나는 식은 그래프 태그로 만들지 않는다.
-    """
-
     private init() {
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = true
@@ -100,18 +74,19 @@ public actor GeminiService {
         botName: String = "사피엔스",
         roomId: UUID? = nil,
         model requestedModel: AIModel? = nil,
-        persona: PersonaStyle? = nil
+        persona: PersonaStyle? = nil,
+        mode: ChatMode = .mathMentor
     ) async throws -> GeneratedAIResponse {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
         let rawText: String
         switch model {
         case .gemini37Flash:
             rawText = try await sendGeminiRequest(
-                conversation: conversation, botName: botName, roomId: roomId, persona: persona
+                conversation: conversation, botName: botName, roomId: roomId, persona: persona, mode: mode
             )
         case .gpt56Luna:
             rawText = try await sendOpenAIRequest(
-                conversation: conversation, botName: botName, roomId: roomId, persona: persona
+                conversation: conversation, botName: botName, roomId: roomId, persona: persona, mode: mode
             )
         }
         return GeneratedAIResponse(
@@ -133,20 +108,21 @@ public actor GeminiService {
         roomId: UUID? = nil,
         model requestedModel: AIModel? = nil,
         persona: PersonaStyle? = nil,
+        mode: ChatMode = .mathMentor,
         onBubble: @Sendable @escaping (GeneratedMessageBubble) async -> Void
     ) async throws -> String {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
         guard model == .gemini37Flash else {
             let response = try await generateResponse(
                 conversation: conversation, botName: botName, roomId: roomId,
-                model: model, persona: persona
+                model: model, persona: persona, mode: mode
             )
             for bubble in response.bubbles { await onBubble(bubble) }
             return response.rawText
         }
         return try await sendGeminiRequest(
             conversation: conversation, botName: botName, roomId: roomId, persona: persona,
-            onBubble: onBubble
+            mode: mode, onBubble: onBubble
         )
     }
 
@@ -305,22 +281,40 @@ public actor GeminiService {
     }
 
     /// 미리보기에서 던져볼 상황들입니다.
-    /// 설명·지적·칭찬은 말투가 가장 크게 갈리는 지점이라, 이 셋만 봐도 결이 맞는지 판단이 섭니다.
-    public static let personaPreviewPrompts: [(situation: String, message: String)] = [
-        ("설명할 때", "미분이 뭔지 한두 문장으로 짧게 설명해줘."),
-        ("틀렸다고 말할 때", "x²의 미분은 2라고 배웠어. 맞지?"),
-        ("칭찬할 때", "고마워! 덕분에 이해했어.")
-    ]
+    ///
+    /// 모드마다 다르게 묻습니다. 챗봇 방에 "미분이 뭐야"를 던져 놓고 결을 판단할 수는 없습니다.
+    /// 멘토는 설명·지적·칭찬에서, 챗봇은 인사·감정·거리감에서 말투가 가장 크게 갈립니다.
+    public static func previewPrompts(for mode: ChatMode) -> [(situation: String, message: String)] {
+        switch mode {
+        case .mathMentor:
+            return [
+                ("설명할 때", "미분이 뭔지 한두 문장으로 짧게 설명해줘."),
+                ("틀렸다고 말할 때", "x²의 미분은 2라고 배웠어. 맞지?"),
+                ("칭찬할 때", "고마워! 덕분에 이해했어.")
+            ]
+        case .companion:
+            return [
+                ("말 걸었을 때", "야, 뭐해?"),
+                ("속마음을 물을 때", "너는 나를 어떻게 생각해?"),
+                ("기분이 안 좋을 때", "오늘 진짜 최악이었어. 아무것도 하기 싫다.")
+            ]
+        }
+    }
 
     /// 저장하기 전에 이 말투가 실제 그 캐릭터 같은지 확인할 수 있도록 짧은 답변을 만듭니다.
     /// 실제 대화와 똑같은 시스템 지침을 쓰므로, 여기서 보이는 결이 채팅방에서도 그대로 나옵니다.
-    public func previewPersona(persona: PersonaStyle, botName: String, message: String) async throws -> String {
+    public func previewPersona(
+        persona: PersonaStyle,
+        botName: String,
+        message: String,
+        mode: ChatMode = .mathMentor
+    ) async throws -> String {
         guard let apiKey = KeychainStore.geminiAPIKey else {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
         }
         var enabled = persona
         enabled.isEnabled = true
-        let system = systemPrompt(botName: botName, persona: enabled)
+        let system = systemPrompt(botName: botName, persona: enabled, mode: mode)
 
         let body: [String: Any] = [
             "systemInstruction": ["parts": [["text": system]]],
@@ -517,10 +511,11 @@ public actor GeminiService {
         return try validatedJSON(data: data, response: response, provider: "Gemini")
     }
 
-    private func systemPrompt(botName: String, persona: PersonaStyle? = nil) -> String {
-        var prompt = stableSystemPrompt
+    private func systemPrompt(botName: String, persona: PersonaStyle? = nil, mode: ChatMode = .mathMentor) -> String {
+        // 이 고정 접두사는 두 공급자에서 동일하게 재사용됩니다. 방 이름 같은 동적 값은 끝에 둬 캐시 적중률을 높입니다.
+        var prompt = mode.stableSystemPrompt
         // 말투는 방마다 고정이라 캐시 접두사 안쪽에 두어도 적중률이 떨어지지 않습니다.
-        if let section = persona?.promptSection(botName: botName) {
+        if let section = persona?.promptSection(botName: botName, mode: mode) {
             prompt += "\n\n" + section
         }
         prompt += "\n\n# 현재 대화 설정\n이 대화에서 당신의 이름은 '\(botName)'이다. 자신을 지칭해야 할 때 이 이름을 사용한다."
@@ -647,6 +642,7 @@ public actor GeminiService {
         botName: String,
         roomId: UUID?,
         persona: PersonaStyle? = nil,
+        mode: ChatMode = .mathMentor,
         onBubble: (@Sendable (GeneratedMessageBubble) async -> Void)? = nil
     ) async throws -> String {
         let model = AIModel.gemini37Flash
@@ -663,8 +659,9 @@ public actor GeminiService {
         if let digestText = plan.digestText {
             contents = digestPreamble(digestText) + contents
         }
-        let system = systemPrompt(botName: botName, persona: persona)
+        let system = systemPrompt(botName: botName, persona: persona, mode: mode)
 
+        // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
         var reusedCache = roomId.flatMap { usablePrefixCache(for: $0, contents: contents, system: system) }
 
         // 흘려보낼 곳이 있으면 스트리밍으로, 없으면 지금까지처럼 한 번에 받습니다.
@@ -993,7 +990,7 @@ public actor GeminiService {
         }
     }
 
-    private func sendOpenAIRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil) async throws -> String {
+    private func sendOpenAIRequest(conversation: [ConversationTurn], botName: String, roomId: UUID?, persona: PersonaStyle? = nil, mode: ChatMode = .mathMentor) async throws -> String {
         guard let apiKey = KeychainStore.openAIAPIKey else {
             throw serviceError("설정에서 OpenAI API 키를 먼저 등록해주세요.")
         }
@@ -1011,7 +1008,7 @@ public actor GeminiService {
         let cacheKey = "kakao-sapiens-room-\(roomId?.uuidString ?? "default")"
         let body: [String: Any] = [
             "model": AIModel.gpt56Luna.rawValue,
-            "instructions": systemPrompt(botName: botName, persona: persona),
+            "instructions": systemPrompt(botName: botName, persona: persona, mode: mode),
             "input": buildOpenAIInput(conversation),
             "prompt_cache_key": cacheKey,
             // 대화가 뒤에 계속 추가되는 메신저에는 implicit 경계가 가장 잘 맞습니다.

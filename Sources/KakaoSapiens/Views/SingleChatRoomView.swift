@@ -63,6 +63,9 @@ public struct SingleChatRoomView: View {
         room.resolvedModel(default: modelManager.selectedModel)
     }
 
+    /// 이 방이 수학 멘토인지 챗봇인지입니다. 고른 적이 없으면 지금까지의 동작인 멘토입니다.
+    private var activeMode: ChatMode { room.resolvedMode }
+
     private var currentAvatar: NSImage? {
         roomManager.loadAvatarForRoom(profile: room.profile)
     }
@@ -152,7 +155,9 @@ public struct SingleChatRoomView: View {
                         isProfileModalPresented = true
                     },
                     activeModel: activeModel,
-                    onModelSelected: { roomManager.updateRoomModel(roomId: roomId, model: $0) }
+                    onModelSelected: { roomManager.updateRoomModel(roomId: roomId, model: $0) },
+                    activeMode: activeMode,
+                    onModeSelected: { roomManager.updateRoomMode(roomId: roomId, mode: $0) }
                 )
 
                 if isSearching {
@@ -481,6 +486,7 @@ public struct SingleChatRoomView: View {
         let currentBotName = room.profile.name
         let currentRoomId = roomId
         let currentModel = activeModel
+        let currentMode = activeMode
         let currentPersona = room.profile.persona
         let conversation = ConversationTurn.from(messages: history)
         // 실패로 남길 대상은 방금 보낸 내 메시지입니다.
@@ -497,7 +503,8 @@ public struct SingleChatRoomView: View {
                         botName: currentBotName,
                         roomId: currentRoomId,
                         model: currentModel,
-                        persona: currentPersona
+                        persona: currentPersona,
+                        mode: currentMode
                     ) { bubble in
                         await MainActor.run {
                             self.isTyping = false

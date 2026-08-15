@@ -37,9 +37,19 @@ public struct PersonaStyle: Codable, Equatable {
 
     /// 시스템 지침에 붙일 형태로 만듭니다.
     /// 규칙을 먼저 두고 원문 예시를 뒤에 두면, 모델이 규칙으로 방향을 잡고 예시로 결을 맞춥니다.
-    public func promptSection(botName: String) -> String? {
+    ///
+    /// 모드에 따라 요구 강도가 다릅니다. 멘토 모드에서 인물은 겉옷이라 풀이가 우선이지만,
+    /// 챗봇 모드에서는 인물이 대화의 전부입니다. 같은 문장을 쓰면 한쪽이 반드시 어긋납니다.
+    public func promptSection(botName: String, mode: ChatMode = .mathMentor) -> String? {
         guard isEnabled, hasContent else { return nil }
-        var lines = ["# 말투", "'\(botName)'는 아래 인물의 말투로 말한다. 수학 내용의 정확성은 절대 바꾸지 않는다."]
+
+        var lines: [String]
+        switch mode {
+        case .mathMentor:
+            lines = ["# 말투", "'\(botName)'는 아래 인물의 말투로 말한다. 수학 내용의 정확성은 절대 바꾸지 않는다."]
+        case .companion:
+            lines = ["# 인물", "'\(botName)'는 아래 인물이다. 흉내 내는 것이 아니라 그 사람으로 말한다."]
+        }
 
         let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedDescription.isEmpty {
@@ -62,8 +72,15 @@ public struct PersonaStyle: Codable, Equatable {
             lines.append("지금 상황에 맞는 말을 새로 만들되 어투만 같게 한다.")
         }
         lines.append("")
-        lines.append("말투만 흉내 내고, 설명의 구조·수식·풀이 순서는 원래 방식을 지킨다.")
-        lines.append("문제 풀이에 필요한 정보를 말투 때문에 빠뜨리지 않는다.")
+        switch mode {
+        case .mathMentor:
+            lines.append("말투만 흉내 내고, 설명의 구조·수식·풀이 순서는 원래 방식을 지킨다.")
+            lines.append("문제 풀이에 필요한 정보를 말투 때문에 빠뜨리지 않는다.")
+        case .companion:
+            lines.append("말투뿐 아니라 성격, 가치관, 상대를 대하는 태도까지 이 인물의 것으로 유지한다.")
+            lines.append("이 인물이 쓰지 않을 존댓말이나 조심스러운 말투로 돌아가지 않는다.")
+            lines.append("지금 이 상황에서 이 인물이 실제로 할 말을 한다.")
+        }
         return lines.joined(separator: "\n")
     }
 }
@@ -122,6 +139,12 @@ public struct ChatRoom: Identifiable, Codable, Equatable {
     /// 말투가 방마다 다른데 모델은 전역이라, 방을 옮길 때마다 모델이 따라와서
     /// 어느 방이 무엇으로 답했는지 헷갈렸습니다. 방에 붙여 둡니다.
     public var modelIdentifier: String?
+    /// 이 방이 수학 멘토인지 챗봇인지입니다. 비어 있으면 수학 멘토입니다.
+    ///
+    /// 모델과 마찬가지로 방에 붙여 둡니다. 한 방은 캐릭터와 노는 곳이고 다른 방은 문제를 푸는
+    /// 곳인데 모드가 전역이면 방을 옮길 때마다 따라와서 매번 다시 골라야 합니다.
+    /// 예전에 저장된 방에는 이 값이 없으므로, 없으면 지금까지와 똑같이 멘토로 동작합니다.
+    public var modeIdentifier: String?
 
     public init(
         id: UUID = UUID(),
@@ -131,7 +154,8 @@ public struct ChatRoom: Identifiable, Codable, Equatable {
         lastMessageTime: Date = Date(),
         isPinned: Bool = false,
         unreadCount: Int = 0,
-        modelIdentifier: String? = nil
+        modelIdentifier: String? = nil,
+        modeIdentifier: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -142,12 +166,19 @@ public struct ChatRoom: Identifiable, Codable, Equatable {
         self.isPinned = isPinned
         self.unreadCount = unreadCount
         self.modelIdentifier = modelIdentifier
+        self.modeIdentifier = modeIdentifier
     }
 
     /// 이 방이 실제로 쓸 모델입니다. 아직 고른 적이 없으면 전역 기본값입니다.
     public func resolvedModel(default fallback: AIModel) -> AIModel {
         guard let modelIdentifier, let model = AIModel(storedValue: modelIdentifier) else { return fallback }
         return model
+    }
+
+    /// 이 방이 실제로 쓸 모드입니다. 고른 적이 없으면 지금까지의 동작인 수학 멘토입니다.
+    public var resolvedMode: ChatMode {
+        guard let modeIdentifier, let mode = ChatMode(rawValue: modeIdentifier) else { return .mathMentor }
+        return mode
     }
 }
 
@@ -281,6 +312,13 @@ public class ChatRoomManager: ObservableObject {
         guard let idx = rooms.firstIndex(where: { $0.id == roomId }) else { return }
         guard rooms[idx].modelIdentifier != model.rawValue else { return }
         rooms[idx].modelIdentifier = model.rawValue
+        saveRooms()
+    }
+
+    public func updateRoomMode(roomId: UUID, mode: ChatMode) {
+        guard let idx = rooms.firstIndex(where: { $0.id == roomId }) else { return }
+        guard rooms[idx].modeIdentifier != mode.rawValue else { return }
+        rooms[idx].modeIdentifier = mode.rawValue
         saveRooms()
     }
 

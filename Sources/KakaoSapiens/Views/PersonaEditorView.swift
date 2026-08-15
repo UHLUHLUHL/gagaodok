@@ -536,12 +536,15 @@ public struct PersonaEditorView: View {
             description: description, samples: sampleLines, styleGuide: styleGuide, isEnabled: true
         )
         let botName = roomManager.getRoom(id: roomId)?.profile.name ?? "사피엔스"
+        // 이 방의 모드로 미리봅니다. 챗봇 방인데 멘토 지침으로 미리보면
+        // 여기서 괜찮아 보이던 말투가 실제 대화에서는 전혀 다르게 나옵니다.
+        let mode = roomManager.getRoom(id: roomId)?.resolvedMode ?? .mathMentor
         Task {
             let results = await withTaskGroup(of: (Int, String, String, String).self) { group in
-                for (index, prompt) in GeminiService.personaPreviewPrompts.enumerated() {
+                for (index, prompt) in GeminiService.previewPrompts(for: mode).enumerated() {
                     group.addTask {
                         let answer = (try? await GeminiService.shared.previewPersona(
-                            persona: persona, botName: botName, message: prompt.message
+                            persona: persona, botName: botName, message: prompt.message, mode: mode
                         )) ?? "(불러오지 못했습니다)"
                         return (index, prompt.situation, prompt.message, answer)
                     }
