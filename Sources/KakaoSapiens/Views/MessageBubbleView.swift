@@ -336,12 +336,12 @@ public struct MessageBubbleView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(attachment.fileName)
                         .font(.custom("Pretendard-Medium", size: 12.5))
-                        .foregroundColor(.black)
+                        .foregroundColor(KakaoTheme.bubbleTheirsText)
                         .lineLimit(1)
                     
                     Text(attachment.formattedSize)
                         .font(.custom("Pretendard-Regular", size: 10.5))
-                        .foregroundColor(Color.black.opacity(0.5))
+                        .foregroundColor(KakaoTheme.textSecondary)
                 }
             }
             .padding(10)
@@ -450,7 +450,7 @@ public struct RoomAvatarView: View {
         .clipShape(RoundedRectangle(cornerRadius: size * 0.40, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: size * 0.40, style: .continuous)
-                .stroke(Color.black.opacity(0.06), lineWidth: 0.5)
+                .stroke(KakaoTheme.hairline, lineWidth: 0.5)
         )
     }
 }
@@ -476,17 +476,17 @@ public struct KakaoDateDividerView: View {
             HStack(spacing: 4) {
                 Image(systemName: "calendar")
                     .font(.system(size: 9))
-                    .foregroundColor(Color.black.opacity(0.4))
+                    .foregroundColor(KakaoTheme.dateDividerText)
                 
                 Text(formattedDateString)
                     .font(.custom("Pretendard-Regular", size: 10.5))
-                    .foregroundColor(Color.black.opacity(0.55))
+                    .foregroundColor(KakaoTheme.dateDividerText)
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 3.5)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.07))
+                    .fill(KakaoTheme.dateDivider)
             )
             Spacer()
         }

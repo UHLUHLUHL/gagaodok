@@ -54,7 +54,7 @@ public struct KakaoUsageSettingsView: View {
                     .fill(Color(red: 0.996, green: 0.898, blue: 0.0))
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color(red: 0.23, green: 0.12, blue: 0.12))
+                    .foregroundColor(KakaoTheme.textPrimary)
             }
             .frame(width: 34, height: 34)
 
@@ -63,15 +63,15 @@ public struct KakaoUsageSettingsView: View {
                     .font(.custom("Pretendard-Bold", size: 15))
                 Text("모델과 API 사용량을 관리합니다")
                     .font(.custom("Pretendard-Regular", size: 10.5))
-                    .foregroundColor(Color.black.opacity(0.48))
+                    .foregroundColor(KakaoTheme.textSecondary)
             }
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color.black.opacity(0.48))
+                    .foregroundColor(KakaoTheme.textSecondary)
                     .frame(width: 28, height: 28)
-                    .background(Color.black.opacity(0.045), in: Circle())
+                    .background(KakaoTheme.sunken, in: Circle())
             }
             .buttonStyle(.plain)
         }
@@ -87,7 +87,7 @@ public struct KakaoUsageSettingsView: View {
                 } label: {
                     Text(item.rawValue)
                         .font(.custom(section == item ? "Pretendard-Bold" : "Pretendard-Medium", size: 12))
-                        .foregroundColor(section == item ? .black : .secondary)
+                        .foregroundColor(section == item ? KakaoTheme.textPrimary : KakaoTheme.textSecondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .background(section == item ? KakaoTheme.surface : Color.clear, in: RoundedRectangle(cornerRadius: 8))
@@ -150,7 +150,7 @@ public struct KakaoUsageSettingsView: View {
                     Spacer()
                     Text("캐시 절약 ₩\(usage.totalSavingsUSD * usage.exchangeRate, specifier: "%.2f")")
                         .font(.custom("Pretendard-Medium", size: 10))
-                        .foregroundColor(Color(red: 0.12, green: 0.55, blue: 0.34))
+                        .foregroundColor(KakaoTheme.dynamic(light: KakaoTheme.hex(0x1F8C57), dark: KakaoTheme.hex(0x54D08C)))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(KakaoTheme.dynamic(light: KakaoTheme.hex(0xE0F7E8), dark: KakaoTheme.hex(0x14361F)), in: Capsule())
@@ -160,7 +160,7 @@ public struct KakaoUsageSettingsView: View {
                         .font(.custom("Pretendard-Bold", size: 27))
                     Text("$\(usage.totalCostUSD, specifier: "%.4f")")
                         .font(.custom("Pretendard-Regular", size: 11))
-                        .foregroundColor(Color.black.opacity(0.48))
+                        .foregroundColor(KakaoTheme.textSecondary)
                 }
                 HairlineDivider()
                 HStack(spacing: 0) {
@@ -194,7 +194,7 @@ public struct KakaoUsageSettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(room.title).font(.custom("Pretendard-Medium", size: 12)).lineLimit(1)
                                 Text("\(usage.getUsage(for: room.id).totalTokens.formatted()) tokens")
-                                    .font(.custom("Pretendard-Regular", size: 9.5)).foregroundColor(Color.black.opacity(0.48))
+                                    .font(.custom("Pretendard-Regular", size: 9.5)).foregroundColor(KakaoTheme.textSecondary)
                             }
                             Spacer()
                             Text("₩\(usage.costUSD(for: room.id) * usage.exchangeRate, specifier: "%.2f")")
@@ -206,7 +206,7 @@ public struct KakaoUsageSettingsView: View {
                     }
                 }
                 .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.07)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KakaoTheme.hairline))
             }
         }
         .padding(.horizontal, 14)
@@ -226,10 +226,10 @@ public struct KakaoUsageSettingsView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(model.displayName)
                                     .font(.custom("Pretendard-Bold", size: 12.5))
-                                    .foregroundColor(.black)
+                                    .foregroundColor(KakaoTheme.textPrimary)
                                 Text("\(model.providerName) · 입력 $\(model.inputPricePerMillion, specifier: "%.2f") / 출력 $\(model.outputPricePerMillion, specifier: "%.2f")")
                                     .font(.custom("Pretendard-Regular", size: 9.5))
-                                    .foregroundColor(Color.black.opacity(0.48))
+                                    .foregroundColor(KakaoTheme.textSecondary)
                             }
                             Spacer()
                             Image(systemName: models.selectedModel == model ? "checkmark.circle.fill" : "circle")
@@ -249,7 +249,7 @@ public struct KakaoUsageSettingsView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Label("캐시 최적화 켜짐", systemImage: "bolt.horizontal.circle.fill")
                     .font(.custom("Pretendard-Bold", size: 11.5))
-                    .foregroundColor(Color(red: 0.18, green: 0.52, blue: 0.36))
+                    .foregroundColor(KakaoTheme.dynamic(light: KakaoTheme.hex(0x2E855C), dark: KakaoTheme.hex(0x54D08C)))
                 Text("고정 시스템 지침을 요청 앞부분에 두고 대화는 순서대로 이어 붙입니다. Gemini와 Luna의 실제 캐시 토큰을 각각 추적해 요금에 반영합니다.")
                     .font(.custom("Pretendard-Regular", size: 10.5))
                     .foregroundColor(KakaoTheme.textSecondary)
@@ -276,7 +276,7 @@ public struct KakaoUsageSettingsView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.displayName).font(.custom("Pretendard-Bold", size: 12))
                     Text("\(value.requestCount)회 요청 · \(value.totalTokens.formatted()) tokens")
-                        .font(.custom("Pretendard-Regular", size: 9.5)).foregroundColor(Color.black.opacity(0.48))
+                        .font(.custom("Pretendard-Regular", size: 9.5)).foregroundColor(KakaoTheme.textSecondary)
                 }
                 Spacer()
                 Text("₩\(value.costUSD(for: model) * usage.exchangeRate, specifier: "%.2f")")
@@ -296,11 +296,11 @@ public struct KakaoUsageSettingsView: View {
                 Text("캐시 읽기 \(value.cachedInputTokens.formatted()) · 쓰기 \(value.cacheWriteTokens.formatted()) (\(value.cacheHitRate * 100, specifier: "%.1f")%)")
             }
             .font(.custom("Pretendard-Regular", size: 9.5))
-            .foregroundColor(Color.black.opacity(0.48))
+            .foregroundColor(KakaoTheme.textSecondary)
         }
         .padding(12)
         .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.black.opacity(0.07)))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(KakaoTheme.hairline))
     }
 
     private func modelBadge(_ model: AIModel) -> some View {
@@ -314,7 +314,7 @@ public struct KakaoUsageSettingsView: View {
     private func metric(title: String, value: String) -> some View {
         VStack(spacing: 3) {
             Text(value).font(.custom("Pretendard-Bold", size: 11.5))
-            Text(title).font(.custom("Pretendard-Regular", size: 9)).foregroundColor(Color.black.opacity(0.48))
+            Text(title).font(.custom("Pretendard-Regular", size: 9)).foregroundColor(KakaoTheme.textSecondary)
         }
         .frame(maxWidth: .infinity)
     }
@@ -348,11 +348,11 @@ public struct KakaoUsageSettingsView: View {
             HStack {
                 Text(keyStatuses[credential] ?? "")
                     .font(.custom("Pretendard-Regular", size: 9.5))
-                    .foregroundColor(Color.black.opacity(0.48))
+                    .foregroundColor(KakaoTheme.textSecondary)
                 Spacer()
                 Button("키체인에 저장") { saveAPIKey(for: credential) }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color(red: 0.22, green: 0.22, blue: 0.22))
+                    .tint(KakaoTheme.dynamic(light: KakaoTheme.hex(0x383838), dark: KakaoTheme.hex(0x5A5A5E)))
                     .controlSize(.small)
                     .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }

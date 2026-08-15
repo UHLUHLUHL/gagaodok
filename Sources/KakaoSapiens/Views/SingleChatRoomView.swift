@@ -245,7 +245,7 @@ public struct SingleChatRoomView: View {
                         
                         Text("메시지 수정 중...")
                             .font(.custom("Pretendard-Medium", size: 12))
-                            .foregroundColor(Color.black.opacity(0.7))
+                            .foregroundColor(KakaoTheme.textPrimary)
                         
                         Spacer()
                         

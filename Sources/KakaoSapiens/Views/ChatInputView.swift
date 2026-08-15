@@ -48,7 +48,7 @@ public struct ChatInputView: View {
                             .lineLimit(1)
                         Text(attachment.formattedSize)
                             .font(.custom("Pretendard-Regular", size: 10))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(KakaoTheme.textSecondary)
                     }
                     
                     Spacer()
@@ -144,7 +144,7 @@ public struct ChatInputView: View {
                     }) {
                         Text("전송")
                             .font(.custom("Pretendard-Medium", size: 12.5))
-                            .foregroundColor(canSend ? KakaoTheme.textPrimary : Color(red: 0.72, green: 0.72, blue: 0.72))
+                            .foregroundColor(canSend ? KakaoTheme.bubbleMineText : KakaoTheme.textTertiary)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 5.5)
                     }

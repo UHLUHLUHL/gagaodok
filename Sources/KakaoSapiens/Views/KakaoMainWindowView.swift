@@ -21,8 +21,8 @@ public struct KakaoMainWindowView: View {
     @State private var friendsCollapsed = false
 
     // 카카오톡 팔레트
-    private let ink = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private let subInk = Color(red: 0.53, green: 0.55, blue: 0.58)
+    private let ink = KakaoTheme.textPrimary
+    private let subInk = KakaoTheme.textSecondary
     private let rail = KakaoTheme.rail
     private let hairline = KakaoTheme.hairline
     private let searchFill = KakaoTheme.sunken
@@ -160,9 +160,13 @@ public struct KakaoMainWindowView: View {
             Button(action: { isAddingFriend = true }) {
                 Group {
                     if tab == .friends {
-                        AddFriendIcon()
+                        // 원본과 모양이 같아 SF Symbols를 그대로 씁니다.
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 16))
+                            .foregroundColor(KakaoTheme.textPrimary)
                     } else {
-                        ComposeChatIcon()
+                        // 이건 SF Symbols에 같은 모양이 없어 직접 그립니다.
+                        ComposeChatIcon(color: KakaoTheme.textPrimary)
                     }
                 }
                 // 돋보기보다 살짝 크게 잡아 원본과 비슷한 무게로 보이게 합니다.
@@ -421,12 +425,12 @@ private struct FriendRow: View {
                 HStack(spacing: 4) {
                     Text(room.profile.name)
                         .font(.custom("Pretendard-Bold", size: 13))
-                        .foregroundColor(Color(red: 0.10, green: 0.10, blue: 0.11))
+                        .foregroundColor(KakaoTheme.textPrimary)
                         .lineLimit(1)
                     if room.profile.persona.isEnabled {
                         Image(systemName: "theatermasks.fill")
                             .font(.system(size: 8.5))
-                            .foregroundColor(Color(red: 0.86, green: 0.72, blue: 0.0))
+                            .foregroundColor(Color(nsColor: KakaoTheme.hex(0xDBB800)))
                     }
                 }
                 if !room.profile.statusMessage.isEmpty {
@@ -441,7 +445,7 @@ private struct FriendRow: View {
                 Button(action: onStartChat) {
                     Text("대화")
                         .font(.custom("Pretendard-Medium", size: 11))
-                        .foregroundColor(Color(red: 0.10, green: 0.10, blue: 0.11))
+                        .foregroundColor(KakaoTheme.textPrimary)
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(KakaoTheme.sunken, in: Capsule())
                 }
@@ -519,7 +523,7 @@ public struct KakaoSettingsModal: View {
                                 
                                 Text(modelManager.selectedModel.displayName)
                                     .font(.custom("Pretendard-Medium", size: 10.5))
-                                    .foregroundColor(Color(red: 0.2, green: 0.2, blue: 0.2))
+                                    .foregroundColor(KakaoTheme.textPrimary)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(KakaoTheme.bubbleMine) // 카카오 옐로우 뱃지
@@ -548,7 +552,7 @@ public struct KakaoSettingsModal: View {
                                 
                                 Text("\(tokenManager.totalTokens.formatted()) tokens")
                                     .font(.custom("Pretendard-Bold", size: 12))
-                                    .foregroundColor(Color(red: 0.15, green: 0.15, blue: 0.15))
+                                    .foregroundColor(KakaoTheme.textPrimary)
                             }
                             
                             HStack {
@@ -595,7 +599,7 @@ public struct KakaoSettingsModal: View {
                                         
                                         Text(String(format: "₩%.2f", usage.costKRW(exchangeRate: tokenManager.exchangeRate)))
                                             .font(.custom("Pretendard-Bold", size: 13))
-                                            .foregroundColor(Color(red: 0.12, green: 0.12, blue: 0.12))
+                                            .foregroundColor(KakaoTheme.textPrimary)
                                     }
                                     .padding(.vertical, 9)
                                     .padding(.horizontal, 4)
@@ -690,7 +694,7 @@ private struct KakaoChatRoomRow: View {
                     if room.profile.persona.isEnabled {
                         Image(systemName: "theatermasks.fill")
                             .font(.system(size: 8.5))
-                            .foregroundColor(Color(red: 0.86, green: 0.72, blue: 0.0))
+                            .foregroundColor(Color(nsColor: KakaoTheme.hex(0xDBB800)))
                     }
 
                     Spacer()

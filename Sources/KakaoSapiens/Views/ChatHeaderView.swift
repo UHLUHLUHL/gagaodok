@@ -123,13 +123,13 @@ public struct ChatHeaderView: View {
                     Spacer()
                     
                     // 우측 아이콘 버튼 그룹 (돋보기, 전화기, 비디오, 햄버거 메뉴)
-                    // 원본을 확대해 직접 그린 아이콘입니다. SF Symbols는 획 두께와
-                    // 굴림이 조금씩 달라 나란히 놓으면 티가 납니다.
+                    // 이 넷은 SF Symbols가 원본과 거의 같습니다. 직접 그려 봤더니
+                    // 특히 수화기가 훨씬 조잡해져서, 모양이 정말 다른 것만 직접 그립니다.
                     HStack(spacing: 15) {
-                        headerIcon { MagnifierIcon(color: $0) } action: { onSearchTapped?() }
-                        headerIcon { PhoneIcon(color: $0) } action: { onCallTapped?() }
-                        headerIcon { VideoIcon(color: $0) } action: { onVideoTapped?() }
-                        headerIcon { HamburgerIcon(color: $0) } action: { onMenuTapped?() }
+                        HeaderIconButton(systemName: "magnifyingglass", size: 15.5) { onSearchTapped?() }
+                        HeaderIconButton(systemName: "phone", size: 15.5) { onCallTapped?() }
+                        HeaderIconButton(systemName: "video", size: 15.5) { onVideoTapped?() }
+                        HeaderIconButton(systemName: "line.3.horizontal", size: 16.5) { onMenuTapped?() }
                     }
                     .padding(.trailing, 1)
                 }
@@ -140,23 +140,6 @@ public struct ChatHeaderView: View {
         }
         .frame(height: 88)
         .background(KakaoTheme.chatHeader) // 카카오톡 상단 배경색 #BACEE0
-    }
-}
-
-extension ChatHeaderView {
-    @ViewBuilder
-    func headerIcon<Content: View>(
-        @ViewBuilder content: (Color) -> Content,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            content(KakaoTheme.onChatHeader)
-                .frame(width: 19, height: 19)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
     }
 }
 

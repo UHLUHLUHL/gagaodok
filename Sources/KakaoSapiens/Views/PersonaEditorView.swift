@@ -40,9 +40,9 @@ public struct PersonaEditorView: View {
     private let kakaoYellow = Color(red: 0.996, green: 0.898, blue: 0.0)
     private let pageBackground = Color(red: 0.949, green: 0.953, blue: 0.961)
     private let cardBackground = Color.white
-    private let inkPrimary = Color(red: 0.10, green: 0.10, blue: 0.11)
-    private let inkSecondary = Color(red: 0.45, green: 0.47, blue: 0.51)
-    private let hairline = Color(red: 0.89, green: 0.90, blue: 0.92)
+    private let inkPrimary = KakaoTheme.textPrimary
+    private let inkSecondary = KakaoTheme.textSecondary
+    private let hairline = KakaoTheme.hairline
 
     public init(roomId: UUID, onClose: @escaping () -> Void) {
         self.roomId = roomId

@@ -27,9 +27,9 @@ public struct ProfileEditSheet: View {
     private let statusLimit = 60
 
     private let kakaoYellow = Color(red: 0.996, green: 0.898, blue: 0.0)
-    private let ink = Color(red: 0.11, green: 0.11, blue: 0.12)
-    private let subInk = Color(red: 0.60, green: 0.62, blue: 0.66)
-    private let hairline = Color(red: 0.88, green: 0.89, blue: 0.91)
+    private let ink = KakaoTheme.textPrimary
+    private let subInk = KakaoTheme.textSecondary
+    private let hairline = KakaoTheme.hairline
 
     public init(
         title: String,
@@ -116,7 +116,7 @@ public struct ProfileEditSheet: View {
             RoomAvatarView(image: image, size: 88)
             Button(action: pickImage) {
                 Circle()
-                    .fill(Color(red: 0.20, green: 0.20, blue: 0.21))
+                    .fill(KakaoTheme.dynamic(light: KakaoTheme.hex(0x333336), dark: KakaoTheme.hex(0x5A5A5E)))
                     .frame(width: 26, height: 26)
                     .overlay(Image(systemName: "camera.fill")
                         .font(.system(size: 11))
