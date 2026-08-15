@@ -25,10 +25,11 @@ public struct ComposeChatIcon: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let r = min(w, h) * 0.33
-            let c = CGPoint(x: w * 0.38, y: h * 0.42)
-            let plusCenter = CGPoint(x: w * 0.84, y: h * 0.46)
-            let plusHalf = min(w, h) * 0.17
+            // 원본 실측: 전체 20 x 16.5pt, 말풍선 지름 약 13pt, +는 오른쪽 끝에 붙습니다.
+            let r = h * 0.40
+            let c = CGPoint(x: r + lineWidth / 2, y: h * 0.45)
+            let plusHalf = h * 0.21
+            let plusCenter = CGPoint(x: w - plusHalf - lineWidth / 2, y: h * 0.50)
 
             ZStack {
                 BubbleOutline(center: c, radius: r)
@@ -81,17 +82,17 @@ public struct ChatBubbleGlyph: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            // 원본은 원이 아니라 모서리를 크게 굴린 사각형에 가깝고, 가로가 조금 더 깁니다.
-            let body = CGRect(x: w * 0.04, y: h * 0.10, width: w * 0.92, height: h * 0.62)
-            let radius = body.height * 0.46
+            // 원본 실측: 전체 21.5 x 22pt. 몸통은 모서리를 크게 굴린 사각형이고
+            // 꼬리는 왼쪽 아래로 짧게 빠집니다.
+            let body = CGRect(x: 0, y: 0, width: w, height: h * 0.80)
+            let radius = body.height * 0.34
 
             Path { p in
                 p.addRoundedRect(in: body, cornerSize: CGSize(width: radius, height: radius),
                                  style: .continuous)
-                // 왼쪽 아래로 빠지는 짧은 꼬리
-                p.move(to: CGPoint(x: body.minX + body.width * 0.20, y: body.maxY - 2))
-                p.addLine(to: CGPoint(x: body.minX + body.width * 0.10, y: h * 0.94))
-                p.addLine(to: CGPoint(x: body.minX + body.width * 0.46, y: body.maxY - 2))
+                p.move(to: CGPoint(x: w * 0.13, y: body.maxY - radius * 0.35))
+                p.addLine(to: CGPoint(x: w * 0.03, y: h))
+                p.addLine(to: CGPoint(x: w * 0.40, y: body.maxY - radius * 0.35))
                 p.closeSubpath()
             }
             .fill(color)
@@ -114,24 +115,24 @@ public struct PersonGlyph: View {
     public var body: some View {
         GeometryReader { geo in
             let s = min(geo.size.width, geo.size.height)
-            let headR = s * 0.158
-            let headCenter = CGPoint(x: s * 0.5, y: s * 0.265)
-            let shoulderW = s * 0.68
-            let shoulderTop = s * 0.505
-            let shoulderBottom = s * 0.80
-            let shoulderR = shoulderW / 2
+            // 원본 실측: 전체 23pt 안에서 머리 지름 12, 틈 2, 어깨 폭 23 x 높이 9.
+            // 어깨가 머리의 약 두 배로 넓고 위가 납작한 돔입니다.
+            let headR = s * 0.261
+            let headCenter = CGPoint(x: s * 0.5, y: s * 0.261)
+            let shoulderTop = s * 0.609
+            let shoulderBottom = s
 
             Path { p in
                 p.addEllipse(in: CGRect(x: headCenter.x - headR, y: headCenter.y - headR,
                                         width: headR * 2, height: headR * 2))
-                // 어깨는 위가 반원, 아래가 평평한 반쪽 알약입니다.
-                let cx = s * 0.5
-                let arcCenter = CGPoint(x: cx, y: shoulderTop + shoulderR)
-                p.move(to: CGPoint(x: cx - shoulderR, y: shoulderBottom))
-                p.addLine(to: CGPoint(x: cx - shoulderR, y: arcCenter.y))
-                p.addArc(center: arcCenter, radius: shoulderR,
-                         startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
-                p.addLine(to: CGPoint(x: cx + shoulderR, y: shoulderBottom))
+                // 폭에 비해 높이가 낮아 반원이 아니라 눌린 돔입니다.
+                p.move(to: CGPoint(x: 0, y: shoulderBottom))
+                p.addLine(to: CGPoint(x: 0, y: shoulderTop + (shoulderBottom - shoulderTop) * 0.45))
+                p.addQuadCurve(to: CGPoint(x: s * 0.5, y: shoulderTop),
+                               control: CGPoint(x: 0, y: shoulderTop))
+                p.addQuadCurve(to: CGPoint(x: s, y: shoulderTop + (shoulderBottom - shoulderTop) * 0.45),
+                               control: CGPoint(x: s, y: shoulderTop))
+                p.addLine(to: CGPoint(x: s, y: shoulderBottom))
                 p.closeSubpath()
             }
             .fill(color)

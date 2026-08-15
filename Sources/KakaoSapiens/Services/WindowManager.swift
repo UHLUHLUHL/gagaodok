@@ -28,6 +28,9 @@ public class WindowManager: ObservableObject {
         )
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // 밝기 슬라이더는 타이틀바 안에 둡니다. 콘텐츠 뷰에 두면 타이틀바가
+        // 클릭을 창 이동으로 가져가 손잡이 대신 창이 끌려옵니다.
+        window.addTitlebarAccessoryViewController(BrightnessTitlebarAccessory())
         // 콘텐츠 영역(채팅 목록, 설정 카드 등)을 드래그해도 창이 움직이지 않게 합니다.
         // NSWindow의 실제 상단 제목 표시줄만 기본 macOS 방식으로 창 이동을 처리합니다.
         window.isMovableByWindowBackground = false
@@ -70,6 +73,9 @@ public class WindowManager: ObservableObject {
         )
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // 밝기 슬라이더는 타이틀바 안에 둡니다. 콘텐츠 뷰에 두면 타이틀바가
+        // 클릭을 창 이동으로 가져가 손잡이 대신 창이 끌려옵니다.
+        window.addTitlebarAccessoryViewController(BrightnessTitlebarAccessory())
         window.isMovableByWindowBackground = false
         window.isOpaque = false
         window.backgroundColor = NSColor(name: nil) { appearance in

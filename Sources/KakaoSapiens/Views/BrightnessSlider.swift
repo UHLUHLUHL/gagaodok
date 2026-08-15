@@ -10,36 +10,9 @@ import AppKit
 /// 그래서 슬라이더 자체를 NSView로 만듭니다. AppKit은 겹친 형제 뷰 중 위에 있는 것에
 /// 이벤트를 주고, 이 뷰가 mouseDown을 받아 삼키므로 드래그용 뷰까지 내려가지 않습니다.
 /// 부딪힐 여지 자체가 사라집니다.
-public struct BrightnessSlider: NSViewRepresentable {
-    @Binding var value: Double
+public enum BrightnessSliderConfig {
     /// 이 값 아래로는 내려가지 않습니다. 창이 아예 안 보이면 되돌릴 방법이 없습니다.
     public static let minimum: Double = 0.35
-
-    public init(value: Binding<Double>) {
-        self._value = value
-    }
-
-    public func makeNSView(context: Context) -> BrightnessSliderView {
-        let view = BrightnessSliderView()
-        view.value = value
-        view.onChange = { context.coordinator.commit($0) }
-        return view
-    }
-
-    public func updateNSView(_ nsView: BrightnessSliderView, context: Context) {
-        context.coordinator.parent = self
-        if abs(nsView.value - value) > 0.0001 {
-            nsView.value = value
-        }
-    }
-
-    public func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    public final class Coordinator {
-        var parent: BrightnessSlider
-        init(_ parent: BrightnessSlider) { self.parent = parent }
-        func commit(_ newValue: Double) { parent.value = newValue }
-    }
 }
 
 public final class BrightnessSliderView: NSView {
@@ -65,7 +38,7 @@ public final class BrightnessSliderView: NSView {
     }
 
     private var knobCenter: CGPoint {
-        let t = CGFloat((value - BrightnessSlider.minimum) / (1.0 - BrightnessSlider.minimum))
+        let t = CGFloat((value - BrightnessSliderConfig.minimum) / (1.0 - BrightnessSliderConfig.minimum))
         return CGPoint(x: travel.minX + travel.width * t, y: bounds.midY)
     }
 
@@ -90,6 +63,18 @@ public final class BrightnessSliderView: NSView {
         return bounds.contains(local) ? self : nil
     }
 
+    /// 이 뷰 위에서 누른 클릭으로는 창이 움직이지 않게 합니다.
+    ///
+    /// 진짜 원인이 여기 있었습니다. 슬라이더가 창 타이틀바 높이 안에 놓여 있어,
+    /// AppKit이 뷰 계층보다 위에서 타이틀바 드래그를 가로챕니다. hitTest도,
+    /// mouseDown 위치 검사도, NSView로 바꾼 것도 그래서 소용이 없었습니다.
+    /// 이 속성이 그 판단을 뒤집는 전용 스위치입니다.
+    public override var mouseDownCanMoveWindow: Bool { false }
+
+    /// 창이 비활성일 때도 첫 클릭이 바로 먹히게 합니다.
+    /// 이게 없으면 다른 앱을 보다 돌아왔을 때 한 번은 헛치게 됩니다.
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     public override func mouseDown(with event: NSEvent) {
         isDragging = true
         apply(event)
@@ -106,9 +91,10 @@ public final class BrightnessSliderView: NSView {
     private func apply(_ event: NSEvent) {
         let local = convert(event.locationInWindow, from: nil)
         let t = max(0, min(1, (local.x - travel.minX) / max(travel.width, 1)))
-        let newValue = BrightnessSlider.minimum + (1.0 - BrightnessSlider.minimum) * Double(t)
+        let newValue = BrightnessSliderConfig.minimum + (1.0 - BrightnessSliderConfig.minimum) * Double(t)
         guard abs(newValue - value) > 0.0001 else { return }
         value = newValue
+        window?.alphaValue = CGFloat(newValue)
         onChange?(newValue)
     }
 
@@ -152,26 +138,24 @@ public final class BrightnessSliderView: NSView {
     }
 }
 
-/// 창 전체의 투명도를 바꿉니다.
+/// 타이틀바 오른쪽에 슬라이더를 얹는 액세서리입니다.
 ///
-/// 예전에는 SwiftUI 쪽에 `.opacity()`를 걸었는데, 그러면 불투명한 창 배경 위에서
-/// 내용만 흐려져 밝기가 낮아진 것처럼 보였습니다. 창 자체에 걸어야 뒤가 비칩니다.
-public struct WindowAlphaSetter: NSViewRepresentable {
-    var alpha: Double
+/// 창이 `.titled + .fullSizeContentView`라 위쪽 약 28pt는 타이틀바가 뷰 계층보다
+/// 위에서 드래그를 가져갑니다. 그 안에 컨트롤을 두면 무슨 수를 써도 클릭이 창 이동에
+/// 먹힙니다. AppKit이 정해 둔 방법이 이 액세서리이고, 여기 올린 뷰는 정상적으로
+/// 자기 이벤트를 받습니다.
+public final class BrightnessTitlebarAccessory: NSTitlebarAccessoryViewController {
+    public let slider = BrightnessSliderView()
 
-    public init(alpha: Double) {
-        self.alpha = alpha
+    public init() {
+        super.init(nibName: nil, bundle: nil)
+        layoutAttribute = .right
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 86, height: 28))
+        slider.frame = NSRect(x: 6, y: 6, width: 62, height: 16)
+        slider.autoresizingMask = [.minXMargin]
+        container.addSubview(slider)
+        view = container
     }
 
-    public func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
-
-    public func updateNSView(_ nsView: NSView, context: Context) {
-        let target = alpha
-        DispatchQueue.main.async {
-            guard let window = nsView.window else { return }
-            if abs(window.alphaValue - CGFloat(target)) > 0.001 {
-                window.alphaValue = CGFloat(target)
-            }
-        }
-    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }

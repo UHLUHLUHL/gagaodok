@@ -43,19 +43,23 @@ public struct ChatHeaderView: View {
     
     public var body: some View {
         ZStack(alignment: .top) {
-            // 상단 헤더 영역만 마우스 드래그로 창 이동 가능
-            // 슬라이더가 NSView라 자기 클릭을 스스로 삼킵니다. 예외 구간이 필요 없습니다.
-            WindowDragArea()
+            // 창 이동용 영역입니다. 슬라이더가 있는 위쪽 띠에는 아예 깔지 않습니다.
+            //
+            // hitTest로 걸러 보고, mouseDown 위치를 검사해 보고, 슬라이더를 NSView로 바꿔
+            // 봐도 창이 함께 끌려왔습니다. 겹쳐 두고 우선순위로 다투는 한 계속 새는 셈이라,
+            // 아예 겹치지 않게 만듭니다. 이러면 다툴 일 자체가 없습니다.
+            VStack(spacing: 0) {
+                Color.clear.frame(height: 32)
+                WindowDragArea()
+            }
             
             VStack(spacing: 0) {
                 // 1. 최상단 신호등 버튼 높이 라인 & 우상단 미니 슬라이더
                 HStack(alignment: .center) {
                     Spacer()
                     
-                    // 우상단 카카오톡 특유의 미니멀 슬림 슬라이더 (신호등과 완벽 동일한 수평선)
-                    BrightnessSlider(value: $opacity)
-                        .frame(width: 62, height: 16)
-                        .padding(.trailing, 14)
+                    // 밝기 슬라이더는 타이틀바 액세서리로 올라가 있습니다.
+                    // 이 자리는 신호등과 같은 높이를 확보하기 위한 빈 줄입니다.
                 }
                 .frame(height: 14)
                 .padding(.top, 13)

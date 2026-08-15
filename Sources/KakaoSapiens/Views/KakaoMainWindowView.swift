@@ -92,15 +92,15 @@ public struct KakaoMainWindowView: View {
     // MARK: - 좌측 레일
 
     private var sideRail: some View {
-        VStack(spacing: 10) {
-            Spacer().frame(height: 54)
+        // 원본 실측: 두 아이콘 중심 간격 57.5pt. 버튼 높이 44 + 간격 13.5.
+        VStack(spacing: 13.5) {
+            Spacer().frame(height: 57)
             // 원본은 선택 여부로 채움/외곽선을 나누지 않습니다. 둘 다 채운 채 색만 바꿉니다.
             railButton(selected: tab == .friends) { tab = .friends } content: { color in
-                PersonGlyph(color: color).frame(width: 22, height: 22)
+                PersonGlyph(color: color).frame(width: 23, height: 23)
             }
             railButton(selected: tab == .chats) { tab = .chats } content: { color in
-                // 말풍선은 가로로 넓어 같은 크기라도 더 커 보입니다. 조금 줄여 사람과 무게를 맞춥니다.
-                ChatBubbleGlyph(color: color).frame(width: 21, height: 21)
+                ChatBubbleGlyph(color: color).frame(width: 21.5, height: 22)
             }
             Spacer()
             // 아래쪽 톱니는 원본도 가는 선입니다.
@@ -147,30 +147,34 @@ public struct KakaoMainWindowView: View {
                     searchText = ""
                 }
             }) {
+                // 원본 실측: 17 x 17pt. 눈대중 대신 잉크 높이를 직접 맞춥니다.
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15.5))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 17)
                     .foregroundColor(isSearchVisible ? ink : KakaoTheme.textPrimary)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .focusable(false)
             .help("검색")
 
+            // 원본 실측: 두 아이콘 중심 간격 41pt. 버튼 폭 28 + 간격 13 = 41.
+            Spacer().frame(width: 13)
+
             Button(action: { isAddingFriend = true }) {
                 Group {
                     if tab == .friends {
-                        // 가로로 퍼진 글리프라 돋보기와 같은 크기면 더 커 보입니다. 한 단 줄입니다.
-                        // +가 오른쪽 위에 붙어 무게중심이 위로 쏠리므로 살짝 내려 맞춥니다.
+                        // 원본 실측: 22 x 17pt. 돋보기와 높이를 같게 두고 폭만 자연스럽게 넓힙니다.
                         Image(systemName: "person.badge.plus")
-                            .font(.system(size: 15, weight: .regular))
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 17)
                             .foregroundColor(KakaoTheme.textPrimary)
-                            .offset(y: 0.5)
                     } else {
-                        // 이건 SF Symbols에 같은 모양이 없어 직접 그립니다.
-                        // 꼬리가 아래로 빠져 무게중심이 내려가므로 살짝 올려 맞춥니다.
-                        ComposeChatIcon(lineWidth: 1.4, color: KakaoTheme.textPrimary)
-                            .frame(width: 19, height: 19)
-                            .offset(y: -0.5)
+                        // 원본 실측: 20 x 16.5pt.
+                        ComposeChatIcon(lineWidth: 1.5, color: KakaoTheme.textPrimary)
+                            .frame(width: 20, height: 16.5)
                     }
                 }
                 .frame(width: 28, height: 28)
@@ -180,7 +184,8 @@ public struct KakaoMainWindowView: View {
             .focusable(false)
             .help(tab == .friends ? "친구 추가" : "새 대화 상대 만들기")
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, 17)
         .padding(.top, 16)
         .padding(.bottom, 10)
     }
