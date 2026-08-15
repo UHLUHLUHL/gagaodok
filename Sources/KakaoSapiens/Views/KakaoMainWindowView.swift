@@ -23,9 +23,9 @@ public struct KakaoMainWindowView: View {
     // 카카오톡 팔레트
     private let ink = Color(red: 0.10, green: 0.10, blue: 0.11)
     private let subInk = Color(red: 0.53, green: 0.55, blue: 0.58)
-    private let rail = Color(red: 0.965, green: 0.965, blue: 0.969)
-    private let hairline = Color(red: 0.91, green: 0.92, blue: 0.93)
-    private let searchFill = Color(red: 0.945, green: 0.949, blue: 0.957)
+    private let rail = KakaoTheme.rail
+    private let hairline = KakaoTheme.hairline
+    private let searchFill = KakaoTheme.sunken
 
     public init() {}
 
@@ -94,14 +94,22 @@ public struct KakaoMainWindowView: View {
     private var sideRail: some View {
         VStack(spacing: 10) {
             Spacer().frame(height: 54)
-            // 실제 카카오톡은 선택된 탭만 채워진 아이콘이고 나머지는 외곽선입니다.
-            railIcon(filled: "person.fill", outline: "person",
-                     selected: tab == .friends) { tab = .friends }
-            railIcon(filled: "bubble.left.fill", outline: "bubble.left",
-                     selected: tab == .chats) { tab = .chats }
+            // 원본은 선택 여부로 채움/외곽선을 나누지 않습니다. 둘 다 채운 채 색만 바꿉니다.
+            railButton(selected: tab == .friends) { tab = .friends } content: { color in
+                Image(systemName: "person.fill")
+                    .font(.system(size: 21))
+                    .foregroundColor(color)
+            }
+            railButton(selected: tab == .chats) { tab = .chats } content: { color in
+                ChatBubbleGlyph(color: color).frame(width: 23, height: 23)
+            }
             Spacer()
-            railIcon(filled: "gearshape.fill", outline: "gearshape",
-                     selected: isSettingsPresented) { isSettingsPresented = true }
+            // 아래쪽 톱니는 원본도 가는 선입니다.
+            railButton(selected: isSettingsPresented) { isSettingsPresented = true } content: { color in
+                Image(systemName: "gearshape")
+                    .font(.system(size: 20, weight: .light))
+                    .foregroundColor(color)
+            }
             Spacer().frame(height: 18)
         }
         // 신호등 버튼(좌측 상단 3개)이 레일 안에 들어오려면 최소 72pt가 필요합니다.
@@ -110,11 +118,13 @@ public struct KakaoMainWindowView: View {
         .background(rail)
     }
 
-    private func railIcon(filled: String, outline: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func railButton<Content: View>(
+        selected: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder content: (Color) -> Content
+    ) -> some View {
         Button(action: action) {
-            Image(systemName: selected ? filled : outline)
-                .font(.system(size: 22, weight: selected ? .regular : .light))
-                .foregroundColor(selected ? ink : Color.black.opacity(0.30))
+            content(selected ? KakaoTheme.textPrimary : KakaoTheme.textTertiary)
                 .frame(width: 48, height: 44)
         }
         .buttonStyle(.plain)
@@ -156,7 +166,7 @@ public struct KakaoMainWindowView: View {
                     }
                 }
                 // 돋보기보다 살짝 크게 잡아 원본과 비슷한 무게로 보이게 합니다.
-                .frame(width: 19, height: 19)
+                .frame(width: 21, height: 21)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
             }
@@ -433,14 +443,14 @@ private struct FriendRow: View {
                         .font(.custom("Pretendard-Medium", size: 11))
                         .foregroundColor(Color(red: 0.10, green: 0.10, blue: 0.11))
                         .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Color(red: 0.945, green: 0.949, blue: 0.957), in: Capsule())
+                        .background(KakaoTheme.sunken, in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(isHovered ? Color(red: 0.965, green: 0.969, blue: 0.976) : Color.white)
+        .background(isHovered ? KakaoTheme.rowHover : KakaoTheme.surface)
         .onHover { isHovered = $0 }
         .contentShape(Rectangle())
         .onTapGesture { onOpenCard() }
@@ -554,7 +564,7 @@ public struct KakaoSettingsModal: View {
                             }
                         }
                         .padding(14)
-                        .background(Color(red: 0.965, green: 0.965, blue: 0.97))
+                        .background(KakaoTheme.rail)
                         .cornerRadius(10)
                         
                         // 2. 대화방별 상세 사용량
@@ -702,7 +712,7 @@ private struct KakaoChatRoomRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(isHovered ? KakaoTheme.rowHover : Color.white)
+        .background(isHovered ? KakaoTheme.rowHover : KakaoTheme.surface)
         .onHover { isHovered = $0 }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onOpen() }

@@ -14,6 +14,7 @@ public struct KakaoUsageSettingsView: View {
     private enum Section: String, CaseIterable {
         case usage = "사용량"
         case model = "AI 모델"
+        case display = "화면"
     }
 
     public init(onClose: @escaping () -> Void) { self.onClose = onClose }
@@ -29,7 +30,11 @@ public struct KakaoUsageSettingsView: View {
                 Divider().opacity(0.65)
                 sectionTabs
                 ScrollView {
-                    if section == .usage { usageSection } else { modelSection }
+                    switch section {
+                    case .usage: usageSection
+                    case .model: modelSection
+                    case .display: displaySection
+                    }
                 }
             }
             .frame(minWidth: 310, idealWidth: 390, maxWidth: 440, minHeight: 450, idealHeight: 560, maxHeight: 640)
@@ -85,19 +90,19 @@ public struct KakaoUsageSettingsView: View {
                         .foregroundColor(section == item ? .black : .secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
-                        .background(section == item ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                        .background(section == item ? KakaoTheme.surface : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(4)
-        .background(Color(red: 0.955, green: 0.955, blue: 0.96), in: RoundedRectangle(cornerRadius: 10))
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
     }
 
-    /// 카카오톡 환경설정의 '화면 모드'와 같은 구성입니다.
-    private var appearanceSection: some View {
+    /// 카카오톡 환경설정의 '화면' 탭과 같은 구성입니다.
+    private var displaySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("화면 모드")
                 .font(.custom("Pretendard-Bold", size: 12.5))
@@ -129,8 +134,10 @@ public struct KakaoUsageSettingsView: View {
                 .font(.custom("Pretendard-Regular", size: 10.5))
                 .foregroundColor(KakaoTheme.textTertiary)
 
-            Divider().opacity(0.5).padding(.vertical, 4)
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
     }
 
     private var usageSection: some View {
@@ -146,7 +153,7 @@ public struct KakaoUsageSettingsView: View {
                         .foregroundColor(Color(red: 0.12, green: 0.55, blue: 0.34))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color(red: 0.88, green: 0.97, blue: 0.91), in: Capsule())
+                        .background(KakaoTheme.dynamic(light: KakaoTheme.hex(0xE0F7E8), dark: KakaoTheme.hex(0x14361F)), in: Capsule())
                 }
                 HStack(alignment: .lastTextBaseline, spacing: 6) {
                     Text("₩\(usage.totalCostKRW, specifier: "%.2f")")
@@ -165,7 +172,7 @@ public struct KakaoUsageSettingsView: View {
                 }
             }
             .padding(15)
-            .background(Color(red: 0.968, green: 0.968, blue: 0.972), in: RoundedRectangle(cornerRadius: 12))
+            .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 12))
 
             Text("모델별 사용량")
                 .font(.custom("Pretendard-Bold", size: 12.5))
@@ -198,7 +205,7 @@ public struct KakaoUsageSettingsView: View {
                         Divider().padding(.leading, 52)
                     }
                 }
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.black.opacity(0.07)))
             }
         }
@@ -208,8 +215,6 @@ public struct KakaoUsageSettingsView: View {
 
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            appearanceSection
-
             Text("기본 응답 모델")
                 .font(.custom("Pretendard-Bold", size: 12.5))
 
@@ -231,7 +236,7 @@ public struct KakaoUsageSettingsView: View {
                                 .foregroundColor(models.selectedModel == model ? Color(red: 0.996, green: 0.78, blue: 0) : KakaoTheme.border)
                         }
                         .padding(11)
-                        .background(models.selectedModel == model ? Color(red: 1.0, green: 0.974, blue: 0.84) : Color(red: 0.97, green: 0.97, blue: 0.975), in: RoundedRectangle(cornerRadius: 11))
+                        .background(models.selectedModel == model ? Color(red: 1.0, green: 0.974, blue: 0.84) : KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))
                     }
                     .buttonStyle(.plain)
                 }
@@ -257,7 +262,7 @@ public struct KakaoUsageSettingsView: View {
                 }
             }
             .padding(12)
-            .background(Color(red: 0.91, green: 0.97, blue: 0.93), in: RoundedRectangle(cornerRadius: 11))
+            .background(KakaoTheme.dynamic(light: KakaoTheme.hex(0xE8F7ED), dark: KakaoTheme.hex(0x14361F)), in: RoundedRectangle(cornerRadius: 11))
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 18)
@@ -294,7 +299,7 @@ public struct KakaoUsageSettingsView: View {
             .foregroundColor(Color.black.opacity(0.48))
         }
         .padding(12)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 11))
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.black.opacity(0.07)))
     }
 
@@ -353,7 +358,7 @@ public struct KakaoUsageSettingsView: View {
             }
         }
         .padding(12)
-        .background(Color(red: 0.97, green: 0.97, blue: 0.975), in: RoundedRectangle(cornerRadius: 11))
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))
     }
 
     private func saveAPIKey(for credential: KeychainStore.Credential) {

@@ -106,3 +106,34 @@ public struct AddFriendIcon: View {
         }
     }
 }
+
+/// 사이드바의 채팅 아이콘 — 꼬리가 왼쪽 아래로 난 둥근 말풍선을 통째로 채웁니다.
+///
+/// 원본은 선택 여부로 채움/외곽선을 나누지 않고, 둘 다 채운 채 색만 바꿉니다.
+/// SF Symbols의 bubble.left는 모서리가 각지고 꼬리 위치가 달라 나란히 놓으면 티가 납니다.
+public struct ChatBubbleGlyph: View {
+    var color: Color
+
+    public init(color: Color) {
+        self.color = color
+    }
+
+    public var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let r = min(w, h) * 0.40
+            let c = CGPoint(x: w * 0.50, y: h * 0.44)
+
+            Path { p in
+                p.addArc(center: c, radius: r,
+                         startAngle: .degrees(122), endAngle: .degrees(96),
+                         clockwise: false)
+                // 왼쪽 아래로 빠지는 꼬리
+                p.addLine(to: CGPoint(x: c.x - r * 0.52, y: c.y + r * 1.62))
+                p.closeSubpath()
+            }
+            .fill(color)
+        }
+    }
+}
