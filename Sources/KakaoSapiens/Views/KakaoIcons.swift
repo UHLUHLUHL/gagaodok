@@ -290,34 +290,39 @@ public struct ChatBubbleGlyph: View {
                            bounds: CGRect(origin: .zero, size: geo.size),
                            stretch: true)
 
-            ZStack {
+            // 몸통과 꼬리를 한 Path에 넣고 한 번만 칠합니다.
+            //
+            // 두 도형으로 나눠 겹쳐 그리면 안 됩니다. 이 아이콘은 선택 안 됐을 때
+            // 반투명색(라이트 모드에서 검정 40%)으로 칠해지는데, 겹친 자리만 색이
+            // 두 번 얹혀 0.64가 되어 이음매가 그림자처럼 드러납니다. 실제로 그랬습니다.
+            //
+            // 예전에 한 Path에 넣었다가 겹친 자리가 하얗게 뚫린 적이 있는데,
+            // 원인은 한 Path에 넣은 것이 아니라 두 도형의 감는 방향이 반대였던 것입니다.
+            // nonzero 규칙에서는 방향이 반대면 감김수가 0이 되어 구멍이 납니다.
+            // 방향만 맞추면 감김수가 2가 되어 그대로 합쳐집니다.
+            Path { p in
                 // 몸통: SVG의 바깥선에서 꼬리만 빼고, 그 자리는 오른쪽 아래 곡선을
-                // 좌우로 뒤집어 이어 붙였습니다.
-                Path { p in
-                    p.move(to: c.pt(24.84, 0))
-                    p.addCurve(to: c.pt(0, 19.98),
-                               control1: c.pt(11.12, 0), control2: c.pt(0, 8.48))
-                    p.addCurve(to: c.pt(24.84, 40.57),
-                               control1: c.pt(0, 32.09), control2: c.pt(11.12, 40.57))
-                    p.addCurve(to: c.pt(49.68, 19.98),
-                               control1: c.pt(38.56, 40.57), control2: c.pt(49.68, 32.09))
-                    p.addCurve(to: c.pt(24.84, 0),
-                               control1: c.pt(49.68, 8.48), control2: c.pt(38.56, 0))
-                    p.closeSubpath()
-                }
-                .fill(color)
+                // 좌우로 뒤집어 이어 붙였습니다. 위 → 왼쪽 → 아래 → 오른쪽 순입니다.
+                p.move(to: c.pt(24.84, 0))
+                p.addCurve(to: c.pt(0, 19.98),
+                           control1: c.pt(11.12, 0), control2: c.pt(0, 8.48))
+                p.addCurve(to: c.pt(24.84, 40.57),
+                           control1: c.pt(0, 32.09), control2: c.pt(11.12, 40.57))
+                p.addCurve(to: c.pt(49.68, 19.98),
+                           control1: c.pt(38.56, 40.57), control2: c.pt(49.68, 32.09))
+                p.addCurve(to: c.pt(24.84, 0),
+                           control1: c.pt(49.68, 8.48), control2: c.pt(38.56, 0))
+                p.closeSubpath()
 
                 // 꼬리: 곧은 왼쪽 변 x=4.0, 끝점 y=22.0, 몸통으로 돌아가는 빗변.
-                // 위쪽 두 점은 몸통 안에 넉넉히 물려 둡니다. 경계에 딱 붙이면
-                // 곡선을 따라 실틈이 보입니다.
-                Path { p in
-                    p.move(to: m.pt(4.0, 15.0))
-                    p.addLine(to: m.pt(11.0, 18.0))
-                    p.addLine(to: m.pt(4.05, 22.0))
-                    p.closeSubpath()
-                }
-                .fill(color)
+                // 몸통과 같은 방향으로 감기게 아래 끝점부터 씁니다. 위쪽 두 점은
+                // 몸통 안에 넉넉히 물려 둡니다. 경계에 딱 붙이면 곡선을 따라 실틈이 보입니다.
+                p.move(to: m.pt(4.05, 22.0))
+                p.addLine(to: m.pt(11.0, 18.0))
+                p.addLine(to: m.pt(4.0, 15.0))
+                p.closeSubpath()
             }
+            .fill(color)
         }
     }
 }
