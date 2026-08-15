@@ -43,11 +43,11 @@ public struct ChatHeaderView: View {
     
     public var body: some View {
         ZStack(alignment: .top) {
-            // 창 이동용 영역입니다. 슬라이더가 있는 위쪽 띠에는 아예 깔지 않습니다.
+            // 창 이동용 영역입니다. 위 32pt는 비워 둡니다.
             //
-            // hitTest로 걸러 보고, mouseDown 위치를 검사해 보고, 슬라이더를 NSView로 바꿔
-            // 봐도 창이 함께 끌려왔습니다. 겹쳐 두고 우선순위로 다투는 한 계속 새는 셈이라,
-            // 아예 겹치지 않게 만듭니다. 이러면 다툴 일 자체가 없습니다.
+            // 그 띠는 타이틀바라 AppKit이 알아서 드래그를 처리하고, 밝기 슬라이더도
+            // 타이틀바 액세서리로 거기 올라가 있습니다. 이 뷰를 겹쳐 깔면 슬라이더를
+            // 끌 때 창까지 따라옵니다.
             VStack(spacing: 0) {
                 Color.clear.frame(height: 32)
                 WindowDragArea()
