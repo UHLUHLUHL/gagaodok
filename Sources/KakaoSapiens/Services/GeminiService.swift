@@ -535,14 +535,45 @@ public actor GeminiService {
     // Gemini의 implicit 캐시는 "완전히 똑같은 요청"이 짧은 간격으로 반복될 때만 걸립니다.
     // 채팅처럼 턴이 계속 붙는 패턴에서는 접두사가 같아도 적중하지 않아 실측 적중률이 0%였습니다.
     // 그래서 대화 접두사를 명시적 캐시(cachedContents)로 올려두고 새 턴만 보냅니다. 실측 99.7%.
-    private struct PrefixCache {
+    private struct PrefixCache: Codable {
         let name: String          // cachedContents/xxxx
         let coveredTurns: Int     // 이 캐시가 덮는 contents 앞부분의 개수
         let fingerprint: String   // 덮은 구간이 편집되지 않았는지 확인하는 지문
         let expiresAt: Date
     }
 
-    private var prefixCaches: [UUID: PrefixCache] = [:]
+    // 캐시 이름을 메모리에만 두면 앱을 껐다 켤 때마다 서버에 살아 있는 캐시를 버리고
+    // 첫 요청을 전액으로 냅니다. TTL이 남아 있으면 이어서 쓰도록 디스크에 적어 둡니다.
+    private static let prefixCacheStoreURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("KakaoSapiens", isDirectory: true)
+        return base.appendingPathComponent("prefix_caches.json")
+    }()
+
+    private var prefixCaches: [UUID: PrefixCache] = GeminiService.loadPrefixCaches() {
+        didSet { persistPrefixCaches() }
+    }
+
+    private static func loadPrefixCaches() -> [UUID: PrefixCache] {
+        guard let data = try? Data(contentsOf: prefixCacheStoreURL),
+              let stored = try? JSONDecoder().decode([String: PrefixCache].self, from: data) else { return [:] }
+        var result: [UUID: PrefixCache] = [:]
+        for (key, cache) in stored {
+            // 이미 만료된 것은 되살리지 않습니다. 서버에도 없습니다.
+            guard let id = UUID(uuidString: key), cache.expiresAt > Date() else { continue }
+            result[id] = cache
+        }
+        return result
+    }
+
+    private func persistPrefixCaches() {
+        let snapshot = prefixCaches.reduce(into: [String: PrefixCache]()) { $0[$1.key.uuidString] = $1.value }
+        let url = Self.prefixCacheStoreURL
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
     private var refreshingRooms: Set<UUID> = []
     /// 같은 방의 요약을 두 번 겹쳐 만들지 않도록 막습니다.
     private var summarizingRooms: Set<UUID> = []
