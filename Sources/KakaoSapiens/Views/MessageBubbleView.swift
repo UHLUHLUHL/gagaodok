@@ -13,6 +13,16 @@ public struct MessageBubbleView: View {
     let onEditMessage: ((ChatMessage) -> Void)?
     let onDeleteMessage: ((ChatMessage) -> Void)?
     var onAvatarTapped: (() -> Void)? = nil
+    var onResendMessage: ((ChatMessage) -> Void)? = nil
+    /// 검색 중일 때만 채워집니다. 찾은 글자를 노랗게 칠하는 데 씁니다.
+    var searchQuery: String = ""
+    /// 지금 보고 있는 검색 결과이면 더 진하게 칠합니다.
+    var isCurrentSearchHit: Bool = false
+
+    /// 검색어가 있으면 그 부분만 노랗게 칠한 글을 돌려줍니다.
+    private var highlightedText: AttributedString {
+        SearchHighlighter.attributed(message.text, query: searchQuery, isCurrent: isCurrentSearchHit)
+    }
 
     /// 드래그로 고른 말풍선에 덧씌우는 회색입니다. 카카오톡과 같은 농도로 맞췄습니다.
     private var selectionTint: Color {
@@ -31,11 +41,17 @@ public struct MessageBubbleView: View {
         customAvatar: NSImage? = nil,
         isEditingThisMessage: Bool = false,
         isSelected: Bool = false,
+        searchQuery: String = "",
+        isCurrentSearchHit: Bool = false,
         onImageTapped: ((ChatAttachment) -> Void)? = nil,
         onEditMessage: ((ChatMessage) -> Void)? = nil,
         onDeleteMessage: ((ChatMessage) -> Void)? = nil,
-        onAvatarTapped: (() -> Void)? = nil
+        onAvatarTapped: (() -> Void)? = nil,
+        onResendMessage: ((ChatMessage) -> Void)? = nil
     ) {
+        self.onResendMessage = onResendMessage
+        self.searchQuery = searchQuery
+        self.isCurrentSearchHit = isCurrentSearchHit
         self.message = message
         self.isFirstInGroup = isFirstInGroup
         self.isLastInGroup = isLastInGroup
@@ -53,15 +69,28 @@ public struct MessageBubbleView: View {
         HStack(alignment: .bottom, spacing: 4) {
             if message.sender == .user {
                 Spacer(minLength: 36)
-                
-                // 보낸 시간
-                if isLastInGroup {
+
+                // 전송에 실패하면 카카오톡처럼 말풍선 왼편에 표시가 붙습니다.
+                // 누르면 재전송과 삭제를 고를 수 있습니다.
+                if message.deliveryFailed {
+                    DeliveryFailureBadge(
+                        onResend: { onResendMessage?(message) },
+                        onDelete: { onDeleteMessage?(message) }
+                    )
+                    // 글이 있는 말풍선 아래에는 호버용 액션 줄이 투명하게 깔려 있습니다.
+                    // 바닥 정렬이 그 줄까지 포함하므로, 그만큼(간격 2 + 높이 18) 올려
+                    // 말풍선 자체와 나란히 놓습니다.
+                    .padding(.bottom, message.text.isEmpty ? 2 : 22)
+                }
+
+                // 보낸 시간 (실패한 메시지에는 아직 시간을 붙이지 않습니다)
+                if isLastInGroup && !message.deliveryFailed {
                     Text(message.formattedTime)
                         .font(.custom("Pretendard-Regular", size: 9.5))
                         .foregroundColor(Color.black.opacity(0.45))
                         .padding(.bottom, 1)
                 }
-                
+
                 // 내 말풍선 (카카오 옐로우 #FEE500)
                 userBubbleContent
             } else {
@@ -100,7 +129,7 @@ public struct MessageBubbleView: View {
                                 .frame(height: webViewHeight)
                                 .frame(minWidth: 36, maxWidth: 300)
                         } else {
-                            Text(message.text)
+                            Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
                                 .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                                 .lineSpacing(2)
@@ -236,7 +265,7 @@ public struct MessageBubbleView: View {
                                 .frame(height: webViewHeight)
                                 .frame(minWidth: 36, maxWidth: 320)
                         } else {
-                            Text(message.text)
+                            Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
                                 .foregroundColor(Color(red: 0.1, green: 0.1, blue: 0.1))
                                 .lineSpacing(2)
@@ -451,5 +480,89 @@ public struct KakaoDateDividerView: View {
             )
             Spacer()
         }
+    }
+}
+
+// MARK: - 전송 실패 표시
+/// 카카오톡은 실패한 메시지 왼쪽에 흰 동그라미를 붙이고, 누르면 재전송·삭제를 고르게 합니다.
+/// 답변자 쪽에 오류 말풍선을 남기는 것보다 이 방식이 낫습니다.
+/// 실패한 것은 어차피 내가 보낸 말이고, 다시 보내거나 지우는 것도 내 몫이기 때문입니다.
+struct DeliveryFailureBadge: View {
+    let onResend: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isPresented = false
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: { isPresented = true }) {
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 19, height: 19)
+                    .shadow(color: .black.opacity(0.16), radius: 1.5, x: 0, y: 0.5)
+                Image(systemName: "exclamationmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(red: 0.93, green: 0.26, blue: 0.24))
+            }
+            .scaleEffect(isHovering ? 1.08 : 1.0)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .onHover { isHovering = $0 }
+        .help("전송 실패 — 눌러서 재전송하거나 삭제합니다")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                Text("메시지를 보내지 못했습니다")
+                    .font(.custom("Pretendard-Medium", size: 12))
+                    .foregroundColor(Color.black.opacity(0.6))
+                    .padding(.horizontal, 14)
+                    .padding(.top, 11)
+                    .padding(.bottom, 9)
+
+                Divider()
+
+                failureAction(title: "재전송", systemImage: "arrow.clockwise") {
+                    isPresented = false
+                    onResend()
+                }
+
+                Divider()
+
+                failureAction(title: "삭제", systemImage: "trash", isDestructive: true) {
+                    isPresented = false
+                    onDelete()
+                }
+            }
+            .frame(width: 172)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
+        }
+    }
+
+    @ViewBuilder
+    private func failureAction(
+        title: String,
+        systemImage: String,
+        isDestructive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11.5))
+                    .frame(width: 15)
+                Text(title)
+                    .font(.custom("Pretendard-Regular", size: 13))
+                Spacer()
+            }
+            .foregroundColor(isDestructive ? Color(red: 0.86, green: 0.22, blue: 0.20) : Color.black.opacity(0.85))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
     }
 }

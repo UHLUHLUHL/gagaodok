@@ -153,7 +153,9 @@ public struct ChatMessage: Identifiable, Codable {
     public var turnId: UUID?
     // API에는 분리 전 원문을 한 번만 보냅니다. AI 턴의 첫 말풍선에만 저장합니다.
     public var canonicalText: String?
-    
+    // 답변을 받지 못한 내 메시지에만 씁니다. 기본값이 있어 기존 JSON도 그대로 읽힙니다.
+    public var deliveryFailed: Bool
+
     public init(
         id: UUID = UUID(),
         sender: MessageSender,
@@ -162,7 +164,8 @@ public struct ChatMessage: Identifiable, Codable {
         attachment: ChatAttachment? = nil,
         isUnread: Bool = false,
         turnId: UUID? = nil,
-        canonicalText: String? = nil
+        canonicalText: String? = nil,
+        deliveryFailed: Bool = false
     ) {
         self.id = id
         self.sender = sender
@@ -172,6 +175,20 @@ public struct ChatMessage: Identifiable, Codable {
         self.isUnread = isUnread
         self.turnId = turnId
         self.canonicalText = canonicalText
+        self.deliveryFailed = deliveryFailed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        sender = try c.decode(MessageSender.self, forKey: .sender)
+        text = try c.decode(String.self, forKey: .text)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        attachment = try c.decodeIfPresent(ChatAttachment.self, forKey: .attachment)
+        isUnread = try c.decodeIfPresent(Bool.self, forKey: .isUnread) ?? false
+        turnId = try c.decodeIfPresent(UUID.self, forKey: .turnId)
+        canonicalText = try c.decodeIfPresent(String.self, forKey: .canonicalText)
+        deliveryFailed = try c.decodeIfPresent(Bool.self, forKey: .deliveryFailed) ?? false
     }
     
     public var formattedTime: String {
