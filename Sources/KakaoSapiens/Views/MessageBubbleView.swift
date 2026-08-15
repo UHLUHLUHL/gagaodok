@@ -125,7 +125,8 @@ public struct MessageBubbleView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Group {
                         if message.containsLaTeXOrMarkdown {
-                            LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight)
+                            LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight,
+                                              searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
                                 .frame(height: webViewHeight)
                                 .frame(minWidth: 36, maxWidth: 300)
                         } else {
@@ -261,7 +262,8 @@ public struct MessageBubbleView: View {
                 if !message.text.isEmpty {
                     Group {
                         if message.containsLaTeXOrMarkdown {
-                            LaTeXMarkdownView(content: message.text, isUser: false, dynamicHeight: $webViewHeight)
+                            LaTeXMarkdownView(content: message.text, isUser: false, dynamicHeight: $webViewHeight,
+                                              searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
                                 .frame(height: webViewHeight)
                                 .frame(minWidth: 36, maxWidth: 320)
                         } else {

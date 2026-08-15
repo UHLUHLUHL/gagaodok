@@ -48,11 +48,22 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
     let content: String
     let isUser: Bool
     @Binding var dynamicHeight: CGFloat
+    /// 검색 중일 때만 채워집니다. 웹뷰 안에서 이 글자를 칠합니다.
+    var searchQuery: String = ""
+    var isCurrentSearchHit: Bool = false
 
-    public init(content: String, isUser: Bool, dynamicHeight: Binding<CGFloat>) {
+    public init(
+        content: String,
+        isUser: Bool,
+        dynamicHeight: Binding<CGFloat>,
+        searchQuery: String = "",
+        isCurrentSearchHit: Bool = false
+    ) {
         self.content = content
         self.isUser = isUser
         self._dynamicHeight = dynamicHeight
+        self.searchQuery = searchQuery
+        self.isCurrentSearchHit = isCurrentSearchHit
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -85,9 +96,14 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
     }
 
     public func updateNSView(_ nsView: WKWebView, context: Context) {
-        guard context.coordinator.lastContent != content else { return }
-        context.coordinator.lastContent = content
-        context.coordinator.render(content, in: nsView)
+        context.coordinator.parent = self
+        if context.coordinator.lastContent != content {
+            context.coordinator.lastContent = content
+            context.coordinator.render(content, in: nsView)
+        }
+        // 수식은 KaTeX가 그린 노드라 SwiftUI 쪽에서 칠할 수 없습니다.
+        // 웹뷰 안에서 직접 칠하되 수식 노드는 건드리지 않습니다.
+        context.coordinator.applyHighlight(query: searchQuery, isCurrent: isCurrentSearchHit, in: nsView)
     }
 
     private static func fallbackHTML(for content: String) -> String {
@@ -107,6 +123,18 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
         init(_ parent: LaTeXMarkdownView) {
             self.parent = parent
             self.lastContent = parent.content
+        }
+
+        /// 마지막으로 칠한 상태입니다. 같은 값이면 다시 칠하지 않습니다.
+        private var lastHighlight: String = ""
+
+        func applyHighlight(query: String, isCurrent: Bool, in webView: WKWebView) {
+            let key = "\(query)|\(isCurrent)"
+            guard isReady, lastHighlight != key else { return }
+            lastHighlight = key
+            guard let data = try? JSONEncoder().encode([query]),
+                  let literal = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("highlightSearch(\(literal)[0], \(isCurrent))", completionHandler: nil)
         }
 
         func render(_ content: String, in webView: WKWebView) {

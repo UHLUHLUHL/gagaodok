@@ -186,6 +186,50 @@
 
         // 셸을 한 번만 띄우고 내용만 갈아끼웁니다. 말풍선마다 문서를 새로 로드하지 않아
         // 웹뷰 재생성과 스크립트 재파싱 비용이 사라집니다.
+        // 검색어를 노랗게 대신 파랗게 칠합니다. 내 말풍선이 노란색이라 노랑은 묻힙니다.
+        // 수식 안쪽(KaTeX가 만든 노드)은 건드리지 않습니다. 건드리면 식이 깨집니다.
+        window.highlightSearch = function (needle, isCurrent) {
+            document.querySelectorAll('mark.kk-find').forEach(function (m) {
+                m.replaceWith(document.createTextNode(m.textContent));
+            });
+            document.body.normalize();
+            if (!needle) return;
+
+            var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                acceptNode: function (node) {
+                    if (node.parentElement.closest('.katex, .katex-display, script, style')) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    return node.nodeValue.toLowerCase().indexOf(needle.toLowerCase()) >= 0
+                        ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                }
+            });
+            var targets = [];
+            while (walker.nextNode()) targets.push(walker.currentNode);
+
+            var color = isCurrent ? '#59a8ff' : '#a8d9ff';
+            targets.forEach(function (node) {
+                var text = node.nodeValue;
+                var lower = text.toLowerCase();
+                var find = needle.toLowerCase();
+                var frag = document.createDocumentFragment();
+                var at = 0, hit;
+                while ((hit = lower.indexOf(find, at)) >= 0) {
+                    if (hit > at) frag.appendChild(document.createTextNode(text.slice(at, hit)));
+                    var mark = document.createElement('mark');
+                    mark.className = 'kk-find';
+                    mark.style.background = color;
+                    mark.style.color = 'inherit';
+                    mark.style.borderRadius = '2px';
+                    mark.textContent = text.slice(hit, hit + needle.length);
+                    frag.appendChild(mark);
+                    at = hit + needle.length;
+                }
+                if (at < text.length) frag.appendChild(document.createTextNode(text.slice(at)));
+                node.parentNode.replaceChild(frag, node);
+            });
+        };
+
         window.renderContent = function (rawMarkdown) {
             const displayMathBlocks = [];
             let source = protectDisplayMath(rawMarkdown, '$$', '$$', displayMathBlocks);
