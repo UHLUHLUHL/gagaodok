@@ -20,11 +20,26 @@ import kotlin.math.min
 data class ModelTokenUsage(
     val inputTokens: Int = 0,
     val cachedInputTokens: Int = 0,
+    /// OpenAI식 캐시 쓰기입니다. **`inputTokens` 안에 들어 있는 부분집합**이라
+    /// 요금을 매길 때 입력에서 덜어 냅니다.
     val cacheWriteTokens: Int = 0,
+    /// Gemini식 명시적 캐시를 **새로 만드느라 올린** 토큰입니다.
+    ///
+    /// 이건 별개의 요청(`cachedContents` POST)이라 어떤 `promptTokenCount`에도
+    /// 잡히지 않습니다. 그래서 덜어 내지 않고 그대로 더합니다.
+    /// 예전에는 이 값을 아예 안 세서, 캐시를 매 턴 새로 만드는 동안 그 비용이
+    /// 앱 화면에서 통째로 사라져 있었습니다.
+    val cacheCreateTokens: Int = 0,
     val outputTokens: Int = 0,
     val requestCount: Int = 0,
     /// 명시적 캐시를 올려둔 누적량입니다. 토큰 수 × 보관 시간으로 요금이 매겨집니다.
-    val cacheStorageTokenHours: Double = 0.0
+    val cacheStorageTokenHours: Double = 0.0,
+    /// 보낸 것은 확실한데 사용량을 못 받은 요청 수입니다.
+    ///
+    /// 스트림이 첫 조각도 오기 전에 끊기거나, 답변을 도중에 멈췄는데 그때까지
+    /// 사용량 조각이 하나도 안 왔을 때입니다. 청구서에는 있고 여기에는 없는
+    /// 요청이라, 숫자를 지어내는 대신 **몇 건인지만** 남깁니다.
+    val unreportedRequests: Int = 0
 ) {
     val totalTokens: Int get() = inputTokens + outputTokens
 
@@ -42,6 +57,7 @@ data class ModelTokenUsage(
         return regular / 1_000_000.0 * model.inputPricePerMillion +
             cached / 1_000_000.0 * model.cachedInputPricePerMillion +
             writes / 1_000_000.0 * model.inputPricePerMillion * model.cacheWriteMultiplier +
+            cacheCreateTokens / 1_000_000.0 * model.inputPricePerMillion +
             outputTokens / 1_000_000.0 * model.outputPricePerMillion +
             cacheStorageCostUSD(model)
     }
@@ -58,9 +74,11 @@ data class ModelTokenUsage(
         inputTokens = inputTokens + other.inputTokens,
         cachedInputTokens = cachedInputTokens + other.cachedInputTokens,
         cacheWriteTokens = cacheWriteTokens + other.cacheWriteTokens,
+        cacheCreateTokens = cacheCreateTokens + other.cacheCreateTokens,
         outputTokens = outputTokens + other.outputTokens,
         requestCount = requestCount + other.requestCount,
-        cacheStorageTokenHours = cacheStorageTokenHours + other.cacheStorageTokenHours
+        cacheStorageTokenHours = cacheStorageTokenHours + other.cacheStorageTokenHours,
+        unreportedRequests = unreportedRequests + other.unreportedRequests
     )
 }
 
@@ -96,26 +114,42 @@ class TokenUsageStore private constructor(context: Context) {
         cacheWriteTokens: Int = 0,
         cacheStorageTokenHours: Double = 0.0
     ) {
-        val delta = ModelTokenUsage(
-            inputTokens = max(0, inputTokens),
-            cachedInputTokens = max(0, cachedInputTokens),
-            cacheWriteTokens = max(0, cacheWriteTokens),
-            outputTokens = max(0, outputTokens),
-            requestCount = 1,
-            cacheStorageTokenHours = max(0.0, cacheStorageTokenHours)
+        add(
+            roomId, model,
+            ModelTokenUsage(
+                inputTokens = max(0, inputTokens),
+                cachedInputTokens = max(0, cachedInputTokens),
+                cacheWriteTokens = max(0, cacheWriteTokens),
+                outputTokens = max(0, outputTokens),
+                requestCount = 1,
+                cacheStorageTokenHours = max(0.0, cacheStorageTokenHours)
+            )
         )
-        val room = (_usageByRoom.value[roomId] ?: emptyMap()).toMutableMap()
-        room[model] = (room[model] ?: ModelTokenUsage()).adding(delta)
-        _usageByRoom.value = _usageByRoom.value + (roomId to room)
-        save()
     }
 
-    /// 캐시 보관량만 따로 더합니다. 요청 횟수는 늘리지 않습니다.
-    fun recordCacheStorage(roomId: UUID, model: AIModel, tokenHours: Double) {
-        if (tokenHours <= 0) return
+    /// 명시적 캐시를 새로 올린 몫입니다. 만든 토큰 수와 보관량을 함께 적습니다.
+    fun recordCacheCreation(roomId: UUID, model: AIModel, tokens: Int, tokenHours: Double) {
+        if (tokens <= 0 && tokenHours <= 0) return
+        add(
+            roomId, model,
+            ModelTokenUsage(
+                cacheCreateTokens = max(0, tokens),
+                // 캐시를 만드는 것도 API 요청 한 건입니다. 그동안 이 요청은
+                // 횟수에도 안 잡혀서 "메시지 수보다 요청이 적은" 장부가 나왔습니다.
+                requestCount = 1,
+                cacheStorageTokenHours = max(0.0, tokenHours)
+            )
+        )
+    }
+
+    /// 보냈지만 사용량을 못 받은 요청을 한 건 적습니다.
+    fun recordUnreportedRequest(roomId: UUID, model: AIModel) {
+        add(roomId, model, ModelTokenUsage(requestCount = 1, unreportedRequests = 1))
+    }
+
+    private fun add(roomId: UUID, model: AIModel, delta: ModelTokenUsage) {
         val room = (_usageByRoom.value[roomId] ?: emptyMap()).toMutableMap()
-        val entry = room[model] ?: ModelTokenUsage()
-        room[model] = entry.copy(cacheStorageTokenHours = entry.cacheStorageTokenHours + tokenHours)
+        room[model] = (room[model] ?: ModelTokenUsage()).adding(delta)
         _usageByRoom.value = _usageByRoom.value + (roomId to room)
         save()
     }
@@ -138,6 +172,10 @@ class TokenUsageStore private constructor(context: Context) {
 
     val totalCostUSD: Double
         get() = AIModel.entries.sumOf { totalUsage(it).costUSD(it) }
+
+    /// 사용량을 못 받은 요청이 몇 건인지입니다. 0이 아니면 화면의 요금이 실제보다 적습니다.
+    val totalUnreportedRequests: Int
+        get() = AIModel.entries.sumOf { totalUsage(it).unreportedRequests }
 
     val totalSavingsUSD: Double
         get() = AIModel.entries.sumOf {

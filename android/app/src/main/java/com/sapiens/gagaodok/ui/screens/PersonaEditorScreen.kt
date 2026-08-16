@@ -85,7 +85,15 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
     var refineInstruction by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
-    var previewText by remember { mutableStateOf<String?>(null) }
+    // 지금 무엇을 하고 있는지 한 줄입니다. 조사처럼 오래 걸리는 일은 이 줄이
+    // 실제로 도착한 내용에 따라 바뀝니다(`AIService.lookupProgressLabel`).
+    var progress by remember { mutableStateOf<String?>(null) }
+
+    // 미리보기는 물어본 말마다 답을 따로 답니다. 예전에는 마지막 답 하나만
+    // 목록 아래에 떨어뜨려서, 무엇에 대한 답인지도 답이 왔는지도 알기 어려웠습니다.
+    var previewAnswers by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var previewAsking by remember { mutableStateOf<String?>(null) }
+    var customQuestion by remember { mutableStateOf("") }
 
     fun samples(): List<String> = samplesText.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
@@ -105,6 +113,7 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
         if (busy != null) return
         busy = label
         status = null
+        progress = null
         scope.launch {
             try {
                 block()
@@ -112,7 +121,23 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 status = e.message ?: "실패했습니다."
             } finally {
                 busy = null
+                progress = null
+                previewAsking = null
             }
+        }
+    }
+
+    /// 미리보기 한 마디를 물어봅니다.
+    fun ask(message: String) {
+        if (message.isBlank()) return
+        previewAsking = message
+        run("preview") {
+            val answer = ai.previewPersona(
+                roomId,
+                PersonaStyle(description, samples(), styleGuide, true),
+                room.profile.name, message, mode
+            )
+            previewAnswers = previewAnswers + (message to answer)
         }
     }
 
@@ -179,9 +204,17 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 Box(Modifier.weight(1f)) {
                     Field("", lookupQuery, placeholder = "예: 어떤 작품의 누구") { lookupQuery = it }
                 }
-                SheetButton("찾기", filled = true, enabled = busy == null) {
+                SheetButton(
+                    "찾기",
+                    filled = true,
+                    enabled = busy == null && lookupQuery.isNotBlank()
+                ) {
                     run("lookup") {
-                        val result = ai.lookupPersona(lookupQuery)
+                        val result = ai.lookupPersona(
+                            lookupQuery,
+                            roomId,
+                            onProgress = { progress = it }
+                        )
                         if (!result.isUsable) {
                             status = "확신도 ${result.confidence}. ${result.note}"
                             return@run
@@ -192,10 +225,16 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                         status = buildString {
                             append("확신도 ${result.confidence}")
                             if (result.note.isNotEmpty()) append(" · ${result.note}")
+                            append("\n대사 ${result.samples.size}줄을 가져왔습니다.")
                             if (result.sources.isNotEmpty()) append("\n출처: ${result.sources.joinToString(", ")}")
                         }
                     }
                 }
+            }
+            // 진행 줄은 누른 단추 **바로 아래**에 둡니다. 예전에는 화면 맨 끝에 있어서,
+            // 긴 화면을 스크롤해 내려가지 않으면 뭔가 되고 있는지조차 안 보였습니다.
+            if (busy == "lookup") {
+                BusyLine(progress ?: "자료를 찾고 있습니다…")
             }
 
             // MARK: - 대사
@@ -206,12 +245,18 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 color = colors.textTertiary
             )
             Field("", samplesText, minHeight = 120.dp) { samplesText = it }
-            SheetButton("이 대사로 말투 규칙 뽑기", filled = false, enabled = busy == null) {
+            SheetButton(
+                "이 대사로 말투 규칙 뽑기",
+                filled = false,
+                enabled = busy == null && samples().isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 run("analyze") {
-                    styleGuide = ai.analyzePersonaStyle(description, samples())
+                    styleGuide = ai.analyzePersonaStyle(roomId, description, samples())
                     status = "말투 규칙을 새로 만들었습니다."
                 }
             }
+            if (busy == "analyze") BusyLine("대사에서 말투를 뽑고 있습니다…")
 
             // MARK: - 규칙
             SectionTitle("말투 규칙")
@@ -220,66 +265,87 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 Box(Modifier.weight(1f)) {
                     Field("", refineInstruction, placeholder = "예: 좀 더 무뚝뚝하게") { refineInstruction = it }
                 }
-                SheetButton("다듬기", filled = false, enabled = busy == null) {
+                SheetButton(
+                    "다듬기",
+                    filled = false,
+                    enabled = busy == null && refineInstruction.isNotBlank() && styleGuide.isNotBlank()
+                ) {
                     run("refine") {
-                        styleGuide = ai.refinePersonaStyle(styleGuide, refineInstruction, description, samples())
+                        styleGuide = ai.refinePersonaStyle(
+                            roomId, styleGuide, refineInstruction, description, samples()
+                        )
                         refineInstruction = ""
                         status = "규칙을 고쳤습니다."
                     }
                 }
             }
+            if (busy == "refine") BusyLine("규칙을 고치고 있습니다…")
 
             // MARK: - 미리보기
+            //
+            // **예전에는 이름만 미리보기였습니다.** 상황을 누르면 요청은 나갔지만,
+            // 답은 세 줄 아래 별도의 상자에 떨어졌습니다. 무엇에 대한 답인지 표시가
+            // 없었고, 다른 상황을 누르면 앞의 답이 소리 없이 사라졌으며, 기다리는
+            // 동안에는 아무 표시도 없었습니다. 눌러도 아무 일이 없는 것처럼 보였습니다.
+            //
+            // 지금은 물어본 말과 그 답을 대화방과 같은 모양으로 나란히 답니다.
+            // 물어본 말마다 답이 따로 남고, 기다리는 동안에는 그 자리에 표시가 뜹니다.
             SectionTitle("미리보기")
             Text(
-                "저장하기 전에 결을 확인합니다. 실제 대화와 같은 지침을 씁니다.",
+                "저장하기 전에 결을 확인합니다. 지금 화면에 있는 설정 그대로, 실제 대화와 같은 지침으로 물어봅니다.",
                 style = KakaoText.caption,
                 color = colors.textTertiary
             )
             AIService.previewPrompts(mode).forEach { (situation, message) ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(colors.sunken, RoundedCornerShape(10.dp))
-                        .clickable(enabled = busy == null) {
-                            run("preview") {
-                                previewText = null
-                                previewText = ai.previewPersona(
-                                    PersonaStyle(description, samples(), styleGuide, true),
-                                    room.profile.name, message, mode
-                                )
-                            }
-                        }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                PreviewExchange(
+                    situation = situation,
+                    message = message,
+                    answer = previewAnswers[message],
+                    asking = previewAsking == message,
+                    enabled = busy == null,
+                    onAsk = { ask(message) }
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    Field("", customQuestion, placeholder = "직접 물어보기") { customQuestion = it }
+                }
+                SheetButton(
+                    "물어보기",
+                    filled = false,
+                    enabled = busy == null && customQuestion.isNotBlank()
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(situation, style = KakaoText.caption, color = colors.textTertiary)
-                        Text(message, style = KakaoText.body, color = colors.textPrimary)
-                    }
+                    val asked = customQuestion.trim()
+                    customQuestion = ""
+                    ask(asked)
                 }
             }
-            previewText?.let {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(colors.bubbleTheirs, RoundedCornerShape(12.dp))
-                        .padding(12.dp)
-                ) {
-                    Text(it, style = KakaoText.bubble, color = colors.bubbleTheirsText)
-                }
-            }
-
-            busy?.let {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(
-                        "  처리 중입니다…",
-                        style = KakaoText.caption,
-                        color = colors.textSecondary
+            // 직접 물어본 것들도 순서대로 남깁니다.
+            previewAnswers.keys
+                .filterNot { key -> AIService.previewPrompts(mode).any { it.second == key } }
+                .forEach { question ->
+                    PreviewExchange(
+                        situation = "직접 물어봄",
+                        message = question,
+                        answer = previewAnswers[question],
+                        asking = previewAsking == question,
+                        enabled = busy == null,
+                        onAsk = { ask(question) }
                     )
                 }
+            if (previewAsking != null && previewAnswers[previewAsking] == null &&
+                AIService.previewPrompts(mode).none { it.second == previewAsking }
+            ) {
+                PreviewExchange(
+                    situation = "직접 물어봄",
+                    message = previewAsking!!,
+                    answer = null,
+                    asking = true,
+                    enabled = false,
+                    onAsk = {}
+                )
             }
+
             status?.let {
                 Row(
                     Modifier
@@ -305,6 +371,75 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = KakaoText.roomName, color = KakaoTheme.colors.textPrimary)
+}
+
+/// 지금 무엇을 하고 있는지 한 줄로 보여줍니다. 누른 단추 바로 아래에 놓습니다.
+@Composable
+private fun BusyLine(text: String) {
+    val colors = KakaoTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(
+            Modifier.size(14.dp),
+            strokeWidth = 2.dp,
+            color = colors.textSecondary
+        )
+        Text(
+            text,
+            style = KakaoText.caption,
+            color = colors.textSecondary,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+    }
+}
+
+/// 미리보기 한 쌍입니다. 물어본 말은 오른쪽 노란 말풍선, 답은 왼쪽 흰 말풍선으로
+/// 대화방과 같은 모양입니다. 여기서 보이는 결이 실제 대화의 결이라는 뜻입니다.
+@Composable
+private fun PreviewExchange(
+    situation: String,
+    message: String,
+    answer: String?,
+    asking: Boolean,
+    enabled: Boolean,
+    onAsk: () -> Unit
+) {
+    val colors = KakaoTheme.colors
+    Column(Modifier.fillMaxWidth()) {
+        Text(situation, style = KakaoText.caption, color = colors.textTertiary)
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Box(
+                Modifier
+                    .background(colors.bubbleMine, RoundedCornerShape(12.dp))
+                    .clickable(enabled = enabled, onClick = onAsk)
+                    .padding(horizontal = 12.dp, vertical = 9.dp)
+            ) {
+                Text(message, style = KakaoText.bubble, color = colors.bubbleMineText)
+            }
+        }
+        when {
+            asking && answer == null -> Box(Modifier.padding(top = 6.dp)) {
+                BusyLine("대답을 기다리고 있습니다…")
+            }
+            answer != null -> Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                Box(
+                    Modifier
+                        .background(colors.bubbleTheirs, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 12.dp, vertical = 9.dp)
+                ) {
+                    Text(answer, style = KakaoText.bubble, color = colors.bubbleTheirsText)
+                }
+            }
+            else -> Text(
+                "눌러서 물어봅니다",
+                style = KakaoText.caption,
+                color = colors.textTertiary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+    }
 }
 
 @Composable

@@ -6,6 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
@@ -20,8 +22,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.sapiens.gagaodok.ui.RootScreen
+import com.sapiens.gagaodok.ui.components.KakaoMenuHost
 import com.sapiens.gagaodok.ui.screens.ChatRoomScreen
 import com.sapiens.gagaodok.ui.screens.PersonaEditorScreen
+import com.sapiens.gagaodok.ui.screens.ProfileScreen
 import com.sapiens.gagaodok.ui.theme.GagaodokTheme
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.util.UUID
@@ -56,6 +60,9 @@ class MainActivity : ComponentActivity() {
 
                 val navController = rememberNavController()
 
+                // 메뉴 카드는 여기 한 곳에서만 그립니다. 화면 안에서 띄우면 그 화면의
+                // 자리만 어두워집니다(`KakaoMenuHost` 설명).
+                KakaoMenuHost {
                 NavHost(
                     navController = navController,
                     startDestination = "root",
@@ -78,7 +85,11 @@ class MainActivity : ComponentActivity() {
                     }
                 ) {
                     composable("root") {
-                        RootScreen(onOpenRoom = { navController.navigate("room/$it") })
+                        RootScreen(
+                            onOpenRoom = { navController.navigate("room/$it") },
+                            onOpenProfile = { navController.navigate("profile/$it") },
+                            onEditPersona = { navController.navigate("persona/$it") }
+                        )
                     }
                     composable(
                         "room/{roomId}",
@@ -88,7 +99,35 @@ class MainActivity : ComponentActivity() {
                         ChatRoomScreen(
                             roomId = roomId,
                             onBack = { navController.popBackStack() },
-                            onEditPersona = { navController.navigate("persona/$roomId") }
+                            onEditPersona = { navController.navigate("persona/$roomId") },
+                            onOpenProfile = { navController.navigate("profile/$roomId") }
+                        )
+                    }
+                    // 프로필은 옆이 아니라 **아래에서 올라옵니다.** 옆에서 밀려 들어오면
+                    // 대화방과 같은 결이 되어, 목록의 다음 칸으로 넘어간 것처럼 읽힙니다.
+                    composable(
+                        "profile/{roomId}",
+                        arguments = listOf(navArgument("roomId") { type = NavType.StringType }),
+                        enterTransition = {
+                            slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Up, tween(240)) +
+                                fadeIn(tween(160))
+                        },
+                        popExitTransition = {
+                            slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Down, tween(220)) +
+                                fadeOut(tween(160))
+                        }
+                    ) { entry ->
+                        val roomId = UUID.fromString(entry.arguments!!.getString("roomId"))
+                        ProfileScreen(
+                            roomId = roomId,
+                            onBack = { navController.popBackStack() },
+                            onOpenRoom = {
+                                // 프로필을 거쳐 들어간 대화방에서 뒤로 가면 목록으로
+                                // 돌아가야 합니다. 그냥 쌓으면 대화방 → 프로필 → 대화방이
+                                // 되어 뒤로가기를 두 번 눌러야 합니다.
+                                navController.navigate("room/$it") { popUpTo("root") }
+                            },
+                            onEditPersona = { navController.navigate("persona/$it") }
                         )
                     }
                     composable(
@@ -98,6 +137,7 @@ class MainActivity : ComponentActivity() {
                         val roomId = UUID.fromString(entry.arguments!!.getString("roomId"))
                         PersonaEditorScreen(roomId = roomId, onBack = { navController.popBackStack() })
                     }
+                }
                 }
             }
         }

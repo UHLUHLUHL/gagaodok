@@ -13,6 +13,7 @@ import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.ConversationTurn
 import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.service.AIService
+import com.sapiens.gagaodok.service.AIServiceException
 import com.sapiens.gagaodok.service.RoleplayParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -185,7 +186,12 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                     // 말풍선이 이미 하나라도 붙었으면 다시 보낼 수 없습니다.
                     // 처음부터 다시 받으면 앞부분이 두 번 나옵니다.
                     val alreadyShown = _messages.value.any { it.turnId == responseTurnId }
-                    if (!alreadyShown && attempt < SILENT_RETRIES) {
+                    // **다시 보내도 소용없는 실패는 다시 보내지 않습니다.**
+                    // 키가 틀렸거나 요청이 잘못됐으면 세 번을 보내도 똑같이 실패하고,
+                    // 그 두 번은 화면에 아무것도 남기지 않은 채 요금만 냈습니다.
+                    // 서비스가 아닌 곳에서 온 예외(주로 네트워크)는 다시 시도합니다.
+                    val retryable = (e as? AIServiceException)?.retryable ?: true
+                    if (!alreadyShown && retryable && attempt < SILENT_RETRIES) {
                         attempt += 1
                         continue
                     }

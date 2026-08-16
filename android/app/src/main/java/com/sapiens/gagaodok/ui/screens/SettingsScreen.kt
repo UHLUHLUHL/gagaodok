@@ -107,6 +107,12 @@ fun SettingsScreen() {
                     "입력 / 출력",
                     "${formatCount(app.usage.totalPromptTokens)} / ${formatCount(app.usage.totalCandidatesTokens)}"
                 )
+                val cacheCreated = AIModel.entries.sumOf { app.usage.totalUsage(it).cacheCreateTokens }
+                if (cacheCreated > 0) {
+                    // 캐시를 새로 올리는 데 쓴 몫입니다. 위 '입력'에는 안 들어갑니다 —
+                    // 별개의 요청이라 어떤 promptTokenCount에도 안 잡히기 때문입니다.
+                    InfoRow("캐시에 올린 토큰", "${formatCount(cacheCreated)} tokens")
+                }
                 if (savingsUSD > 0) {
                     InfoRow(
                         "캐시로 아낀 금액",
@@ -116,6 +122,18 @@ fun SettingsScreen() {
                     )
                 }
                 InfoRow("적용 환율", "1 USD = ${formatCount(exchangeRate.toInt())} KRW")
+
+                // 여기 숫자가 실제 청구액보다 적을 수 있는 이유를 숨기지 않습니다.
+                val unreported = app.usage.totalUnreportedRequests
+                if (unreported > 0) {
+                    Text(
+                        "사용량을 못 받은 요청이 ${unreported}건 있습니다. 도중에 멈췄거나 실패한 요청이라 " +
+                            "청구서에는 있고 위 금액에는 빠져 있습니다.",
+                        style = KakaoText.caption,
+                        color = colors.textTertiary,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
             }
         }
 

@@ -36,7 +36,15 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-class AIServiceException(message: String) : Exception(message)
+/// @param retryable 같은 요청을 그대로 다시 보내면 될 만한 실패인지.
+///
+/// **거짓이면 다시 보내지 않습니다.** 예전에는 어떤 실패든 조용히 두 번 더 보냈는데,
+/// 키가 틀렸거나 안전 필터에 걸린 요청은 몇 번을 보내도 똑같이 실패합니다.
+/// 그 재시도는 화면에 아무것도 남기지 않으면서 요금만 세 배로 냈습니다.
+class AIServiceException(
+    message: String,
+    val retryable: Boolean = false
+) : Exception(message)
 
 data class GeneratedMessageBubble(
     val text: String,
@@ -85,7 +93,10 @@ private data class PrefixCache(
     val name: String,          // cachedContents/xxxx
     val coveredTurns: Int,     // 이 캐시가 덮는 contents 앞부분의 개수
     val fingerprint: String,   // 덮은 구간이 편집되지 않았는지 확인하는 지문
-    val expiresAtMillis: Long
+    val expiresAtMillis: Long,
+    /// 이 캐시에 올라가 있는 토큰 수입니다. 다시 만들 값어치가 있는지 따질 때 씁니다.
+    /// 예전 파일에는 없던 값이라 기본값을 둡니다.
+    val tokenCount: Int = 0
 )
 
 class AIService private constructor(private val appContext: Context) {
@@ -167,7 +178,7 @@ class AIService private constructor(private val appContext: Context) {
         val system = systemPrompt(botName, persona, mode)
 
         // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
-        val cache = usablePrefixCache(roomId, contents, system)
+        val cache = usablePrefixCache(roomId, contents, system, apiKey)
 
         val sink = StreamBubbleSink(
             roleplayEstablished = mode == ChatMode.COMPANION && roleplayInProgress,
@@ -175,14 +186,33 @@ class AIService private constructor(private val appContext: Context) {
             onBubble = onBubble
         )
 
-        val outcome = streamGemini(contents, system, cache, apiKey, model, mode) { sink.consume(it) }
-        sink.finish()
-
-        outcome.usage?.let {
-            val input = it.optInt("promptTokenCount")
-            val output = it.optInt("candidatesTokenCount") + it.optInt("thoughtsTokenCount")
-            val cached = it.optInt("cachedContentTokenCount")
-            usage.recordUsage(roomId, model, input, output, cachedInputTokens = cached)
+        // 사용량을 **`finally`에서** 적습니다.
+        //
+        // 예전에는 스트림이 정상적으로 끝난 뒤에만 적었습니다. 그런데 답변을 도중에
+        // 멈추면(사용자가 "눌러서 중지") 코루틴이 취소되면서 그 자리를 건너뛰었습니다.
+        // 서버는 이미 입력을 다 읽고 답을 만들고 있었으므로 요금은 그대로 나갑니다.
+        // 사용량 조각은 매 청크에 실려 오기 때문에, 도중에 멈춰도 그때까지 받은 값은
+        // 손에 있습니다. 그걸 버리지 않고 적습니다.
+        val outcome = StreamOutcome()
+        try {
+            streamGemini(outcome, contents, system, cache, apiKey, model, mode) { sink.consume(it) }
+            sink.finish()
+        } finally {
+            val reported = outcome.usage
+            if (reported != null) {
+                val output = reported.optInt("candidatesTokenCount") + reported.optInt("thoughtsTokenCount")
+                usage.recordUsage(
+                    roomId, model,
+                    // 검색 그라운딩을 쓰면 도구가 쓴 입력이 따로 옵니다. 이것도 청구됩니다.
+                    inputTokens = reported.optInt("promptTokenCount") +
+                        reported.optInt("toolUsePromptTokenCount"),
+                    outputTokens = output,
+                    cachedInputTokens = reported.optInt("cachedContentTokenCount")
+                )
+            } else {
+                // 한 조각도 못 받고 끊겼습니다. 숫자를 지어내지 않고 건수만 남깁니다.
+                usage.recordUnreportedRequest(roomId, model)
+            }
         }
 
         if (outcome.text.isEmpty()) {
@@ -222,6 +252,7 @@ class AIService private constructor(private val appContext: Context) {
     /// 완성된 말풍선을 만드는 판단은 `StreamingBubbleBuffer`가 합니다. 여기서는
     /// 서버가 준 조각을 그대로 넘길 뿐이라, 청크가 어디서 끊기든 상관하지 않습니다.
     private suspend fun streamGemini(
+        outcome: StreamOutcome,
         contents: List<JSONObject>,
         system: String,
         cache: PrefixCache?,
@@ -229,7 +260,7 @@ class AIService private constructor(private val appContext: Context) {
         model: AIModel,
         mode: ChatMode,
         onText: suspend (String) -> Unit
-    ): StreamOutcome {
+    ) {
         val url = "$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse"
         val body = requestBody(contents, system, cache, mode).toString()
 
@@ -249,8 +280,7 @@ class AIService private constructor(private val appContext: Context) {
                 throw AIServiceException(errorMessage(raw, it.code, "Gemini"))
             }
 
-            val outcome = StreamOutcome()
-            val source = it.body?.source() ?: return outcome
+            val source = it.body?.source() ?: return
             while (true) {
                 val line = source.readUtf8Line() ?: break
                 if (!line.startsWith("data:")) continue
@@ -273,7 +303,6 @@ class AIService private constructor(private val appContext: Context) {
                 outcome.text += piece
                 onText(piece)
             }
-            return outcome
         }
     }
 
@@ -333,26 +362,52 @@ class AIService private constructor(private val appContext: Context) {
     }
 
     private fun persistCaches() {
-        val snapshot = prefixCaches.toMap()
+        val snapshot = synchronized(prefixCaches) { prefixCaches.toMap() }
         scope.launch { runCatching { cacheFile.writeText(Codec.json.encodeToString(snapshot)) } }
     }
 
     private fun usablePrefixCache(
         roomId: UUID,
         contents: List<JSONObject>,
-        system: String
+        system: String,
+        apiKey: String
     ): PrefixCache? {
         val key = roomId.toString()
-        val cache = prefixCaches[key] ?: return null
+        val cache = synchronized(prefixCaches) { prefixCaches[key] } ?: return null
+
+        // 만료된 것은 서버에도 없으므로 지울 것이 없습니다.
         if (cache.expiresAtMillis <= System.currentTimeMillis() + 30_000) {
-            prefixCaches.remove(key); persistCaches(); return null
+            dropCache(key, deleteRemote = false, apiKey = apiKey)
+            return null
         }
+
         // 캐시가 덮는 만큼의 턴이 남아 있고, 그 구간이 편집되지 않았을 때만 재사용합니다.
-        if (contents.size <= cache.coveredTurns) return null
+        //
+        // **여기서 그냥 `null`만 돌려주면 안 됩니다.** 예전에는 그랬는데, 메시지를
+        // 하나 고치거나 지워서 대화가 짧아지면 이 조건에 걸려 캐시를 안 쓰고,
+        // 갱신하는 쪽은 "이미 더 많이 덮는 캐시가 있다"며 그냥 돌아갔습니다.
+        // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
+        // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
+        if (contents.size <= cache.coveredTurns) {
+            dropCache(key, deleteRemote = true, apiKey = apiKey)
+            return null
+        }
         if (fingerprint(contents.take(cache.coveredTurns), system) != cache.fingerprint) {
-            prefixCaches.remove(key); persistCaches(); return null
+            dropCache(key, deleteRemote = true, apiKey = apiKey)
+            return null
         }
         return cache
+    }
+
+    /// 로컬 기록에서 지우고, 서버에 남아 있을 것이면 그것도 지웁니다.
+    ///
+    /// 서버 쪽을 안 지우면 아무도 안 쓰는 캐시가 TTL이 다할 때까지 보관료를 먹습니다.
+    private fun dropCache(key: String, deleteRemote: Boolean, apiKey: String) {
+        val removed = synchronized(prefixCaches) { prefixCaches.remove(key) }
+        persistCaches()
+        if (deleteRemote && removed != null) {
+            scope.launch { deleteCache(removed.name, apiKey) }
+        }
     }
 
     private val refreshingRooms = mutableSetOf<String>()
@@ -371,19 +426,34 @@ class AIService private constructor(private val appContext: Context) {
             refreshingRooms += key
         }
         try {
-            // 이미 같은 구간을 덮는 캐시가 있으면 다시 만들 필요가 없습니다.
-            prefixCaches[key]?.let {
-                if (it.coveredTurns >= contents.size &&
-                    it.expiresAtMillis > System.currentTimeMillis() + 60_000
-                ) return
-            }
+            val previous = synchronized(prefixCaches) { prefixCaches[key] }
+            val now = System.currentTimeMillis()
 
             // 사진도 함께 셉니다. 글자만 세던 시절에는 사진이 0자로 잡혀서,
             // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
             val estimated = estimateTokens(contents) + TokenEstimator.textTokens(system)
             if (estimated < MINIMUM_CACHE_TOKENS) return
 
-            val previous = prefixCaches[key]
+            if (previous != null) {
+                // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
+                if (previous.coveredTurns >= contents.size &&
+                    previous.expiresAtMillis > now + 60_000
+                ) return
+
+                // **매 턴 다시 만들지 않습니다.**
+                //
+                // 예전에는 답변을 받을 때마다 대화 접두사 전체를 새 캐시로 올리고
+                // 옛것을 지웠습니다. 한 턴 아끼자고 수만 토큰을 매번 다시 올린 셈입니다.
+                // 캐시를 만드는 요청은 그 자체로 청구되고 보관료도 따로 붙는 반면,
+                // 안 만들고 넘어갔을 때 더 내는 것은 **새로 붙은 꼬리만큼**뿐입니다.
+                //
+                // 그래서 꼬리가 캐시의 5분의 1보다 커졌을 때만 새로 만듭니다.
+                // 그 아래에서는 새로 만드는 값이 아끼는 값보다 큽니다.
+                val tail = estimateTokens(contents.drop(previous.coveredTurns))
+                val worthIt = tail >= maxOf(CACHE_REFRESH_MIN_TAIL_TOKENS, previous.tokenCount / 5)
+                val expiringSoon = previous.expiresAtMillis <= now + CACHE_REFRESH_TTL_FLOOR_MILLIS
+                if (!worthIt && !expiringSoon) return
+            }
             val payload = JSONObject()
                 .put("model", "models/${AIModel.GEMINI_37_FLASH.rawValue}")
                 .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
@@ -406,22 +476,31 @@ class AIService private constructor(private val appContext: Context) {
             }.getOrNull() ?: return
             val name = json.optString("name").takeIf { it.isNotEmpty() } ?: return
 
-            prefixCaches[key] = PrefixCache(
-                name = name,
-                coveredTurns = contents.size,
-                fingerprint = fingerprint(contents, system),
-                expiresAtMillis = System.currentTimeMillis() + CACHE_TTL_SECONDS * 1000L
-            )
+            val cachedTokens = json.optJSONObject("usageMetadata")?.optInt("totalTokenCount") ?: 0
+            synchronized(prefixCaches) {
+                prefixCaches[key] = PrefixCache(
+                    name = name,
+                    coveredTurns = contents.size,
+                    fingerprint = fingerprint(contents, system),
+                    expiresAtMillis = System.currentTimeMillis() + CACHE_TTL_SECONDS * 1000L,
+                    tokenCount = if (cachedTokens > 0) cachedTokens else estimated
+                )
+            }
             persistCaches()
 
-            // 캐시는 올려둔 토큰 수 × 보관 시간으로 요금이 매겨집니다.
-            // 이전 캐시를 바로 지우므로 실제 보관 시간은 다음 갱신까지지만,
-            // 최악의 경우인 TTL 전체를 기준으로 잡아 요금을 과소 표시하지 않습니다.
-            val cachedTokens = json.optJSONObject("usageMetadata")?.optInt("totalTokenCount") ?: 0
+            // 올린 토큰과 보관량을 함께 적습니다.
+            //
+            // **올린 토큰을 입력 요금으로 칩니다.** 캐시를 만드는 요청이 청구되는지
+            // 문서로 확인하지는 못했습니다. 확실하지 않을 때는 비싼 쪽으로 잡습니다 —
+            // 화면의 숫자가 실제보다 적은 것이 많은 것보다 나쁩니다.
+            //
+            // 보관량은 실제 보관 시간이 아니라 TTL 전체로 잡습니다. 다음 갱신 때
+            // 이전 것을 지우므로 실제로는 그보다 짧습니다. 이것도 넉넉한 쪽입니다.
             if (cachedTokens > 0) {
-                usage.recordCacheStorage(
+                usage.recordCacheCreation(
                     roomId, AIModel.GEMINI_37_FLASH,
-                    cachedTokens * (CACHE_TTL_SECONDS / 3600.0)
+                    tokens = cachedTokens,
+                    tokenHours = cachedTokens * (CACHE_TTL_SECONDS / 3600.0)
                 )
             }
 
@@ -496,7 +575,7 @@ class AIService private constructor(private val appContext: Context) {
             val current = store.loadDigest(roomId)
             if (current.coveredTurns >= pending.lastTurn) return
 
-            val text = requestSegmentSummary(pending.turns, pending.firstTurn, apiKey)
+            val text = requestSegmentSummary(roomId, pending.turns, pending.firstTurn, apiKey)
             if (text.isEmpty()) return
 
             store.saveDigest(
@@ -515,6 +594,7 @@ class AIService private constructor(private val appContext: Context) {
     }
 
     private fun requestSegmentSummary(
+        roomId: UUID,
         turns: List<ConversationTurn>,
         startingTurn: Int,
         apiKey: String
@@ -548,7 +628,7 @@ class AIService private constructor(private val appContext: Context) {
                     .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
             )
 
-        val json = runCatching { postGemini(body, apiKey) }.getOrNull() ?: return ""
+        val json = runCatching { postGemini(body, apiKey, roomId) }.getOrNull() ?: return ""
         val candidate = json.optJSONArray("candidates")?.optJSONObject(0) ?: return ""
 
         // 잘린 요약은 저장하지 않습니다. 한 번 넣으면 고치지 않는 기록이라
@@ -576,10 +656,19 @@ class AIService private constructor(private val appContext: Context) {
     ///
     /// 검색 그라운딩과 URL 읽기를 함께 켜므로 이름이든 링크든 같은 입구로 처리됩니다.
     /// 모르는 인물이면 지어내지 않고 확신도를 '낮음'으로 돌려줍니다.
+    /// @param onProgress 지금 무엇이 도착했는지를 알려 줍니다.
+    ///
+    /// **진행률을 흉내 내지 않습니다.** 이 요청은 오래 걸리는데(검색 → 읽기 → 정리)
+    /// 예전에는 화면에 "처리 중입니다…" 한 줄만 떠서, 멈춘 것인지 되고 있는 것인지
+    /// 알 수 없었습니다. 그래서 한 번에 받지 않고 흘려 받으면서, 답변에 실제로
+    /// 도착한 절([확신도] → [대사] → [말투])을 그대로 알려 줍니다. 시간을 재서
+    /// 지어낸 단계가 아니라 방금 받은 글자가 근거입니다.
     suspend fun lookupPersona(
         query: String,
+        roomId: UUID,
         imageBase64: String? = null,
-        imageMimeType: String? = null
+        imageMimeType: String? = null,
+        onProgress: (String) -> Unit = {}
     ): PersonaLookup = withContext(Dispatchers.IO) {
         val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
             ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
@@ -612,27 +701,20 @@ class AIService private constructor(private val appContext: Context) {
                     .put("thinkingConfig", JSONObject().put("thinkingLevel", "medium"))
             )
 
-        val json = postGemini(body, apiKey)
-        val candidate = json.optJSONArray("candidates")?.optJSONObject(0)
-            ?: throw AIServiceException("말투 조사 결과를 읽을 수 없습니다.")
-        val text = joinParts(candidate)
-        if (text.isEmpty()) {
-            throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason")))
+        onProgress("자료를 찾고 있습니다…")
+        val result = streamGeminiText(body, apiKey, roomId) { soFar ->
+            onProgress(lookupProgressLabel(soFar))
         }
-
-        val sources = mutableListOf<String>()
-        candidate.optJSONObject("groundingMetadata")?.optJSONArray("groundingChunks")?.let { chunks ->
-            for (i in 0 until chunks.length()) {
-                chunks.optJSONObject(i)?.optJSONObject("web")?.optString("title")
-                    ?.takeIf { it.isNotEmpty() }?.let { sources += it }
-            }
+        if (result.text.isEmpty()) {
+            throw AIServiceException(emptyResponseMessage(result.finishReason))
         }
-        parsePersonaLookup(text, sources)
+        parsePersonaLookup(result.text, result.sources)
     }
 
     /// 저장하기 전에 이 말투가 실제 그 캐릭터 같은지 확인할 수 있도록 짧은 답변을 만듭니다.
     /// 실제 대화와 똑같은 시스템 지침을 쓰므로, 여기서 보이는 결이 채팅방에서도 그대로 나옵니다.
     suspend fun previewPersona(
+        roomId: UUID,
         persona: PersonaStyle,
         botName: String,
         message: String,
@@ -667,7 +749,7 @@ class AIService private constructor(private val appContext: Context) {
                 }
             }
 
-        val json = postGemini(body, apiKey)
+        val json = postGemini(body, apiKey, roomId)
         val candidate = json.optJSONArray("candidates")?.optJSONObject(0)
             ?: throw AIServiceException("미리보기를 읽을 수 없습니다.")
         val text = joinParts(candidate).trim()
@@ -682,7 +764,7 @@ class AIService private constructor(private val appContext: Context) {
     /// 모델에게 "이 캐릭터처럼 말해"라고만 하면 흉내가 흐려집니다.
     /// 관찰 가능한 항목(문장 끝맺음, 호칭, 자주 쓰는 어휘, 문장 길이 등)을 짚어서 적게 하면
     /// 이후 대화에서 재현이 훨씬 안정적입니다.
-    suspend fun analyzePersonaStyle(description: String, samples: List<String>): String =
+    suspend fun analyzePersonaStyle(roomId: UUID, description: String, samples: List<String>): String =
         withContext(Dispatchers.IO) {
             val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
                 ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
@@ -708,7 +790,7 @@ class AIService private constructor(private val appContext: Context) {
                         .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
                 )
 
-            val candidate = postGemini(body, apiKey).optJSONArray("candidates")?.optJSONObject(0)
+            val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)
                 ?: throw AIServiceException("말투 분석 결과를 읽을 수 없습니다.")
             joinParts(candidate).trim().ifEmpty {
                 throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason")))
@@ -721,6 +803,7 @@ class AIService private constructor(private val appContext: Context) {
     /// "좀 더 딱딱하게", "이모지 빼줘" 같은 조정이 필요합니다.
     /// 원래 규칙을 통째로 다시 쓰지 않고 요청한 부분만 반영합니다.
     suspend fun refinePersonaStyle(
+        roomId: UUID,
         currentGuide: String,
         instruction: String,
         description: String,
@@ -753,7 +836,7 @@ class AIService private constructor(private val appContext: Context) {
                     .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
             )
 
-        val candidate = postGemini(body, apiKey).optJSONArray("candidates")?.optJSONObject(0)
+        val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)
             ?: throw AIServiceException("교정 결과를 읽을 수 없습니다.")
         joinParts(candidate).trim().ifEmpty {
             throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason")))
@@ -906,19 +989,138 @@ class AIService private constructor(private val appContext: Context) {
         String(Base64.decode(attachment.dataBase64, Base64.DEFAULT), Charsets.UTF_8)
     }.getOrNull()
 
-    private fun postGemini(body: JSONObject, apiKey: String): JSONObject {
+    /// 스트리밍이 아닌 Gemini 요청을 보냅니다.
+    ///
+    /// **여기서 사용량을 함께 적습니다.** 예전에는 대화 답변만 장부에 적히고
+    /// 이 길로 나가는 요청 — 구간 요약, 말투 조사, 말투 분석, 다듬기, 미리보기 — 은
+    /// 하나도 안 적혔습니다. 말투 조사는 검색 그라운딩까지 켜는 무거운 요청인데
+    /// 앱 화면에서는 공짜처럼 보였습니다. 요금이 과소평가되던 가장 큰 이유입니다.
+    private fun postGemini(body: JSONObject, apiKey: String, roomId: UUID): JSONObject {
+        val model = AIModel.GEMINI_37_FLASH
         val request = Request.Builder()
-            .url("$GEMINI_BASE/models/${AIModel.GEMINI_37_FLASH.rawValue}:generateContent")
+            .url("$GEMINI_BASE/models/${model.rawValue}:generateContent")
             .addHeader("Content-Type", "application/json")
             .addHeader("x-goog-api-key", apiKey)
             .post(body.toString().toRequestBody(JSON_MEDIA))
             .build()
         return client.newCall(request).execute().use {
             val raw = it.body?.string().orEmpty()
-            if (!it.isSuccessful) throw AIServiceException(errorMessage(raw, it.code, "Gemini"))
-            JSONObject(raw)
+            if (!it.isSuccessful) {
+                // 실패한 요청도 서버가 입력을 읽은 뒤라면 청구됩니다.
+                usage.recordUnreportedRequest(roomId, model)
+                throw AIServiceException(errorMessage(raw, it.code, "Gemini"), retryable(it.code))
+            }
+            val json = JSONObject(raw)
+            val reported = json.optJSONObject("usageMetadata")
+            if (reported != null) {
+                usage.recordUsage(
+                    roomId, model,
+                    inputTokens = reported.optInt("promptTokenCount") +
+                        reported.optInt("toolUsePromptTokenCount"),
+                    outputTokens = reported.optInt("candidatesTokenCount") +
+                        reported.optInt("thoughtsTokenCount"),
+                    cachedInputTokens = reported.optInt("cachedContentTokenCount")
+                )
+            } else {
+                usage.recordUnreportedRequest(roomId, model)
+            }
+            json
         }
     }
+
+    private data class TextStreamResult(
+        val text: String,
+        val finishReason: String?,
+        val sources: List<String>
+    )
+
+    /// 글 하나를 흘려 받습니다. 대화용 스트림과 달리 말풍선으로 가르지 않습니다.
+    ///
+    /// 지금은 말투 조사만 씁니다. 오래 걸리는 요청이라, 다 받을 때까지 기다리는 대신
+    /// 도착하는 대로 넘겨 화면이 무엇을 하고 있는지 보여줄 수 있게 합니다.
+    private fun streamGeminiText(
+        body: JSONObject,
+        apiKey: String,
+        roomId: UUID,
+        onPartial: (String) -> Unit
+    ): TextStreamResult {
+        val model = AIModel.GEMINI_37_FLASH
+        val request = Request.Builder()
+            .url("$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("x-goog-api-key", apiKey)
+            .post(body.toString().toRequestBody(JSON_MEDIA))
+            .build()
+
+        val text = StringBuilder()
+        var finishReason: String? = null
+        val sources = linkedSetOf<String>()
+        var reported: JSONObject? = null
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val raw = response.body?.string().orEmpty()
+                    throw AIServiceException(
+                        errorMessage(raw, response.code, "Gemini"),
+                        retryable(response.code)
+                    )
+                }
+                val source = response.body?.source() ?: return@use
+                while (true) {
+                    val line = source.readUtf8Line() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val payload = line.removePrefix("data:").trim()
+                    if (payload.isEmpty() || payload == "[DONE]") continue
+                    val json = runCatching { JSONObject(payload) }.getOrNull() ?: continue
+
+                    json.optJSONObject("usageMetadata")?.let { reported = it }
+                    val candidate = json.optJSONArray("candidates")?.optJSONObject(0) ?: continue
+                    candidate.optString("finishReason").takeIf { it.isNotEmpty() }
+                        ?.let { finishReason = it }
+                    candidate.optJSONObject("groundingMetadata")
+                        ?.optJSONArray("groundingChunks")?.let { chunks ->
+                            for (i in 0 until chunks.length()) {
+                                chunks.optJSONObject(i)?.optJSONObject("web")?.optString("title")
+                                    ?.takeIf { title -> title.isNotEmpty() }?.let { sources += it }
+                            }
+                        }
+
+                    val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: continue
+                    var grew = false
+                    for (i in 0 until parts.length()) {
+                        val piece = parts.optJSONObject(i)?.optString("text").orEmpty()
+                        if (piece.isEmpty()) continue
+                        text.append(piece)
+                        grew = true
+                    }
+                    if (grew) onPartial(text.toString())
+                }
+            }
+        } finally {
+            val metadata = reported
+            if (metadata != null) {
+                usage.recordUsage(
+                    roomId, model,
+                    inputTokens = metadata.optInt("promptTokenCount") +
+                        metadata.optInt("toolUsePromptTokenCount"),
+                    outputTokens = metadata.optInt("candidatesTokenCount") +
+                        metadata.optInt("thoughtsTokenCount"),
+                    cachedInputTokens = metadata.optInt("cachedContentTokenCount")
+                )
+            } else {
+                usage.recordUnreportedRequest(roomId, model)
+            }
+        }
+
+        return TextStreamResult(text.toString(), finishReason, sources.toList())
+    }
+
+    /// 그대로 다시 보내면 될 만한 실패인지입니다.
+    ///
+    /// 429는 잠깐 몰린 것이고 5xx는 저쪽 사정이라 다시 보낼 값어치가 있습니다.
+    /// 400·401·403은 요청이나 키가 잘못된 것이라 몇 번을 보내도 같습니다.
+    private fun retryable(code: Int): Boolean = code == 429 || code >= 500
 
     private fun joinParts(candidate: JSONObject): String {
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: return ""
@@ -1081,6 +1283,14 @@ class AIService private constructor(private val appContext: Context) {
         // 있으므로 여유를 둡니다. 거부돼도 캐시 없이 진행하므로 대화에는 영향이 없습니다.
         private const val MINIMUM_CACHE_TOKENS = 1200
 
+        // 캐시를 다시 만들 기준입니다. 자세한 셈은 `refreshPrefixCache`에 적었습니다.
+        // 짧은 대화에서 몇 마디 붙었다고 다시 만들지 않게 하는 바닥값입니다.
+        private const val CACHE_REFRESH_MIN_TAIL_TOKENS = 2000
+
+        // TTL이 이만큼도 안 남았으면 꼬리가 짧아도 새로 만듭니다. 그대로 두면
+        // 곧 만료되어 다음 요청이 통째로 전액이 됩니다.
+        private const val CACHE_REFRESH_TTL_FLOOR_MILLIS = 240_000L
+
         const val ERROR_PREFIX = "요청을 처리하는 중 오류가 발생했습니다:"
 
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
@@ -1157,6 +1367,22 @@ class AIService private constructor(private val appContext: Context) {
                 "속마음을 물을 때" to "너는 나를 어떻게 생각해?",
                 "기분이 안 좋을 때" to "오늘 진짜 최악이었어. 아무것도 하기 싫다."
             )
+        }
+
+        /// 지금까지 도착한 글을 보고 무슨 일을 하고 있는지 한 줄로 옮깁니다.
+        ///
+        /// 답변은 [확신도] → [대사] → [말투] 순서로 나오도록 지침에 적혀 있습니다.
+        /// 마지막으로 열린 절이 곧 지금 하고 있는 일입니다. 대사는 몇 줄까지 왔는지
+        /// 함께 셉니다 — 숫자가 늘어나는 것이 보여야 멈춘 것이 아님을 알 수 있습니다.
+        fun lookupProgressLabel(soFar: String): String = when {
+            soFar.contains("[말투]") -> "말투 규칙을 적고 있습니다…"
+            soFar.contains("[대사]") -> {
+                val lines = soFar.substringAfter("[대사]").substringBefore("[말투]")
+                    .lines().map { it.trim() }.count { it.isNotEmpty() }
+                if (lines == 0) "대사를 모으고 있습니다…" else "대사를 모으고 있습니다… ${lines}줄"
+            }
+            soFar.contains("[확신도]") -> "찾은 자료를 살펴보고 있습니다…"
+            else -> "자료를 찾고 있습니다…"
         }
 
         fun parsePersonaLookup(text: String, sources: List<String>): PersonaLookup {

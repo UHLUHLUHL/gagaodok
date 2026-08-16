@@ -16,8 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.TheaterComedy
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,14 +33,25 @@ import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
+import com.sapiens.gagaodok.ui.components.KakaoMenuItem
+import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.icons.AddFriendIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.util.UUID
 
+/// 친구 탭입니다.
+///
+/// **친구를 누르면 대화방이 아니라 프로필이 열립니다.** 카카오톡과 같습니다.
+/// 예전에는 바로 대화방으로 들어가서, 프로필을 고치려면 길게 눌러 메뉴를 띄우는
+/// 수밖에 없었습니다. 대화는 프로필의 '1:1 채팅'이나 채팅 탭에서 시작합니다.
 @Composable
-fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
+fun FriendsScreen(
+    onOpenRoom: (UUID) -> Unit,
+    onOpenProfile: (UUID) -> Unit,
+    onEditPersona: (UUID) -> Unit
+) {
     val context = LocalContext.current
     val app = context.applicationContext as GagaodokApp
     val store = app.chatStore
@@ -57,6 +66,7 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
     var addingFriend by remember { mutableStateOf(false) }
     var editingRoom by remember { mutableStateOf<ChatRoom?>(null) }
     var editingMyProfile by remember { mutableStateOf(false) }
+    val menu = LocalKakaoMenu.current
     var favoritesCollapsed by remember { mutableStateOf(false) }
     var friendsCollapsed by remember { mutableStateOf(false) }
 
@@ -68,6 +78,16 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
 
     val favorites = rooms.filter { it.isPinned }.sortedBy { it.profile.name }.filter(::matches)
     val others = rooms.filterNot { it.isPinned }.sortedBy { it.profile.name }.filter(::matches)
+
+    fun openMenu(room: ChatRoom) = menu.show(
+        KakaoMenuItem("대화 시작") { menu.dismiss(); onOpenRoom(room.id) },
+        KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile(room.id) },
+        KakaoMenuItem("프로필 편집") { menu.dismiss(); editingRoom = room },
+        KakaoMenuItem(if (room.isPinned) "즐겨찾기 해제" else "즐겨찾기") {
+            menu.dismiss(); store.togglePinned(room.id)
+        },
+        KakaoMenuItem("삭제") { menu.dismiss(); store.deleteRoom(room.id) }
+    )
 
     Column(Modifier.fillMaxSize().background(colors.surface)) {
         ListTopBar(
@@ -119,7 +139,7 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
                 }
                 if (!favoritesCollapsed) {
                     items(favorites, key = { "fav_${it.id}" }) { room ->
-                        FriendRow(room, store, onOpenRoom, onEdit = { editingRoom = room })
+                        FriendRow(room, store, onOpenProfile, onLongPress = { openMenu(room) })
                     }
                 }
             }
@@ -132,7 +152,7 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
                 }
                 if (!friendsCollapsed) {
                     items(others, key = { "fr_${it.id}" }) { room ->
-                        FriendRow(room, store, onOpenRoom, onEdit = { editingRoom = room })
+                        FriendRow(room, store, onOpenProfile, onLongPress = { openMenu(room) })
                     }
                 }
             }
@@ -147,6 +167,7 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
             }
         }
     }
+
 
     if (addingFriend) {
         ProfileEditSheet(
@@ -171,6 +192,7 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
             initialName = room.profile.name,
             initialStatus = room.profile.statusMessage,
             initialAvatar = store.avatar(room.id, room.profile),
+            onEditPersona = { editingRoom = null; onEditPersona(room.id) },
             onDismiss = { editingRoom = null },
             onConfirm = { result ->
                 store.updateProfile(room.id, result.name, result.statusMessage)
@@ -229,19 +251,18 @@ private fun SectionHeader(title: String, count: Int, collapsed: Boolean, onToggl
 private fun FriendRow(
     room: ChatRoom,
     store: com.sapiens.gagaodok.data.ChatStore,
-    onOpenRoom: (UUID) -> Unit,
-    onEdit: () -> Unit
+    onOpenProfile: (UUID) -> Unit,
+    onLongPress: () -> Unit
 ) {
     val colors = KakaoTheme.colors
-    var menuOpen by remember { mutableStateOf(false) }
 
     Box {
         Row(
             Modifier
                 .fillMaxWidth()
                 .combinedClickable(
-                    onClick = { onOpenRoom(room.id) },
-                    onLongClick = { menuOpen = true }
+                    onClick = { onOpenProfile(room.id) },
+                    onLongClick = onLongPress
                 )
                 // 실측: 아바타 150화소, 행 간격 211화소.
                 .padding(horizontal = Metrics.screenPadding, vertical = Metrics.friendRowPaddingV),
@@ -278,16 +299,6 @@ private fun FriendRow(
                     )
                 }
             }
-        }
-
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(text = { Text("대화 시작") }, onClick = { menuOpen = false; onOpenRoom(room.id) })
-            DropdownMenuItem(text = { Text("프로필 편집") }, onClick = { menuOpen = false; onEdit() })
-            DropdownMenuItem(
-                text = { Text(if (room.isPinned) "즐겨찾기 해제" else "즐겨찾기") },
-                onClick = { menuOpen = false; store.togglePinned(room.id) }
-            )
-            DropdownMenuItem(text = { Text("삭제") }, onClick = { menuOpen = false; store.deleteRoom(room.id) })
         }
     }
 }

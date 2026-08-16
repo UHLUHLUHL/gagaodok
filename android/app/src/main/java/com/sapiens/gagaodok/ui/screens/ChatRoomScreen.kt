@@ -7,7 +7,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -16,12 +15,8 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -61,8 +56,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.TheaterComedy
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -104,6 +97,9 @@ import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
+import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
+import com.sapiens.gagaodok.ui.components.KakaoMenuItem
+import com.sapiens.gagaodok.ui.components.KakaoMenuSection
 import com.sapiens.gagaodok.ui.components.MessageBubble
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.components.kakaoBubbleBackground
@@ -123,7 +119,8 @@ import kotlin.math.sin
 fun ChatRoomScreen(
     roomId: UUID,
     onBack: () -> Unit,
-    onEditPersona: () -> Unit
+    onEditPersona: () -> Unit,
+    onOpenProfile: () -> Unit
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as GagaodokApp
@@ -151,7 +148,7 @@ fun ChatRoomScreen(
     var searchText by remember { mutableStateOf("") }
     var searchIndex by remember { mutableIntStateOf(0) }
     var viewingImage by remember { mutableStateOf<ChatAttachment?>(null) }
-    var actionTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    val menu = LocalKakaoMenu.current
 
     if (room == null) {
         // 방이 지워진 뒤에 남아 있던 화면입니다. 조용히 빠져나갑니다.
@@ -205,149 +202,171 @@ fun ChatRoomScreen(
         if (uri != null) pendingAttachment = readAttachment(context, uri)
     }
 
-    // 길게 누르기 메뉴가 화면 **전체**를 덮어야 해서 상자로 감쌌습니다.
-    // 키보드 여백(`imePadding`)은 안쪽 세로줄에만 둡니다. 상자에 걸면 키보드가
-    // 올라올 때 덮개까지 줄어들어 키보드 자리만 안 어두워집니다.
-    Box(Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .background(colors.chatBackground)
-                // 키보드가 올라온 만큼 화면 전체를 밀어 올립니다. 이게 없으면 입력창이
-                // 키보드 아래에 깔립니다. 안드로이드 채팅 앱에서 가장 흔한 실패 지점입니다.
-                .imePadding()
+    // 상단 바의 이름을 누르면 나오는 메뉴입니다. 지금 쓰는 모드와 모델에 체크가 붙습니다.
+    fun openHeaderMenu() = menu.show(
+        listOf(
+            KakaoMenuSection(
+                title = "모드",
+                items = ChatMode.entries.map { mode ->
+                    KakaoMenuItem(mode.displayName, checked = mode == activeMode) {
+                        menu.dismiss(); app.chatStore.updateMode(room.id, mode)
+                    }
+                }
+            ),
+            KakaoMenuSection(
+                title = "모델",
+                items = AIModel.entries.map { model ->
+                    KakaoMenuItem(model.displayName, checked = model == activeModel) {
+                        menu.dismiss(); app.chatStore.updateModel(room.id, model)
+                    }
+                }
+            ),
+            KakaoMenuSection(
+                items = listOf(
+                    KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile() },
+                    KakaoMenuItem("말투 편집") { menu.dismiss(); onEditPersona() }
+                )
+            )
+        )
+    )
+
+    // 말풍선을 길게 눌렀을 때 나오는 메뉴입니다.
+    fun openMessageMenu(target: ChatMessage) = menu.show(
+        *messageMenuItems(
+            context = context,
+            message = target,
+            onDone = { menu.dismiss() },
+            onEdit = {
+                menu.dismiss()
+                editingMessage = target
+                // 커서를 글 맨 끝에 둡니다. 0에 두면 접힌 필드에 **첫 줄**이 보이는데,
+                // 원조는 마지막 줄이 보입니다.
+                editValue = TextFieldValue(target.text, TextRange(target.text.length))
+            },
+            onDelete = { menu.dismiss(); vm.delete(target) }
+        ).toTypedArray()
+    )
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(colors.chatBackground)
+            // 키보드가 올라온 만큼 화면 전체를 밀어 올립니다. 이게 없으면 입력창이
+            // 키보드 아래에 깔립니다. 안드로이드 채팅 앱에서 가장 흔한 실패 지점입니다.
+            .imePadding()
+    ) {
+        ChatHeader(
+            title = room.profile.name,
+            personaOn = room.profile.persona.isEnabled,
+            searchVisible = searchVisible,
+            searchText = searchText,
+            hitCount = hits.size,
+            hitIndex = searchIndex,
+            onBack = onBack,
+            onToggleSearch = {
+                searchVisible = !searchVisible
+                if (!searchVisible) searchText = ""
+                searchIndex = 0
+            },
+            onSearchTextChange = { searchText = it; searchIndex = 0 },
+            onMoveSearch = { step ->
+                if (hits.isNotEmpty()) {
+                    searchIndex = ((searchIndex + step) % hits.size + hits.size) % hits.size
+                }
+            },
+            onOpenMenu = { openHeaderMenu() }
+        )
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth()
         ) {
-            ChatHeader(
-                title = room.profile.name,
-                avatar = avatar,
-                personaOn = room.profile.persona.isEnabled,
-                activeModel = activeModel,
-                activeMode = activeMode,
-                searchVisible = searchVisible,
-                searchText = searchText,
-                hitCount = hits.size,
-                hitIndex = searchIndex,
-                onBack = onBack,
-                onToggleSearch = {
-                    searchVisible = !searchVisible
-                    if (!searchVisible) searchText = ""
-                    searchIndex = 0
-                },
-                onSearchTextChange = { searchText = it; searchIndex = 0 },
-                onMoveSearch = { step ->
-                    if (hits.isNotEmpty()) {
-                        searchIndex = ((searchIndex + step) % hits.size + hits.size) % hits.size
-                    }
-                },
-                onSelectModel = { app.chatStore.updateModel(room.id, it) },
-                onSelectMode = { app.chatStore.updateMode(room.id, it) },
-                onEditPersona = onEditPersona
-            )
+            items(rendered.size) { index ->
+                when (val row = rendered[index]) {
+                    is Row.DateDivider -> DateDividerView(row.timestamp)
+                    is Row.Bubble -> MessageBubble(
+                        message = row.message,
+                        isFirstInGroup = row.isFirstInGroup,
+                        isLastInGroup = row.isLastInGroup,
+                        botName = room.profile.name,
+                        avatar = avatar,
+                        searchQuery = if (searchVisible) searchText.trim() else "",
+                        isCurrentSearchHit = row.message.id == currentHitId,
+                        onImageTapped = { viewingImage = it },
+                        onLongPress = { openMessageMenu(it) },
+                        // 상대 프로필 사진을 누르면 프로필이 열립니다. 카카오톡과 같습니다.
+                        onAvatarTapped = onOpenProfile,
+                        onResend = { vm.resend(it, room, activeModel) }
+                    )
+                }
+            }
+            if (isTyping) {
+                item("typing") {
+                    TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
+                }
+            }
+            item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }
+        }
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth()
+        error?.let {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0x22D05050))
+                    .clickable { vm.clearError() }
+                    .padding(horizontal = Metrics.screenPadding, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                items(rendered.size) { index ->
-                    when (val row = rendered[index]) {
-                        is Row.DateDivider -> DateDividerView(row.timestamp)
-                        is Row.Bubble -> MessageBubble(
-                            message = row.message,
-                            isFirstInGroup = row.isFirstInGroup,
-                            isLastInGroup = row.isLastInGroup,
-                            botName = room.profile.name,
-                            avatar = avatar,
-                            searchQuery = if (searchVisible) searchText.trim() else "",
-                            isCurrentSearchHit = row.message.id == currentHitId,
-                            onImageTapped = { viewingImage = it },
-                            onLongPress = { actionTarget = it },
-                            onResend = { vm.resend(it, room, activeModel) }
-                        )
-                    }
-                }
-                if (isTyping) {
-                    item("typing") {
-                        TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
-                    }
-                }
-                item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }
-            }
-
-            error?.let {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(Color(0x22D05050))
-                        .clickable { vm.clearError() }
-                        .padding(horizontal = Metrics.screenPadding, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(it, style = KakaoText.caption, color = Color(0xFFD05050), modifier = Modifier.weight(1f))
-                    Icon(Icons.Filled.Close, "닫기", tint = Color(0xFFD05050), modifier = Modifier.size(16.dp))
-                }
-            }
-
-            // 입력바와 수정 바를 갈아 끼웁니다.
-            //
-            // 둘은 높이가 크게 다릅니다(입력바 48dp, 수정 바 92dp 이상). `SizeTransform`이
-            // 없으면 바뀌는 순간 위의 대화 목록이 그 차이만큼 툭 튀어 오릅니다.
-            AnimatedContent(
-                targetState = editingMessage,
-                contentKey = { it != null },
-                transitionSpec = {
-                    // 새 바는 옛 바가 흐려진 뒤에 나타납니다. 같이 겹치면 두 겹의
-                    // 흰 판이 반투명으로 포개져 한순간 회색으로 보입니다.
-                    (fadeIn(tween(160, delayMillis = 90)) togetherWith fadeOut(tween(110)))
-                        .using(SizeTransform(clip = false) { _, _ -> tween(260, easing = FastOutSlowInEasing) })
-                },
-                label = "입력바"
-            ) { target ->
-                if (target == null) {
-                    ChatInputBar(
-                        text = inputText,
-                        attachment = pendingAttachment,
-                        enabled = !isTyping,
-                        onTextChange = { inputText = it },
-                        onPickImage = {
-                            picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                        onClearAttachment = { pendingAttachment = null },
-                        onSend = {
-                            vm.send(inputText, pendingAttachment, room, activeModel)
-                            inputText = ""
-                            pendingAttachment = null
-                        }
-                    )
-                } else {
-                    EditBar(
-                        value = editValue,
-                        original = target.text,
-                        onValueChange = { editValue = it },
-                        onCancel = { editingMessage = null },
-                        onConfirm = {
-                            vm.editAndResend(target, editValue.text, room, activeModel)
-                            editingMessage = null
-                        }
-                    )
-                }
+                Text(it, style = KakaoText.caption, color = Color(0xFFD05050), modifier = Modifier.weight(1f))
+                Icon(Icons.Filled.Close, "닫기", tint = Color(0xFFD05050), modifier = Modifier.size(16.dp))
             }
         }
 
-        actionTarget?.let { target ->
-            MessageActionSheet(
-                message = target,
-                onDismiss = { actionTarget = null },
-                onEdit = {
-                    editingMessage = target
-                    // 커서를 글 맨 끝에 둡니다. 0에 두면 접힌 필드에 **첫 줄**이 보이는데,
-                    // 원조는 마지막 줄이 보입니다.
-                    editValue = TextFieldValue(target.text, TextRange(target.text.length))
-                    actionTarget = null
-                },
-                onDelete = { vm.delete(target); actionTarget = null }
-            )
+        // 입력바와 수정 바를 갈아 끼웁니다.
+        //
+        // 둘은 높이가 크게 다릅니다(입력바 48dp, 수정 바 92dp 이상). `SizeTransform`이
+        // 없으면 바뀌는 순간 위의 대화 목록이 그 차이만큼 툭 튀어 오릅니다.
+        AnimatedContent(
+            targetState = editingMessage,
+            contentKey = { it != null },
+            transitionSpec = {
+                // 새 바는 옛 바가 흐려진 뒤에 나타납니다. 같이 겹치면 두 겹의
+                // 흰 판이 반투명으로 포개져 한순간 회색으로 보입니다.
+                (fadeIn(tween(160, delayMillis = 90)) togetherWith fadeOut(tween(110)))
+                    .using(SizeTransform(clip = false) { _, _ -> tween(260, easing = FastOutSlowInEasing) })
+            },
+            label = "입력바"
+        ) { target ->
+            if (target == null) {
+                ChatInputBar(
+                    text = inputText,
+                    attachment = pendingAttachment,
+                    enabled = !isTyping,
+                    onTextChange = { inputText = it },
+                    onPickImage = {
+                        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onClearAttachment = { pendingAttachment = null },
+                    onSend = {
+                        vm.send(inputText, pendingAttachment, room, activeModel)
+                        inputText = ""
+                        pendingAttachment = null
+                    }
+                )
+            } else {
+                EditBar(
+                    value = editValue,
+                    original = target.text,
+                    onValueChange = { editValue = it },
+                    onCancel = { editingMessage = null },
+                    onConfirm = {
+                        vm.editAndResend(target, editValue.text, room, activeModel)
+                        editingMessage = null
+                    }
+                )
+            }
         }
-    } // 화면 전체를 덮는 상자 끝
+    }
 
     viewingImage?.let { ImageViewerDialog(it) { viewingImage = null } }
 }
@@ -409,10 +428,7 @@ private fun sameMinute(a: Long, b: Long): Boolean = a / 60_000 == b / 60_000
 @Composable
 private fun ChatHeader(
     title: String,
-    avatar: android.graphics.Bitmap?,
     personaOn: Boolean,
-    activeModel: AIModel,
-    activeMode: ChatMode,
     searchVisible: Boolean,
     searchText: String,
     hitCount: Int,
@@ -421,13 +437,10 @@ private fun ChatHeader(
     onToggleSearch: () -> Unit,
     onSearchTextChange: (String) -> Unit,
     onMoveSearch: (Int) -> Unit,
-    onSelectModel: (AIModel) -> Unit,
-    onSelectMode: (ChatMode) -> Unit,
-    onEditPersona: () -> Unit
+    onOpenMenu: () -> Unit
 ) {
     val colors = KakaoTheme.colors
     val statusInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    var menuOpen by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -531,7 +544,7 @@ private fun ChatHeader(
                     Modifier
                         .weight(1f)
                         .padding(start = 2.dp)
-                        .clickable { menuOpen = true },
+                        .clickable(onClick = onOpenMenu),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -552,41 +565,6 @@ private fun ChatHeader(
                 }
                 IconButton(onClick = onToggleSearch) {
                     MagnifierIcon(colors.onChatHeader, Modifier.size(Metrics.roomHeaderIcon))
-                }
-
-                Box {
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        Text(
-                            "모드",
-                            style = KakaoText.caption,
-                            color = colors.textTertiary,
-                            modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 2.dp)
-                        )
-                        ChatMode.entries.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { Text(if (mode == activeMode) "✓ ${mode.displayName}" else mode.displayName) },
-                                onClick = { menuOpen = false; onSelectMode(mode) }
-                            )
-                        }
-                        Hairline()
-                        Text(
-                            "모델",
-                            style = KakaoText.caption,
-                            color = colors.textTertiary,
-                            modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 2.dp)
-                        )
-                        AIModel.entries.forEach { model ->
-                            DropdownMenuItem(
-                                text = { Text(if (model == activeModel) "✓ ${model.displayName}" else model.displayName) },
-                                onClick = { menuOpen = false; onSelectModel(model) }
-                            )
-                        }
-                        Hairline()
-                        DropdownMenuItem(
-                            text = { Text("말투 편집") },
-                            onClick = { menuOpen = false; onEditPersona() }
-                        )
-                    }
                 }
             }
         }
@@ -674,9 +652,9 @@ private fun ChatInputBar(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = Metrics.inputFieldHeight)
-                        // 모서리를 높이의 절반으로 두어 완전한 알약이 되게 합니다.
-                        // 실측한 원조 필드도 알약이었습니다.
-                        .background(colors.sunken, RoundedCornerShape(percent = 50))
+                        // 모서리는 **고정값**입니다. 백분율로 두면 줄이 늘 때 반지름이
+                        // 같이 자라 글자가 필드 밖으로 나갑니다(`inputFieldCorner` 설명).
+                        .background(colors.sunken, RoundedCornerShape(Metrics.inputFieldCorner))
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                     contentAlignment = Alignment.CenterStart
                 ) {
@@ -757,10 +735,14 @@ private fun RoundInputButton(
 /// 세 장의 **배너 치수가 화소까지 같아서** 배너는 상태와 무관한 고정 부품입니다.
 /// 상태에 따라 달라지는 것은 두 가지뿐입니다.
 ///
-/// **하나. 고치기 전에는 확인 단추가 아예 없습니다.**
+/// **하나. 원조는 고치기 전에 확인 단추가 아예 없습니다.**
 /// 흐리게 두는 것도, 회색으로 두는 것도 아닙니다. 없습니다. 그래서 필드가 오른쪽
-/// 끝(실측 x=1401)까지 찹니다. 뭔가 바뀌는 순간 단추가 생기고 필드가 x=1259로
-/// 줄어듭니다. 사용자가 "유아이가 바뀐다"고 한 것이 이것입니다.
+/// 끝(실측 x=1401)까지 차고, 뭔가 바뀌는 순간 단추가 생기며 필드가 x=1259로 줄어듭니다.
+///
+/// **여기서는 일부러 원조와 다르게 갑니다.** 사용자가 고친 것이 없어도 그대로 다시
+/// 보낼 수 있기를 바랐습니다. 원조 규칙이면 그 경우 보낼 방법이 아예 없습니다.
+/// 그래서 단추를 늘 두고, 필드는 늘 좁은 쪽(x=1259) 폭으로 둡니다. 잰 값을 버린 것이
+/// 아니라 둘 중 잰 쪽을 골라 고정한 것입니다.
 ///
 /// **둘. 키보드를 내리면 필드가 한 줄로 접힙니다.**
 /// 다섯 줄짜리 글이 그대로 든 채 필드 높이만 436화소에서 135화소가 됩니다.
@@ -791,7 +773,8 @@ private fun EditBar(
         keyboard?.show()
     }
 
-    val changed = value.text != original && value.text.isNotBlank()
+    // 빈 글은 보낼 수 없습니다. 지우려는 것이면 메뉴의 '삭제'가 따로 있습니다.
+    val canConfirm = value.text.isNotBlank()
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
     val lineHeight = with(density) { KakaoText.bubble.lineHeight.toDp() }
@@ -802,14 +785,6 @@ private fun EditBar(
         animationSpec = tween(240, easing = FastOutSlowInEasing),
         label = "필드높이"
     )
-    // 단추가 없을 때는 오른쪽 여백이 왼쪽과 같아집니다(실측 38화소).
-    // 단추가 서면 그 자리가 26화소로 좁아집니다.
-    val endPadding by animateDpAsState(
-        targetValue = if (changed) Metrics.editEndPaddingActive else Metrics.editEndPaddingIdle,
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
-        label = "오른쪽여백"
-    )
-
     Column(
         Modifier
             .fillMaxWidth()
@@ -893,7 +868,7 @@ private fun EditBar(
                 .fillMaxWidth()
                 .padding(
                     start = Metrics.editSidePadding,
-                    end = endPadding,
+                    end = Metrics.editEndPadding,
                     bottom = Metrics.editBottomPadding
                 ),
             verticalAlignment = Alignment.Bottom
@@ -921,39 +896,32 @@ private fun EditBar(
                 )
             }
 
-            AnimatedVisibility(
-                visible = changed,
-                // 폭이 자라며 자리를 만들고 그 안에서 원이 커집니다. 원만 나타나게 하면
-                // 필드가 먼저 줄어든 뒤 빈자리에 원이 뒤늦게 떨어지는 것으로 보입니다.
-                enter = expandHorizontally(
-                    tween(220, easing = FastOutSlowInEasing),
-                    expandFrom = Alignment.End
-                ) + fadeIn(tween(150, delayMillis = 70)) +
-                    scaleIn(tween(220, easing = FastOutSlowInEasing), initialScale = 0.55f),
-                exit = shrinkHorizontally(
-                    tween(200, easing = FastOutSlowInEasing),
-                    shrinkTowards = Alignment.End
-                ) + fadeOut(tween(110)) +
-                    scaleOut(tween(200, easing = FastOutSlowInEasing), targetScale = 0.55f)
-            ) {
-                Box(
-                    Modifier
-                        .padding(start = Metrics.editConfirmGap)
-                        // 실측: 단추 아래 끝이 필드 아래 끝보다 3화소 위입니다.
-                        .padding(bottom = 1.dp)
-                        .size(Metrics.editConfirm)
-                        .background(colors.editConfirm, CircleShape)
-                        .clickable(onClickLabel = "수정 완료", onClick = onConfirm),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.Check, "수정 완료",
-                        // 실측: 노란 원 위의 체크는 흰색입니다. 말풍선 글자색(#191919)이
-                        // 아닙니다.
-                        tint = Color.White,
-                        modifier = Modifier.size(Metrics.editConfirmGlyph)
+            // 단추는 늘 있습니다. 빈 글일 때만 눌리지 않고, 입력바의 보내기 단추와
+            // 같은 방식으로 흐려집니다. 나타났다 사라지지 않으므로 필드 폭도 고정입니다.
+            Box(
+                Modifier
+                    .padding(start = Metrics.editConfirmGap)
+                    // 실측: 단추 아래 끝이 필드 아래 끝보다 3화소 위입니다.
+                    .padding(bottom = 1.dp)
+                    .size(Metrics.editConfirm)
+                    .background(
+                        if (canConfirm) colors.editConfirm else colors.sunken,
+                        CircleShape
                     )
-                }
+                    .clickable(
+                        enabled = canConfirm,
+                        onClickLabel = "수정 완료",
+                        onClick = onConfirm
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Check, "수정 완료",
+                    // 실측: 노란 원 위의 체크는 흰색입니다. 말풍선 글자색(#191919)이
+                    // 아닙니다.
+                    tint = if (canConfirm) Color.White else colors.textTertiary,
+                    modifier = Modifier.size(Metrics.editConfirmGlyph)
+                )
             }
         }
     }

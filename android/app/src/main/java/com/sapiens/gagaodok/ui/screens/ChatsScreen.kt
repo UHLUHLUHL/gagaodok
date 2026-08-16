@@ -14,8 +14,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.TheaterComedy
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.ui.Metrics
+import com.sapiens.gagaodok.ui.components.KakaoMenuItem
+import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.icons.ComposeChatIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -43,7 +43,11 @@ import java.util.Locale
 import java.util.UUID
 
 @Composable
-fun ChatsScreen(onOpenRoom: (UUID) -> Unit) {
+fun ChatsScreen(
+    onOpenRoom: (UUID) -> Unit,
+    onOpenProfile: (UUID) -> Unit,
+    onEditPersona: (UUID) -> Unit
+) {
     val context = LocalContext.current
     val app = context.applicationContext as GagaodokApp
     val store = app.chatStore
@@ -56,6 +60,17 @@ fun ChatsScreen(onOpenRoom: (UUID) -> Unit) {
     var searchText by remember { mutableStateOf("") }
     var addingFriend by remember { mutableStateOf(false) }
     var editingRoom by remember { mutableStateOf<ChatRoom?>(null) }
+    val menu = LocalKakaoMenu.current
+
+    fun openMenu(room: ChatRoom) = menu.show(
+        KakaoMenuItem("채팅방 열기") { menu.dismiss(); onOpenRoom(room.id) },
+        KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile(room.id) },
+        KakaoMenuItem("프로필 편집") { menu.dismiss(); editingRoom = room },
+        KakaoMenuItem(if (room.isPinned) "상단 고정 해제" else "상단 고정") {
+            menu.dismiss(); store.togglePinned(room.id)
+        },
+        KakaoMenuItem("채팅방 나가기") { menu.dismiss(); store.deleteRoom(room.id) }
+    )
 
     val query = searchText.trim()
     val listed = remember(rooms, withConversation, query) {
@@ -104,9 +119,7 @@ fun ChatsScreen(onOpenRoom: (UUID) -> Unit) {
                         else store.firstMatch(room.id, query) ?: room.lastMessageText,
                         avatar = store.avatar(room.id, room.profile),
                         onOpen = { onOpenRoom(room.id) },
-                        onTogglePin = { store.togglePinned(room.id) },
-                        onEditProfile = { editingRoom = room },
-                        onDelete = { store.deleteRoom(room.id) }
+                        onLongPress = { openMenu(room) }
                     )
                 }
             }
@@ -136,6 +149,7 @@ fun ChatsScreen(onOpenRoom: (UUID) -> Unit) {
             initialName = room.profile.name,
             initialStatus = room.profile.statusMessage,
             initialAvatar = store.avatar(room.id, room.profile),
+            onEditPersona = { editingRoom = null; onEditPersona(room.id) },
             onDismiss = { editingRoom = null },
             onConfirm = { result ->
                 store.updateProfile(room.id, result.name, result.statusMessage)
@@ -152,12 +166,9 @@ private fun ChatRoomRow(
     preview: String,
     avatar: android.graphics.Bitmap?,
     onOpen: () -> Unit,
-    onTogglePin: () -> Unit,
-    onEditProfile: () -> Unit,
-    onDelete: () -> Unit
+    onLongPress: () -> Unit
 ) {
     val colors = KakaoTheme.colors
-    var menuOpen by remember { mutableStateOf(false) }
 
     Box {
         Row(
@@ -165,7 +176,7 @@ private fun ChatRoomRow(
                 .fillMaxWidth()
                 // 맥 판은 마우스를 올리면 행이 밝아졌습니다. 모바일에는 올림이 없으므로
                 // 눌림 효과로 바뀝니다. 길게 누르면 맥 판의 오른쪽 클릭 메뉴가 나옵니다.
-                .combinedClickable(onClick = onOpen, onLongClick = { menuOpen = true })
+                .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
                 // 실측: 행 간격 285화소에서 아바타 180화소를 빼고 반씩 나눈 값입니다.
                 // 오른쪽은 시각이 놓이는 자리라 따로 잰 값(63화소)을 씁니다.
                 .padding(
@@ -244,15 +255,6 @@ private fun ChatRoomRow(
             }
         }
 
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(text = { Text("채팅방 열기") }, onClick = { menuOpen = false; onOpen() })
-            DropdownMenuItem(text = { Text("프로필 편집") }, onClick = { menuOpen = false; onEditProfile() })
-            DropdownMenuItem(
-                text = { Text(if (room.isPinned) "상단 고정 해제" else "상단 고정") },
-                onClick = { menuOpen = false; onTogglePin() }
-            )
-            DropdownMenuItem(text = { Text("채팅방 나가기") }, onClick = { menuOpen = false; onDelete() })
-        }
     }
 }
 

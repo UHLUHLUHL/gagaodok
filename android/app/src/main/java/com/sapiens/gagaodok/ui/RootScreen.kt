@@ -56,7 +56,9 @@ enum class RootTab(val label: String) {
 
 @Composable
 fun RootScreen(
-    onOpenRoom: (java.util.UUID) -> Unit
+    onOpenRoom: (java.util.UUID) -> Unit,
+    onOpenProfile: (java.util.UUID) -> Unit,
+    onEditPersona: (java.util.UUID) -> Unit
 ) {
     var tab by rememberSaveable { mutableStateOf(RootTab.CHATS) }
     val colors = KakaoTheme.colors
@@ -77,8 +79,16 @@ fun RootScreen(
                 label = "tab"
             ) { current ->
                 when (current) {
-                    RootTab.FRIENDS -> FriendsScreen(onOpenRoom = onOpenRoom)
-                    RootTab.CHATS -> ChatsScreen(onOpenRoom = onOpenRoom)
+                    RootTab.FRIENDS -> FriendsScreen(
+                        onOpenRoom = onOpenRoom,
+                        onOpenProfile = onOpenProfile,
+                        onEditPersona = onEditPersona
+                    )
+                    RootTab.CHATS -> ChatsScreen(
+                        onOpenRoom = onOpenRoom,
+                        onOpenProfile = onOpenProfile,
+                        onEditPersona = onEditPersona
+                    )
                     RootTab.SETTINGS -> SettingsScreen()
                 }
             }
