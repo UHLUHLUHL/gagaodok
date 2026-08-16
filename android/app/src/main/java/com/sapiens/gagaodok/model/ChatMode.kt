@@ -45,6 +45,24 @@ enum class ChatMode(val rawValue: String) {
             )
         }
 
+    // MARK: - 사고량
+
+    /// 답하기 전에 얼마나 생각할지입니다. 낮음/보통/높음 중 하나를 보냅니다.
+    ///
+    /// **사고 토큰은 화면에 안 보이지만 출력 단가로 청구됩니다.** Gemini는 사고 과정의
+    /// 글을 돌려주지 않고 개수(`thoughtsTokenCount`)만 알려주는데, 그 개수가 답변
+    /// 글자와 같은 값으로 요금에 들어갑니다. 출력 단가는 입력의 다섯 배입니다.
+    ///
+    /// **모드마다 다르게 둡니다.**
+    /// 멘토는 계산이 틀리면 그대로 틀린 것을 가르치게 되므로 생각할 값어치가 있습니다.
+    /// 챗봇은 다릅니다. 여기서 필요한 것은 정답이 아니라 그 인물다운 말씨와 빠른 대꾸이고,
+    /// 그건 오래 생각한다고 좋아지는 종류가 아닙니다. 오히려 답이 늦어집니다.
+    val geminiThinkingLevel: String
+        get() = when (this) {
+            MATH_MENTOR -> "medium"
+            COMPANION -> "low"
+        }
+
     /// 방 이름 같은 동적 값이 섞이지 않은 고정 접두사입니다. 캐시가 이 부분을 그대로 재사용합니다.
     val stableSystemPrompt: String
         get() = when (this) {

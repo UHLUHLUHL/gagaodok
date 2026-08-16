@@ -2,6 +2,7 @@ package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.data.ModelTokenUsage
 import com.sapiens.gagaodok.model.AIModel
+import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.service.AIService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -48,6 +49,19 @@ class UsageAccountingTest {
         // 사고 토큰은 화면에 한 글자도 안 보이지만 출력 단가로 청구됩니다.
         val usage = ModelTokenUsage(outputTokens = 2_000)
         assertEquals(2_000 / 1_000_000.0 * model.outputPricePerMillion, usage.costUSD(model), 1e-12)
+    }
+}
+
+/// 모드마다 사고량이 다른지 봅니다.
+class ThinkingLevelTest {
+
+    @Test
+    fun `챗봇은 적게 생각하고 멘토는 그대로다`() {
+        // 사고 토큰은 화면에 안 보이지만 출력 단가(입력의 5배)로 청구됩니다.
+        // 챗봇에 필요한 것은 정답이 아니라 그 인물다운 말씨와 빠른 대꾸라
+        // 오래 생각한다고 좋아지지 않습니다. 멘토는 계산이 틀리면 틀린 것을 가르칩니다.
+        assertEquals("low", ChatMode.COMPANION.geminiThinkingLevel)
+        assertEquals("medium", ChatMode.MATH_MENTOR.geminiThinkingLevel)
     }
 }
 

@@ -95,6 +95,7 @@ import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.MessageSender
+import com.sapiens.gagaodok.service.ImageBudget
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
@@ -1049,15 +1050,20 @@ private fun TypingDots(color: Color) {
 
 private fun readAttachment(context: android.content.Context, uri: Uri): ChatAttachment? = runCatching {
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-    // 원본 해상도를 그대로 올리면 요청이 커지고 토큰도 그만큼 듭니다.
-    // 긴 변 1600px이면 Gemini가 읽는 데 충분하고, 타일 수도 크게 늘지 않습니다.
-    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-    val longest = maxOf(decoded.width, decoded.height)
-    val scaled = if (longest > 1600) {
-        val ratio = 1600f / longest
-        android.graphics.Bitmap.createScaledBitmap(
-            decoded, (decoded.width * ratio).toInt(), (decoded.height * ratio).toInt(), true
-        )
+
+    // 얼마로 줄여 보낼지 먼저 정합니다. 요금은 화소가 아니라 **타일 수**에 비례해서,
+    // 아무 크기로나 줄이면 한 푼도 못 아낍니다(`ImageBudget` 설명).
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val target = ImageBudget.plan(bounds.outWidth, bounds.outHeight)
+
+    // 통째로 펼치지 않고 목표에 가깝게 읽습니다. 1200만 화소면 48MB입니다.
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = ImageBudget.sampleSize(bounds.outWidth, bounds.outHeight, target)
+    }
+    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
+    val scaled = if (decoded.width > target.width || decoded.height > target.height) {
+        android.graphics.Bitmap.createScaledBitmap(decoded, target.width, target.height, true)
     } else decoded
 
     val stream = ByteArrayOutputStream()

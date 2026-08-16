@@ -318,7 +318,10 @@ class AIService private constructor(private val appContext: Context) {
             "generationConfig",
             JSONObject()
                 .put("maxOutputTokens", GEMINI_MAX_OUTPUT_TOKENS)
-                .put("thinkingConfig", JSONObject().put("thinkingLevel", "medium"))
+                // 사고량은 모드가 정합니다(`ChatMode.geminiThinkingLevel`).
+                // 챗봇 방에서는 낮음입니다. 안 보이는 사고 토큰이 출력 단가로
+                // 붙는데, 잡담의 말씨는 오래 생각한다고 좋아지지 않습니다.
+                .put("thinkingConfig", JSONObject().put("thinkingLevel", mode.geminiThinkingLevel))
         )
 
         // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
