@@ -61,12 +61,14 @@ fun RoomAvatar(
             Icon(
                 Icons.Filled.Person,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.96f),
+                tint = DEFAULT_AVATAR_FIGURE,
                 modifier = Modifier.size(size * 0.62f)
             )
         }
     }
 }
 
-// 카카오 민트-스카이블루. 맥 판에서 그대로 옮겼습니다.
-private val DEFAULT_AVATAR_BACKGROUND = Color(0xFF82C2D9)
+// 실기기 캡처에서 뽑았습니다. 바탕이 진하고 사람이 옅습니다.
+// 맥 판에서 옮겨 온 값(#82C2D9 바탕 + 흰 사람)은 명암이 반대였습니다.
+private val DEFAULT_AVATAR_BACKGROUND = Color(0xFF8FCBDD)
+private val DEFAULT_AVATAR_FIGURE = Color(0xFFC1E2EC)

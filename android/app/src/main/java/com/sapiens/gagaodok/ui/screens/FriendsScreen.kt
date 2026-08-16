@@ -94,7 +94,7 @@ fun FriendsScreen(onOpenRoom: (UUID) -> Unit) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RoomAvatar(myAvatar, Metrics.myProfileAvatar)
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Column(Modifier.weight(1f).padding(start = Metrics.listAvatarGap)) {
                         Text(myProfile.name, style = KakaoText.listName, color = colors.textPrimary)
                         if (myProfile.statusMessage.isNotEmpty()) {
                             Text(
@@ -243,11 +243,12 @@ private fun FriendRow(
                     onClick = { onOpenRoom(room.id) },
                     onLongClick = { menuOpen = true }
                 )
-                .padding(horizontal = Metrics.screenPadding, vertical = 9.dp),
+                // 실측: 아바타 150화소, 행 간격 211화소.
+                .padding(horizontal = Metrics.screenPadding, vertical = Metrics.friendRowPaddingV),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            RoomAvatar(store.avatar(room.id, room.profile), 44.dp)
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            RoomAvatar(store.avatar(room.id, room.profile), Metrics.friendAvatar)
+            Column(Modifier.weight(1f).padding(start = Metrics.listAvatarGap)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         room.profile.name,

@@ -127,21 +127,27 @@ private fun SpeechRow(
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val maxBubbleWidth = screenWidth * Metrics.bubbleMaxWidthFraction
 
+    // 세로 정렬이 위쪽입니다. **아래쪽으로 두면 아바타가 이름 아래로 밀립니다.**
+    //
+    // 원조는 아바타의 위 끝이 이름 줄의 위 끝과 같습니다(실측: 아바타 위 1024,
+    // 이름 잉크 위 1043 — 그 19화소는 글꼴 자체의 윗여백입니다).
+    // 아래쪽 정렬이면 이름+말풍선을 담은 세로줄이 아바타보다 길어서 아바타가 바닥에
+    // 붙고, 이름이 제 줄을 통째로 차지한 것처럼 보입니다. 첫 판이 그래서 어긋나 보였습니다.
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp)
+            .padding(horizontal = Metrics.roomPadding)
             .padding(
                 top = if (isFirstInGroup) Metrics.bubbleGap else Metrics.bubbleGapSameSender,
                 bottom = if (isLastInGroup) Metrics.bubbleGap else Metrics.bubbleGapSameSender
             ),
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Bottom
+        verticalAlignment = if (isMine || !isFirstInGroup) Alignment.Bottom else Alignment.Top
     ) {
         if (isMine) {
             // 실패 표시나 보낸 시각은 말풍선 바로 왼쪽에 붙습니다.
             SideMarker(message, isLastInGroup, onResend)
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(Metrics.bubbleTimeGap))
             Column(horizontalAlignment = Alignment.End) {
                 message.attachment?.let {
                     AttachmentView(it, isMine = true, onImageTapped = onImageTapped)
@@ -172,15 +178,16 @@ private fun SpeechRow(
             } else {
                 Spacer(Modifier.width(Metrics.bubbleAvatar))
             }
-            Spacer(Modifier.width(7.dp))
+            Spacer(Modifier.width(Metrics.bubbleAvatarGap))
 
             Column(horizontalAlignment = Alignment.Start) {
                 if (isFirstInGroup) {
                     Text(
                         botName,
-                        style = KakaoText.caption,
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(start = 2.dp, bottom = 3.dp)
+                        style = KakaoText.senderName,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(bottom = Metrics.bubbleNameGap)
                     )
                 }
                 message.attachment?.let {
@@ -198,12 +205,12 @@ private fun SpeechRow(
                             Text(
                                 message.formattedTime,
                                 style = KakaoText.timestamp,
-                                color = colors.textTertiary,
+                                color = colors.chatTimestamp,
                                 // 좁은 화면에서 "오전 / 8:06"으로 접히지 않게 합니다.
                                 // 접히면 시각이 말풍선 두 줄 높이를 차지해 줄 간격이 흐트러집니다.
                                 softWrap = false,
                                 maxLines = 1,
-                                modifier = Modifier.padding(start = 4.dp, bottom = 1.dp)
+                                modifier = Modifier.padding(start = Metrics.bubbleTimeGap, bottom = 1.dp)
                             )
                         }
                     }
@@ -282,7 +289,7 @@ private fun SideMarker(
             Text(
                 message.formattedTime,
                 style = KakaoText.timestamp,
-                color = colors.textTertiary,
+                color = colors.chatTimestamp,
                 softWrap = false,
                 maxLines = 1
             )

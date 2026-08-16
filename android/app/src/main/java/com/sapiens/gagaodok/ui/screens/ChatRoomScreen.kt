@@ -7,6 +7,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -77,6 +82,7 @@ import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.components.MessageBubble
 import com.sapiens.gagaodok.ui.components.RoomAvatar
+import com.sapiens.gagaodok.ui.components.kakaoBubbleBackground
 import com.sapiens.gagaodok.ui.icons.MagnifierIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -86,6 +92,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.sin
 
 @Composable
 fun ChatRoomScreen(
@@ -412,6 +419,13 @@ private fun ChatHeader(
                 }
             }
         } else {
+            // 원조 대화방 상단 바는 **한 줄입니다.** 뒤로, 굵은 이름, 돋보기, 메뉴뿐이고
+            // 프로필 사진도 부제도 없습니다. 실측: 이름 잉크 높이 56화소(≈18sp 굵게),
+            // 이름 왼쪽 215화소, 돋보기 66화소.
+            //
+            // 우리 앱이 헤더에 두던 "모델 · 모드" 줄은 뺐습니다. 대신 이름을 누르면
+            // 나오는 메뉴에 지금 쓰는 모델과 모드가 ✓로 표시되므로 정보는 그대로 있고
+            // 두 줄짜리 헤더만 없어집니다.
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -422,38 +436,31 @@ private fun ChatHeader(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로", tint = colors.onChatHeader)
                 }
-                RoomAvatar(avatar, 30.dp)
-                Column(
+                Row(
                     Modifier
                         .weight(1f)
-                        .padding(start = 9.dp)
-                        .clickable { menuOpen = true }
+                        .padding(start = 2.dp)
+                        .clickable { menuOpen = true },
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            title,
-                            style = KakaoText.roomName,
-                            color = colors.onChatHeader,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        if (personaOn) {
-                            Icon(
-                                Icons.Filled.TheaterComedy, "말투 적용됨",
-                                tint = colors.personaBadge,
-                                modifier = Modifier.size(12.dp).padding(start = 4.dp)
-                            )
-                        }
-                    }
                     Text(
-                        "${activeModel.shortName} · ${activeMode.shortName}",
-                        style = KakaoText.timestamp,
-                        color = colors.onChatHeaderDim
+                        title,
+                        style = KakaoText.roomTitle,
+                        color = colors.onChatHeader,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (personaOn) {
+                        Icon(
+                            Icons.Filled.TheaterComedy, "말투 적용됨",
+                            tint = colors.personaBadge,
+                            modifier = Modifier.size(14.dp).padding(start = 5.dp)
+                        )
+                    }
                 }
                 IconButton(onClick = onToggleSearch) {
-                    MagnifierIcon(colors.onChatHeader, Modifier.size(Metrics.headerIcon))
+                    MagnifierIcon(colors.onChatHeader, Modifier.size(Metrics.roomHeaderIcon))
                 }
 
                 Box {
@@ -492,7 +499,8 @@ private fun ChatHeader(
                 }
             }
         }
-        Hairline()
+        // 원조 대화방에는 상단 바 아래 구분선이 없습니다. 바탕이 대화 배경과 같은 색으로
+        // 그대로 이어집니다. 다크 모드는 바탕 색이 이미 달라 선 없이도 갈립니다.
     }
 }
 
@@ -560,22 +568,36 @@ private fun ChatInputBar(
             }
         }
 
+        // 원조 입력바를 재서 맞췄습니다. 전체 48dp, 알약 필드 36dp, 둥근 단추 지름 28dp.
+        //
+        // 원조에는 `+`, 필드, `#`, 음성 이렇게 네 자리가 있습니다. 우리 앱에는 `#`과
+        // 음성에 해당하는 기능이 없어서 **모양과 치수만 맞추고 단추 수는 우리 기능에
+        // 맞췄습니다.** 눌러도 아무 일이 없는 단추를 모양 때문에 그려 넣지 않습니다.
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 7.dp),
+                .heightIn(min = Metrics.inputBarHeight)
+                .padding(horizontal = Metrics.inputBarPadding, vertical = 6.dp),
             verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(Metrics.inputGap)
         ) {
-            IconButton(onClick = onPickImage, modifier = Modifier.size(Metrics.touchTarget)) {
-                Icon(Icons.Filled.AddPhotoAlternate, "사진 첨부", tint = colors.textSecondary)
+            RoundInputButton(onClick = onPickImage) {
+                Icon(
+                    Icons.Filled.AddPhotoAlternate, "사진 첨부",
+                    tint = colors.textPrimary,
+                    modifier = Modifier.size(17.dp)
+                )
             }
 
             Box(
                 Modifier
                     .weight(1f)
-                    .background(colors.sunken, RoundedCornerShape(20.dp))
-                    .padding(horizontal = 14.dp, vertical = 11.dp)
+                    .heightIn(min = Metrics.inputFieldHeight)
+                    // 모서리를 높이의 절반으로 두어 완전한 알약이 되게 합니다.
+                    // 실측한 원조 필드도 알약이었습니다.
+                    .background(colors.sunken, RoundedCornerShape(percent = 50))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.CenterStart
             ) {
                 if (text.isEmpty()) {
                     Text("메시지 입력", style = KakaoText.bubble, color = colors.textTertiary)
@@ -591,24 +613,43 @@ private fun ChatInputBar(
                 )
             }
 
-            IconButton(
+            RoundInputButton(
                 onClick = onSend,
                 enabled = canSend,
-                modifier = Modifier
-                    .size(Metrics.touchTarget)
-                    .padding(3.dp)
-                    .background(
-                        if (canSend) colors.bubbleMine else colors.sunken,
-                        CircleShape
-                    )
+                background = if (canSend) colors.bubbleMine else colors.sunken
             ) {
                 Icon(
                     Icons.Filled.Send, "보내기",
                     tint = if (canSend) colors.bubbleMineText else colors.textTertiary,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
+    }
+}
+
+/// 입력바 양옆의 둥근 단추입니다.
+///
+/// 보이는 원은 28dp지만 누를 수 있는 넓이는 48dp로 둡니다. 원조도 원보다 넓은 자리를
+/// 받아 두었고, 28dp짜리 과녁은 손가락으로 맞히기에 작습니다.
+@Composable
+private fun RoundInputButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    background: Color = KakaoTheme.colors.sunken,
+    content: @Composable () -> Unit
+) {
+    Box(
+        Modifier.size(Metrics.touchTarget),
+        contentAlignment = Alignment.Center
+    ) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier
+                .size(Metrics.inputButton)
+                .background(background, CircleShape)
+        ) { content() }
     }
 }
 
@@ -641,31 +682,30 @@ private fun TypingIndicator(
     onCancel: () -> Unit
 ) {
     val colors = KakaoTheme.colors
+    // 말풍선과 같은 정렬 규칙을 씁니다. 위쪽 정렬이라야 아바타 위 끝이 이름 줄과 맞습니다.
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = Metrics.bubbleGap),
-        verticalAlignment = Alignment.Bottom
+            .padding(horizontal = Metrics.roomPadding, vertical = Metrics.bubbleGap),
+        verticalAlignment = Alignment.Top
     ) {
         RoomAvatar(avatar, Metrics.bubbleAvatar)
-        Column(Modifier.padding(start = 7.dp)) {
-            Text(botName, style = KakaoText.caption, color = colors.textSecondary)
+        Column(Modifier.padding(start = Metrics.bubbleAvatarGap)) {
+            Text(botName, style = KakaoText.senderName, color = colors.textPrimary)
             Row(
                 Modifier
-                    .padding(top = 3.dp)
-                    .background(colors.bubbleTheirs, RoundedCornerShape(13.dp))
-                    .clickable(onClick = onCancel)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                repeat(3) {
-                    Box(
-                        Modifier
-                            .size(6.dp)
-                            .background(colors.textTertiary, CircleShape)
+                    .padding(top = Metrics.bubbleNameGap)
+                    .kakaoBubbleBackground(
+                        color = colors.bubbleTheirs,
+                        isFirst = true,
+                        isMine = false
                     )
-                }
+                    .clickable(onClick = onCancel)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                TypingDots(colors.textSecondary)
                 Text(
                     "· 눌러서 중지",
                     style = KakaoText.timestamp,
@@ -673,6 +713,50 @@ private fun TypingIndicator(
                     modifier = Modifier.padding(start = 4.dp)
                 )
             }
+        }
+    }
+}
+
+/// 점 하나가 지금 얼마나 떠 있는지를 0(바닥)에서 1(꼭대기)로 돌려줍니다.
+///
+/// `phase`는 0에서 3까지 돌고 세 점이 차례로 뜹니다. 점마다 자기 차례의 `riseSpan`만큼만
+/// 떴다 가라앉고 나머지 시간은 바닥에 있습니다.
+///
+/// 화면 없이 확인할 수 있게 밖으로 빼 두었습니다. 값이 늘 0이 되어 버리는 실수는
+/// 화면을 봐도 "원래 안 움직이는 건가" 싶어 놓치기 쉽습니다.
+internal fun typingDotLift(phase: Float, index: Int, riseSpan: Float = 0.55f): Float {
+    val local = ((phase - index + 3f) % 3f) / riseSpan
+    return if (local > 1f) 0f else sin(local * Math.PI.toFloat())
+}
+
+/// 점 세 개가 차례로 떴다 가라앉습니다.
+///
+/// 하나짜리 무한 애니메이션에서 세 점의 위상만 어긋나게 씁니다. 점마다 따로 돌리면
+/// 프레임이 어긋나 걸음이 흐트러지고, 다시 그릴 때마다 시작점이 달라집니다.
+@Composable
+private fun TypingDots(color: Color) {
+    val transition = rememberInfiniteTransition(label = "입력 중")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1050, easing = LinearEasing)
+        ),
+        label = "위상"
+    )
+    Row(
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        modifier = Modifier.height(13.dp)
+    ) {
+        repeat(3) { i ->
+            val lift = typingDotLift(phase, i)
+            Box(
+                Modifier
+                    .padding(bottom = (5f * lift).dp)
+                    .size(6.dp)
+                    .background(color.copy(alpha = 0.45f + 0.55f * lift), CircleShape)
+            )
         }
     }
 }

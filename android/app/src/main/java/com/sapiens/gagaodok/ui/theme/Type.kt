@@ -47,20 +47,50 @@ fun kakaoTypography(family: FontFamily): Typography = Typography().run {
 
 /// 이 앱에서 쓰는 글자 크기입니다.
 ///
-/// **맥 판의 pt 값을 그대로 옮기지 않았습니다.** 그건 데스크톱 카카오톡을 잰 숫자이고,
-/// 모바일은 보는 거리와 화소 밀도가 달라 같은 숫자가 다른 크기로 읽힙니다.
-/// 아래 값은 안드로이드 메신저에서 흔히 쓰는 범위로 정한 **짐작**이며,
-/// 실제 안드로이드 카카오톡을 재서 확정한 값이 아닙니다.
+/// 실기기 캡처에서 글자의 **잉크 높이**를 재어 맞췄습니다.
+///
+/// **잰 값을 그대로 믿으면 안 되는 자리입니다.** 같은 글자('대박')를 재니 우리 것이
+/// 원조보다 8.5% 컸는데, 글자 크기가 아니라 **기기의 글꼴 배율**이 달랐던 것입니다.
+/// 한 줄짜리 말풍선 높이로 갈라냈습니다. 같은 15sp인데 에뮬레이터에서 141화소,
+/// 사용자 기기에서 134화소가 나왔고, 안쪽 여백을 빼면 배율이 0.94입니다.
+/// 그 배율을 걷어내면 원조 본문은 14.7sp라 지금 값이 맞습니다.
+/// 배율을 모르고 줄였으면 오히려 틀렸을 자리입니다.
+///
+/// 아래 sp 값은 전부 **배율 1.0으로 환산한** 원조 잉크 높이에 맞춘 것입니다.
+///
+/// | 자리 | 원조 잉크(0.94) | 환산(1.0) | 정한 값 |
+/// |---|---|---|---|
+/// | 말풍선 본문 | 47화소 | 50.0 | 15sp |
+/// | 보낸이 이름 | 39화소 | 41.5 | 13sp |
+/// | 말풍선 옆 시각 | 32화소 | 34.0 | 10sp |
+/// | 목록 이름 | 47화소 | 50.0 | 15sp |
+/// | 목록 미리보기 | 43화소 | 45.7 | 13sp |
+/// | 대화방 제목 | 56화소 | 59.6 | 18sp 굵게 |
+///
+/// 카카오톡 자체의 '글자 크기' 설정이 기본값이 아닐 수도 있습니다. 그건 캡처만으로는
+/// 알 수 없으므로, 위 값은 사용자의 지금 설정을 기준으로 맞춘 것입니다.
 ///
 /// 글꼴은 여기서 지정하지 않습니다. Material 서체를 통째로 갈아 끼웠으므로
 /// `Text`가 알아서 Pretendard로 그립니다.
 object KakaoText {
-    val bubble = TextStyle(fontSize = 15.sp, lineHeight = 21.sp)
+    // 줄 높이는 한 줄짜리 말풍선 높이(원조 130화소)에서 되짚었습니다.
+    val bubble = TextStyle(fontSize = 15.sp, lineHeight = 20.sp)
+
+    /// 말풍선 위의 보낸이 이름입니다.
+    ///
+    /// **회색이 아닙니다.** 처음에 흐린 회색(`textSecondary`)으로 뒀는데,
+    /// 원조를 재 보니 가장 어두운 화소가 `#191919`로 본문과 같은 검정이었습니다.
+    /// (우리 것은 `#4E565E`까지밖에 안 갔습니다.)
+    val senderName = TextStyle(fontSize = 13.sp)
     val narration = TextStyle(fontSize = 13.sp, lineHeight = 19.sp)
     val roomName = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium)
+
+    /// 대화방 상단 바의 이름. 실측 잉크 높이 56화소에 굵은 글씨입니다.
+    val roomTitle = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold)
+    // 실측 잉크 높이: 이름 47화소, 미리보기 43화소, 시각 31화소.
     val listName = TextStyle(fontSize = 15.sp)
     val listPreview = TextStyle(fontSize = 13.sp)
-    val listTime = TextStyle(fontSize = 11.sp)
+    val listTime = TextStyle(fontSize = 10.sp)
     val screenTitle = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold)
     val sectionHeader = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium)
     val tabLabel = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Medium)

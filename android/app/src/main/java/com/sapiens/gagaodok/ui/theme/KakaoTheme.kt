@@ -11,10 +11,12 @@ import androidx.compose.ui.graphics.Color
 
 /// 라이트·다크에서 각각 쓸 색입니다.
 ///
-/// 값은 맥 판 `KakaoTheme`에서 그대로 옮겨 왔습니다. 카카오톡은 데스크톱과 모바일이
-/// 같은 팔레트를 쓰므로 색은 재지 않고 옮겨도 됩니다.
-/// **크기와 간격은 다릅니다.** 맥 판의 pt 실측값은 데스크톱 카카오톡을 잰 것이라
-/// 여기 그대로 쓰지 않습니다. `KakaoMetrics`에 따로 두고 근거를 적어 두었습니다.
+/// 처음에는 맥 판에서 그대로 옮겨 왔지만, **모바일 카카오톡은 팔레트가 다릅니다.**
+/// 실기기 캡처를 재 보니 대화방 바탕과 내 말풍선이 데스크톱과 달랐습니다.
+/// 지금 값은 `MEASURED.md`의 실측표를 따릅니다.
+///
+/// 캡처 경로가 색을 바꾸지 않았는지 먼저 확인했습니다. 원조와 우리 앱 캡처 양쪽에서
+/// 흰 말풍선이 모두 `#FFFFFF`로 나왔으므로 아래 값들을 그대로 믿어도 됩니다.
 data class KakaoColors(
     // MARK: - 바탕
     /// 대화방 바탕. 라이트는 카카오톡 시그니처 하늘색입니다.
@@ -48,6 +50,9 @@ data class KakaoColors(
     /// 대화방 상단 바 위의 글자·아이콘. 라이트에서는 하늘색 위라 검정 계열입니다.
     val onChatHeader: Color,
     val onChatHeaderDim: Color,
+    /// 말풍선 옆 보낸 시각. 하늘색 바탕 위에서 재서 뽑은 값이라
+    /// 투명도로 흉내 내지 않고 따로 둡니다.
+    val chatTimestamp: Color,
 
     // MARK: - 선과 강조
     val hairline: Color,
@@ -64,25 +69,28 @@ data class KakaoColors(
 )
 
 private val LightColors = KakaoColors(
-    chatBackground = Color(0xFFBACEE0),
-    chatHeader = Color(0xFFBACEE0),
+    // 실측: 맥 판은 #B2C7D9지만 모바일은 이 값입니다.
+    chatBackground = Color(0xFFABC1D1),
+    chatHeader = Color(0xFFABC1D1),
     surface = Color(0xFFFFFFFF),
     sunken = Color(0xFFF2F3F5),
     rowPressed = Color(0xFFF0F2F5),
     tabBar = Color(0xFFFFFFFF),
 
-    bubbleMine = Color(0xFFFEE500),
+    // 실측: 브랜드 노랑 #FEE500이 아니라 조금 옅은 이 값입니다.
+    bubbleMine = Color(0xFFFFEB33),
     bubbleTheirs = Color(0xFFFFFFFF),
-    bubbleMineText = Color(0xFF1A1A1A),
-    bubbleTheirsText = Color(0xFF1A1A1A),
+    bubbleMineText = Color(0xFF191919),
+    bubbleTheirsText = Color(0xFF191919),
     dateDivider = Color(0x1A000000),
     dateDividerText = Color(0x8C000000),
 
-    textPrimary = Color(0xFF1A1A1A),
+    textPrimary = Color(0xFF191919),
     textSecondary = Color(0x94000000),
     textTertiary = Color(0x66000000),
-    onChatHeader = Color(0xC7000000),
+    onChatHeader = Color(0xFF191919),
     onChatHeaderDim = Color(0x73000000),
+    chatTimestamp = Color(0xFF444D54),
 
     hairline = Color(0x14000000),
     border = Color(0x24000000),
@@ -120,6 +128,9 @@ private val DarkColors = KakaoColors(
     textTertiary = Color(0xFF6E6E6E),
     onChatHeader = Color(0xFFE4E4E4),
     onChatHeaderDim = Color(0xFF9A9A9A),
+    // 다크 모드 대화방은 원조를 재지 못했습니다. 라이트에서 잰 #444D54가
+    // 바탕 대비 어느 정도인지를 보고 어두운 바탕에 옮긴 값입니다. (짐작)
+    chatTimestamp = Color(0xFF9A9A9A),
 
     hairline = Color(0x1AFFFFFF),
     border = Color(0x29FFFFFF),

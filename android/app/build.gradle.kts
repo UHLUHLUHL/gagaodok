@@ -14,8 +14,9 @@ android {
         // 적응형 아이콘이 26부터입니다. 실사용 기기 대부분을 덮습니다.
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // 1.1: 원조 실기기 캡처를 실측해 색·도형·치수를 맞춘 판입니다.
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {

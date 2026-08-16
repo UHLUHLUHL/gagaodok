@@ -69,5 +69,45 @@ class SmoothRoundedShape(
     }
 }
 
-/// 아바타에 쓰는 스퀘어클입니다. 맥 판과 같은 40% 반지름입니다.
-val AvatarSquircle = SmoothRoundedShape(0.40f)
+/// 프로필 사진의 테두리입니다.
+///
+/// **둥근 사각형이 아니라 초타원입니다.** 둘은 겉보기 크기가 같아도 계속 달라 보입니다.
+/// 둥근 사각형은 곧은 변이 있다가 모서리에서 원호로 꺾이는데, 초타원은 변이 아예 없이
+/// 처음부터 끝까지 휩니다.
+///
+/// 지수는 실기기 캡처에서 뽑았습니다. 채팅 목록의 180×180 화소 아바타에서
+/// 180개 행의 폭을 재어 맞춘 값이 **2.70**이고, 잔차는 0.0001입니다.
+/// (타원인 2.0은 0.0203, 4.0은 0.0349로 뚜렷하게 나쁩니다.)
+/// 맨 윗줄 한 행만 앤티에일리어싱 때문에 6화소 어긋나고 나머지는 전부 1화소 안쪽입니다.
+///
+///     |x/a|^2.70 + |y/a|^2.70 = 1
+class SuperellipseShape(
+    private val exponent: Float = 2.70f,
+    private val steps: Int = 24
+) : Shape {
+
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density
+    ): Outline = Outline.Generic(path(size.width / 2f, size.height / 2f))
+
+    private fun path(a: Float, b: Float): Path = Path().apply {
+        val e = 2f / exponent
+        // 한 바퀴를 매개변수로 훑습니다. 네 사분면을 같은 식으로 뜨므로
+        // 대칭이 저절로 보장됩니다. 모서리 네 개를 따로 쓰면 어긋날 자리가 생깁니다.
+        val total = steps * 4
+        for (i in 0..total) {
+            val rad = 2f * Math.PI.toFloat() * i / total
+            val c = cos(rad)
+            val s = sin(rad)
+            val x = a + a * abs(c).pow(e).withSign(c)
+            val y = b + b * abs(s).pow(e).withSign(s)
+            if (i == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
+    }
+}
+
+/// 아바타에 쓰는 도형입니다. 실측 지수 2.70을 씁니다.
+val AvatarSquircle: Shape = SuperellipseShape()

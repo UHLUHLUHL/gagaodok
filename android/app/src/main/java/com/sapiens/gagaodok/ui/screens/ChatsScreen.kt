@@ -166,14 +166,15 @@ private fun ChatRoomRow(
                 // 맥 판은 마우스를 올리면 행이 밝아졌습니다. 모바일에는 올림이 없으므로
                 // 눌림 효과로 바뀝니다. 길게 누르면 맥 판의 오른쪽 클릭 메뉴가 나옵니다.
                 .combinedClickable(onClick = onOpen, onLongClick = { menuOpen = true })
-                .padding(horizontal = Metrics.screenPadding, vertical = 10.dp),
+                // 실측: 행 간격 285화소에서 아바타 180화소를 빼고 반씩 나눈 값입니다.
+                .padding(horizontal = Metrics.screenPadding, vertical = Metrics.listRowPaddingV),
             verticalAlignment = Alignment.CenterVertically
         ) {
             RoomAvatar(avatar, Metrics.listAvatar)
             Column(
                 Modifier
                     .weight(1f)
-                    .padding(start = 12.dp)
+                    .padding(start = Metrics.listAvatarGap)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -211,7 +212,8 @@ private fun ChatRoomRow(
                     color = colors.textSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 3.dp)
+                    // 실측: 이름 잉크 아래와 미리보기 잉크 위 사이가 38화소입니다.
+                    modifier = Modifier.padding(top = 5.dp)
                 )
             }
         }
