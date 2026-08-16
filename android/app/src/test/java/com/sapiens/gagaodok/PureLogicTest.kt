@@ -1,6 +1,7 @@
 package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.model.ChatMessage
+import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.Codec
 import com.sapiens.gagaodok.model.MessageKind
 import com.sapiens.gagaodok.model.MessageSender
@@ -211,7 +212,7 @@ class ConversationCompactorTest {
     @Test
     fun `문턱을 넘기 전에는 전부 원문으로 보낸다`() {
         val convo = conversation(10)
-        val plan = ConversationCompactor.plan(convo, null)
+        val plan = ConversationCompactor.plan(convo, null, ChatMode.MATH_MENTOR)
         assertNull(plan.digestText)
         assertEquals(convo.size, plan.verbatimTurns.size)
         assertNull(plan.pending)
@@ -220,7 +221,7 @@ class ConversationCompactorTest {
     @Test
     fun `문턱을 넘으면 요약할 구간을 잡는다`() {
         val convo = conversation(ConversationCompactor.THRESHOLD_TURNS)
-        val plan = ConversationCompactor.plan(convo, null)
+        val plan = ConversationCompactor.plan(convo, null, ChatMode.MATH_MENTOR)
         assertNotNull(plan.pending)
         assertEquals(1, plan.pending!!.firstTurn)
         assertEquals(ConversationCompactor.REFRESH_PERIOD_TURNS, plan.pending!!.lastTurn)
@@ -229,7 +230,7 @@ class ConversationCompactorTest {
     @Test
     fun `턴 번호를 붙여서 넘긴다`() {
         // 번호 없이 넘겼더니 모델이 줄 수를 세어 없는 번호를 지어냈습니다.
-        val text = ConversationCompactor.transcript(conversation(2), startingTurn = 5)
+        val text = ConversationCompactor.transcript(conversation(2), startingTurn = 5, mode = ChatMode.MATH_MENTOR)
         assertTrue(text.startsWith("[5턴] 학습자: 질문 0"))
         assertTrue(text.contains("[6턴] 학습자: 질문 1"))
     }
@@ -242,7 +243,7 @@ class ConversationCompactorTest {
                 UUID.randomUUID(), MessageSender.SAPIENS, "요청을 처리하는 중 오류가 발생했습니다: 타임아웃"
             )
         )
-        val text = ConversationCompactor.transcript(turns, startingTurn = 1)
+        val text = ConversationCompactor.transcript(turns, startingTurn = 1, mode = ChatMode.MATH_MENTOR)
         assertFalse(text.contains("오류가 발생했습니다"))
     }
 }

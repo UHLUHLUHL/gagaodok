@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -232,14 +233,22 @@ private fun ApiKeyField(credential: SecureStore.Credential) {
     val context = LocalContext.current
     val colors = KakaoTheme.colors
     var value by remember { mutableStateOf(SecureStore.apiKey(context, credential) ?: "") }
-    var saved by remember { mutableStateOf(false) }
+    // null이면 아직 안 눌렀고, 참이면 저장됐고, 거짓이면 저장에 실패했습니다.
+    var saved by remember { mutableStateOf<Boolean?>(null) }
 
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(credential.displayName, style = KakaoText.sectionHeader, color = colors.textPrimary)
             Box(Modifier.weight(1f))
-            if (saved) {
-                Text("저장됨", style = KakaoText.timestamp, color = colors.textTertiary)
+            when (saved) {
+                true -> Text("저장됨", style = KakaoText.timestamp, color = colors.textTertiary)
+                // 조용히 실패하면 사용자는 키를 넣었다고 믿은 채로 계속 오류만 봅니다.
+                false -> Text(
+                    "저장하지 못했습니다",
+                    style = KakaoText.timestamp,
+                    color = Color(0xFFD05050)
+                )
+                null -> Unit
             }
         }
         Row(
@@ -261,7 +270,7 @@ private fun ApiKeyField(credential: SecureStore.Credential) {
                 }
                 BasicTextField(
                     value = value,
-                    onValueChange = { value = it; saved = false },
+                    onValueChange = { value = it; saved = null },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     textStyle = LocalTextStyle.current.merge(KakaoText.body).copy(color = colors.textPrimary),
@@ -274,8 +283,7 @@ private fun ApiKeyField(credential: SecureStore.Credential) {
                 filled = true,
                 modifier = Modifier.widthIn(min = 76.dp)
             ) {
-                SecureStore.save(context, credential, value)
-                saved = true
+                saved = SecureStore.save(context, credential, value)
             }
         }
     }

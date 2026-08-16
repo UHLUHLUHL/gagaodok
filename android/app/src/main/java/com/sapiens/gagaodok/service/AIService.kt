@@ -171,7 +171,7 @@ class AIService private constructor(private val appContext: Context) {
         // 대화가 아주 길어진 방에서는 앞부분을 구간 요약으로 갈아끼웁니다.
         // 기준에 못 미치면 plan이 원본을 그대로 돌려주므로 짧은 방은 지금까지와 똑같이 동작합니다.
         val digest = store.loadDigest(roomId)
-        val plan = ConversationCompactor.plan(conversation, digest)
+        val plan = ConversationCompactor.plan(conversation, digest, mode)
 
         var contents = buildGeminiContents(plan.verbatimTurns)
         plan.digestText?.let { contents = digestPreamble(it) + contents }
@@ -179,6 +179,8 @@ class AIService private constructor(private val appContext: Context) {
 
         // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
         val cache = usablePrefixCache(roomId, contents, system, apiKey)
+        // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
+        val previousRequestAt = markRequest(roomId)
 
         val sink = StreamBubbleSink(
             roleplayEstablished = mode == ChatMode.COMPANION && roleplayInProgress,
@@ -224,10 +226,10 @@ class AIService private constructor(private val appContext: Context) {
         // 답변까지 덧붙여 캐시하면 적중률이 조금 높지만, 앱이 다음 턴에 재구성하는 문자열과
         // 한 글자라도 어긋나면 지문 검사에서 통째로 탈락합니다.
         // 답변을 이미 확보한 뒤이므로 화면 표시를 막지 않도록 백그라운드에서 진행합니다.
-        scope.launch { refreshPrefixCache(roomId, contents, system, apiKey) }
+        scope.launch { refreshPrefixCache(roomId, contents, system, apiKey, previousRequestAt) }
 
         // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
-        plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, apiKey) } }
+        plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, mode, apiKey) } }
 
         return outcome.text
     }
@@ -415,11 +417,25 @@ class AIService private constructor(private val appContext: Context) {
 
     private val refreshingRooms = mutableSetOf<String>()
 
+    /// 방마다 **직전** 요청 시각입니다. 대화가 이어지는 중인지 보는 데 씁니다.
+    ///
+    /// 메모리에만 둡니다. 앱을 껐다 켜면 비어 있어서 그 방의 캐시가 한 메시지 늦게
+    /// 만들어집니다. 파일로 남길 값어치는 없다고 봤습니다.
+    private val lastRequestAt = mutableMapOf<String, Long>()
+
+    /// 직전 요청 시각을 꺼내면서 지금 시각으로 갱신합니다.
+    private fun markRequest(roomId: UUID): Long? = synchronized(lastRequestAt) {
+        val previous = lastRequestAt[roomId.toString()]
+        lastRequestAt[roomId.toString()] = System.currentTimeMillis()
+        previous
+    }
+
     private suspend fun refreshPrefixCache(
         roomId: UUID,
         contents: List<JSONObject>,
         system: String,
-        apiKey: String
+        apiKey: String,
+        previousRequestAt: Long?
     ) {
         val key = roomId.toString()
         // 막지 않으면 같은 방에 대해 갱신이 겹치면서 캐시가 여러 개 만들어지고
@@ -436,6 +452,24 @@ class AIService private constructor(private val appContext: Context) {
             // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
             val estimated = estimateTokens(contents) + TokenEstimator.textTokens(system)
             if (estimated < MINIMUM_CACHE_TOKENS) return
+
+            if (previous == null) {
+                // **아직 캐시가 없으면, 대화가 이어지는 중일 때만 만듭니다.**
+                //
+                // 메신저는 몰아서 쓰고 한참 쉽니다. 예전에는 한참 만에 한 마디 던져도
+                // 그 뒤에 대화 전체를 캐시로 올렸는데, 사용자가 바로 앱을 닫으면
+                // 그 캐시는 아무도 안 읽고 TTL이 다할 때까지 보관료만 먹었습니다.
+                // 올리는 값까지 치면 그 한 마디의 요금을 두 배로 낸 셈입니다.
+                //
+                // 직전 요청이 얼마 전이면 지금은 대화 중이고, 다음 요청도 TTL 안에
+                // 올 가능성이 높습니다. 그때만 올립니다. 대신 한 묶음의 두 번째
+                // 메시지까지는 캐시 없이 갑니다 — 안 쓸 캐시를 만드는 것보다 낫습니다.
+                //
+                // 5분은 **정한 값입니다.** 실제 사용 기록을 보고 뽑은 값이 아닙니다.
+                val ongoing = previousRequestAt != null &&
+                    now - previousRequestAt <= CACHE_BURST_WINDOW_MILLIS
+                if (!ongoing) return
+            }
 
             if (previous != null) {
                 // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
@@ -566,6 +600,7 @@ class AIService private constructor(private val appContext: Context) {
     private fun appendDigestSegment(
         roomId: UUID,
         pending: ConversationCompactor.PendingSegment,
+        mode: ChatMode,
         apiKey: String
     ) {
         val key = roomId.toString()
@@ -578,7 +613,7 @@ class AIService private constructor(private val appContext: Context) {
             val current = store.loadDigest(roomId)
             if (current.coveredTurns >= pending.lastTurn) return
 
-            val text = requestSegmentSummary(roomId, pending.turns, pending.firstTurn, apiKey)
+            val text = requestSegmentSummary(roomId, pending.turns, pending.firstTurn, mode, apiKey)
             if (text.isEmpty()) return
 
             store.saveDigest(
@@ -600,9 +635,10 @@ class AIService private constructor(private val appContext: Context) {
         roomId: UUID,
         turns: List<ConversationTurn>,
         startingTurn: Int,
+        mode: ChatMode,
         apiKey: String
     ): String {
-        val transcript = ConversationCompactor.transcript(turns, startingTurn)
+        val transcript = ConversationCompactor.transcript(turns, startingTurn, mode)
         if (transcript.isEmpty()) return ""
 
         val body = JSONObject()
@@ -610,7 +646,9 @@ class AIService private constructor(private val appContext: Context) {
                 "systemInstruction",
                 JSONObject().put(
                     "parts",
-                    JSONArray().put(JSONObject().put("text", ConversationCompactor.SUMMARY_INSTRUCTION))
+                    JSONArray().put(
+                        JSONObject().put("text", ConversationCompactor.summaryInstruction(mode))
+                    )
                 )
             )
             .put(
@@ -1293,6 +1331,9 @@ class AIService private constructor(private val appContext: Context) {
         // TTL이 이만큼도 안 남았으면 꼬리가 짧아도 새로 만듭니다. 그대로 두면
         // 곧 만료되어 다음 요청이 통째로 전액이 됩니다.
         private const val CACHE_REFRESH_TTL_FLOOR_MILLIS = 240_000L
+
+        // 직전 요청이 이 안에 있었으면 "대화 중"으로 봅니다. 그때만 첫 캐시를 만듭니다.
+        private const val CACHE_BURST_WINDOW_MILLIS = 300_000L
 
         const val ERROR_PREFIX = "요청을 처리하는 중 오류가 발생했습니다:"
 
