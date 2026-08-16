@@ -2,10 +2,12 @@ package com.sapiens.gagaodok.ui.theme
 
 import android.content.Context
 import androidx.compose.material3.Typography
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.sp
 
 /// 맥에는 시스템에 깔려 있지만 안드로이드에는 없어서 앱에 넣었습니다.
@@ -49,29 +51,39 @@ fun kakaoTypography(family: FontFamily): Typography = Typography().run {
 ///
 /// 실기기 캡처에서 글자의 **잉크 높이**를 재어 맞췄습니다.
 ///
-/// **잰 값을 그대로 믿으면 안 되는 자리입니다.** 같은 글자('대박')를 재니 우리 것이
-/// 원조보다 8.5% 컸는데, 글자 크기가 아니라 **기기의 글꼴 배율**이 달랐던 것입니다.
-/// 한 줄짜리 말풍선 높이로 갈라냈습니다. 같은 15sp인데 에뮬레이터에서 141화소,
-/// 사용자 기기에서 134화소가 나왔고, 안쪽 여백을 빼면 배율이 0.94입니다.
-/// 그 배율을 걷어내면 원조 본문은 14.7sp라 지금 값이 맞습니다.
-/// 배율을 모르고 줄였으면 오히려 틀렸을 자리입니다.
+/// | 자리 | 원조 잉크 | 정한 값 |
+/// |---|---|---|
+/// | 말풍선 본문 | 47화소 | 15sp |
+/// | 보낸이 이름 | 39화소 | 13sp |
+/// | 말풍선 옆 시각 | 32화소 | 10sp |
+/// | 목록 이름 | 47화소 | 15sp |
+/// | 목록 미리보기 | 43화소 | 13sp |
+/// | 대화방 제목 | 56화소 | 18sp 굵게 |
 ///
-/// 아래 sp 값은 전부 **배율 1.0으로 환산한** 원조 잉크 높이에 맞춘 것입니다.
+/// **기기의 글꼴 배율은 1.0입니다.** 한때 0.94로 봤지만 틀렸습니다.
+/// 그때는 한 줄짜리 말풍선의 **전체 높이**를 견줬는데, 거기에는 우리가 정한
+/// 안쪽 여백이 섞여 있어 배율만 갈라낼 수 없었습니다(순환 논증이었습니다).
 ///
-/// | 자리 | 원조 잉크(0.94) | 환산(1.0) | 정한 값 |
-/// |---|---|---|---|
-/// | 말풍선 본문 | 47화소 | 50.0 | 15sp |
-/// | 보낸이 이름 | 39화소 | 41.5 | 13sp |
-/// | 말풍선 옆 시각 | 32화소 | 34.0 | 10sp |
-/// | 목록 이름 | 47화소 | 50.0 | 15sp |
-/// | 목록 미리보기 | 43화소 | 45.7 | 13sp |
-/// | 대화방 제목 | 56화소 | 59.6 | 18sp 굵게 |
+/// 여백이 상쇄되는 **여러 줄 말풍선의 줄 간격**으로 다시 쟀습니다.
+/// 원조 76화소, 우리 앱(배율 1.0) 75~76화소. 우리 줄 높이가 20sp이므로
+/// 20 × 3.75 × 배율 = 76 → 배율 ≈ 1.01입니다. 0.94였다면 70.5화소여야 했습니다.
+///
+/// 잉크 높이는 여전히 우리가 8~9% 큽니다. 그건 배율이 아니라 **글꼴이 달라서**입니다
+/// (Pretendard vs 카카오톡 글꼴). 같은 sp에서 잉크 비율이 다릅니다. 그래서 새 글자
+/// 크기를 정할 때는 원조 잉크를 우리 말풍선 잉크(51화소)와 견줘 비율로 옮깁니다.
 ///
 /// 카카오톡 자체의 '글자 크기' 설정이 기본값이 아닐 수도 있습니다. 그건 캡처만으로는
 /// 알 수 없으므로, 위 값은 사용자의 지금 설정을 기준으로 맞춘 것입니다.
 ///
 /// 글꼴은 여기서 지정하지 않습니다. Material 서체를 통째로 갈아 끼웠으므로
 /// `Text`가 알아서 Pretendard로 그립니다.
+/// 적어 둔 줄 높이를 **자르지 않고** 그대로 쓰게 하는 설정입니다.
+/// 글자는 그 안에서 가운데에 놓입니다.
+private val TightLine = LineHeightStyle(
+    alignment = LineHeightStyle.Alignment.Center,
+    trim = LineHeightStyle.Trim.None
+)
+
 object KakaoText {
     // 줄 높이는 한 줄짜리 말풍선 높이(원조 130화소)에서 되짚었습니다.
     val bubble = TextStyle(fontSize = 15.sp, lineHeight = 20.sp)
@@ -98,6 +110,34 @@ object KakaoText {
     val timestamp = TextStyle(fontSize = 10.sp)
     val body = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
     val caption = TextStyle(fontSize = 12.sp)
+
+    /// 길게 누르기 메뉴의 줄 글자입니다.
+    ///
+    /// 같은 캡처 안에서 메뉴 글자 잉크가 48화소, 말풍선 본문이 47화소였습니다.
+    /// **같은 크기입니다.** 메뉴가 더 커 보이는 것은 줄 간격이 48dp로 넓어서입니다.
+    val sheetItem = TextStyle(fontSize = 15.sp)
+
+    /// 수정 바의 "메시지 수정" 제목과 그 아래 원문 미리보기입니다.
+    ///
+    /// 제목과 미리보기의 잉크 높이가 **둘 다 39화소로 같았습니다.** 크기가 아니라
+    /// 굵기만 다릅니다. 색도 둘 다 #191919로 같습니다(미리보기가 흐려 보이는 것은
+    /// 가는 획 때문입니다). 39화소는 말풍선 위 보낸이 이름과 같은 값이라 13sp입니다.
+    ///
+    /// **줄 높이를 반드시 적어야 합니다.** 안 적으면 Pretendard 기본값으로 한 줄이
+    /// 80화소가 되는데, 원조는 63화소입니다(윗줄 잉크 위 1194 → 아랫줄 1257).
+    /// 두 줄이라 그 차이가 34화소로 불어나 수정 바 전체가 그만큼 길어졌습니다.
+    /// **한 `Text`에 두 줄로 담아야 합니다.** `Text`를 둘로 나누면 줄 높이가
+    /// 먹지 않습니다. Compose는 첫 줄 위와 마지막 줄 아래의 여유를 잘라 내는데,
+    /// 한 줄짜리 글은 그 둘이 곧 전부라 적어 둔 17sp가 통째로 없어지고 글꼴 본래
+    /// 높이(70화소)만 남았습니다. 글꼴 여백을 끄고 `Trim.None`까지 줘도 70화소였습니다.
+    /// 한 `Text` 안의 **줄 사이** 간격은 잘라 내는 대상이 아니라서 그대로 나옵니다.
+    /// 굵기는 그래서 문단 스타일이 아니라 첫 줄에 얹는 `SpanStyle`로 줍니다.
+    val editBanner = TextStyle(
+        fontSize = 13.sp,
+        lineHeight = 17.sp,
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = TightLine
+    )
 
     /// 수식 말풍선의 웹뷰가 쓸 크기입니다. 네이티브 말풍선과 같아야
     /// 수식이 있는 말풍선만 글자가 달라 보이지 않습니다.

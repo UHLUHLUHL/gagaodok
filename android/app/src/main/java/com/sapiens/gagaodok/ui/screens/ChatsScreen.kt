@@ -167,7 +167,13 @@ private fun ChatRoomRow(
                 // 눌림 효과로 바뀝니다. 길게 누르면 맥 판의 오른쪽 클릭 메뉴가 나옵니다.
                 .combinedClickable(onClick = onOpen, onLongClick = { menuOpen = true })
                 // 실측: 행 간격 285화소에서 아바타 180화소를 빼고 반씩 나눈 값입니다.
-                .padding(horizontal = Metrics.screenPadding, vertical = Metrics.listRowPaddingV),
+                // 오른쪽은 시각이 놓이는 자리라 따로 잰 값(63화소)을 씁니다.
+                .padding(
+                    start = Metrics.screenPadding,
+                    end = Metrics.listTrailingPadding,
+                    top = Metrics.listRowPaddingV,
+                    bottom = Metrics.listRowPaddingV
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             RoomAvatar(avatar, Metrics.listAvatar)
@@ -176,36 +182,54 @@ private fun ChatRoomRow(
                     .weight(1f)
                     .padding(start = Metrics.listAvatarGap)
             ) {
+                // 시각이 오른쪽 끝에 붙어야 합니다.
+                //
+                // 전에는 이름과 빈 상자에 **각각 `weight(1f)`을 줬습니다.** 그러면 남는
+                // 폭이 반씩 나뉘는데, 이름은 `fill = false`라 제 글자 폭만 쓰고 배정받은
+                // 나머지를 돌려주지 않습니다. 그 반쪽이 줄 끝에 빈자리로 남아 시각이
+                // 100dp나 왼쪽으로 밀려 있었습니다(실측: 시각 잉크 끝 1062화소,
+                // 화면 오른쪽까지 377화소가 비어 있었습니다).
+                //
+                // 이름과 배지를 안쪽 줄로 묶고 시각을 그 밖에 둡니다. 안쪽에서 남는
+                // 자리는 안쪽 줄 끝에서 접히므로 시각 위치에 영향을 주지 않습니다.
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        room.profile.name,
-                        style = KakaoText.listName,
-                        color = colors.textPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    // 여백을 먼저, 크기를 나중에 적습니다. 순서를 바꾸면 여백이
-                    // 크기 안쪽으로 파고들어 12dp 상자 안에 9dp짜리 찌그러진 그림이 남습니다.
-                    if (room.isPinned) {
-                        Icon(
-                            Icons.Filled.PushPin, contentDescription = "상단 고정",
-                            tint = colors.textTertiary,
-                            modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            room.profile.name,
+                            style = KakaoText.listName,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
+                        // 여백을 먼저, 크기를 나중에 적습니다. 순서를 바꾸면 여백이
+                        // 크기 안쪽으로 파고들어 12dp 상자 안에 9dp짜리 찌그러진 그림이 남습니다.
+                        if (room.isPinned) {
+                            Icon(
+                                Icons.Filled.PushPin, contentDescription = "상단 고정",
+                                tint = colors.textTertiary,
+                                modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
+                            )
+                        }
+                        if (room.profile.persona.isEnabled) {
+                            Icon(
+                                Icons.Filled.TheaterComedy, contentDescription = "말투 적용됨",
+                                tint = colors.personaBadge,
+                                modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
+                            )
+                        }
                     }
-                    if (room.profile.persona.isEnabled) {
-                        Icon(
-                            Icons.Filled.TheaterComedy, contentDescription = "말투 적용됨",
-                            tint = colors.personaBadge,
-                            modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
-                        )
-                    }
-                    Box(Modifier.weight(1f))
                     Text(
                         formatRoomTime(room.lastMessageTime),
                         style = KakaoText.listTime,
-                        color = colors.textTertiary
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                        softWrap = false,
+                        // 이름이 줄 끝까지 찼을 때 시각이 이름에 닿지 않게 합니다. (짐작)
+                        modifier = Modifier.padding(start = 8.dp)
                     )
                 }
                 Text(

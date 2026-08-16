@@ -64,6 +64,11 @@ data class KakaoColors(
     val searchHitCurrent: Color,
     /// 말투가 켜진 방에 붙는 표시.
     val personaBadge: Color,
+    /// 수정 바의 확인 단추입니다.
+    ///
+    /// 내 말풍선(#FFEB33)과 **다른 노랑입니다.** 실측 #FEE500으로 브랜드 노랑
+    /// 그대로였습니다. 말풍선 색을 재사용하면 나란히 놓였을 때 미세하게 어긋납니다.
+    val editConfirm: Color,
 
     val isDark: Boolean
 )
@@ -98,6 +103,8 @@ private val LightColors = KakaoColors(
     searchHit = Color(0xFFA8D9FF),
     searchHitCurrent = Color(0xFF59A8FF),
     personaBadge = Color(0xFFDBB800),
+    // 실측 #FEE500.
+    editConfirm = Color(0xFFFEE500),
 
     isDark = false
 )
@@ -138,6 +145,8 @@ private val DarkColors = KakaoColors(
     searchHit = Color(0xFF2C5A88),
     searchHitCurrent = Color(0xFF1F6FBF),
     personaBadge = Color(0xFFDBB800),
+    // 브랜드 색이라 다크에서도 그대로 둡니다.
+    editConfirm = Color(0xFFFEE500),
 
     isDark = true
 )
