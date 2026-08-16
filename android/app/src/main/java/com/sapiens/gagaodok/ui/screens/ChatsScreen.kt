@@ -185,18 +185,20 @@ private fun ChatRoomRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+                    // 여백을 먼저, 크기를 나중에 적습니다. 순서를 바꾸면 여백이
+                    // 크기 안쪽으로 파고들어 12dp 상자 안에 9dp짜리 찌그러진 그림이 남습니다.
                     if (room.isPinned) {
                         Icon(
                             Icons.Filled.PushPin, contentDescription = "상단 고정",
                             tint = colors.textTertiary,
-                            modifier = Modifier.size(12.dp).padding(start = 3.dp)
+                            modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
                         )
                     }
                     if (room.profile.persona.isEnabled) {
                         Icon(
                             Icons.Filled.TheaterComedy, contentDescription = "말투 적용됨",
                             tint = colors.personaBadge,
-                            modifier = Modifier.size(12.dp).padding(start = 3.dp)
+                            modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
                         )
                     }
                     Box(Modifier.weight(1f))

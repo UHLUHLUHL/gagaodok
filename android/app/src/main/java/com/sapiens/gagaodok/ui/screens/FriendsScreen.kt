@@ -263,7 +263,7 @@ private fun FriendRow(
                             Icons.Filled.TheaterComedy,
                             contentDescription = "말투 적용됨",
                             tint = colors.personaBadge,
-                            modifier = Modifier.size(12.dp).padding(start = 4.dp)
+                            modifier = Modifier.padding(start = 4.dp).size(Metrics.rowBadge)
                         )
                     }
                 }

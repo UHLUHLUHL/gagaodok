@@ -15,8 +15,9 @@ android {
         minSdk = 26
         targetSdk = 35
         // 1.1: 원조 실기기 캡처를 실측해 색·도형·치수를 맞춘 판입니다.
-        versionCode = 2
-        versionName = "1.1"
+        // 1.2: 이웃한 요소끼리 견줘 어긋난 크기를 바로잡았습니다(입력바 단추, 탭 아이콘 등).
+        versionCode = 3
+        versionName = "1.2"
     }
 
     buildTypes {

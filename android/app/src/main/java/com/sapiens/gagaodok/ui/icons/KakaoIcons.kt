@@ -292,9 +292,14 @@ fun GearIcon(color: Color, modifier: Modifier = Modifier) {
 }
 
 private fun DrawScope.drawGear(color: Color) {
-    val c = IconCanvas(24f, 24f, size.width, size.height)
-    val cx = 12f
-    val cy = 12f
+    // 설계 상자를 **잉크 상자에 맞춥니다.** 원래 24 단위 상자에 그렸는데, 톱니바퀴는
+    // 바깥 반지름 9.4에 선 굵기 1.6이라 잉크가 20.4밖에 안 됐습니다. 그래서 옆의
+    // 사람·말풍선(상자를 꽉 채움)과 같은 크기를 주어도 15% 작게 그려졌습니다.
+    // 부르는 쪽이 "17dp"라고 하면 17dp짜리 잉크가 나오도록 여기서 맞춥니다.
+    val ink = 20.4f
+    val c = IconCanvas(ink, ink, size.width, size.height)
+    val cx = ink / 2f
+    val cy = ink / 2f
     val stroke = 1.6f
 
     val teeth = 8

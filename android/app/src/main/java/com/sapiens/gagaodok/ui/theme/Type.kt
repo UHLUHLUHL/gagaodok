@@ -93,7 +93,8 @@ object KakaoText {
     val listTime = TextStyle(fontSize = 10.sp)
     val screenTitle = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Bold)
     val sectionHeader = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Medium)
-    val tabLabel = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    // 실측 잉크 29화소. 우리 11sp가 37화소였으므로 9sp입니다.
+    val tabLabel = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Medium)
     val timestamp = TextStyle(fontSize = 10.sp)
     val body = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
     val caption = TextStyle(fontSize = 12.sp)

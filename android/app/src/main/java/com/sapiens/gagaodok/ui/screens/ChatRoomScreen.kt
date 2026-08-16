@@ -14,6 +14,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -69,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sapiens.gagaodok.GagaodokApp
@@ -92,6 +96,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @Composable
@@ -390,7 +395,14 @@ private fun ChatHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onToggleSearch) {
-                    Icon(Icons.Filled.Close, "검색 닫기", tint = colors.onChatHeader)
+                    // 검색을 열면 이 아이콘이 뒤로 화살표와 **같은 자리**에 들어섭니다.
+                    // 크기를 안 적으면 잉크가 52화소로 그려져, 방금까지 73화소이던
+                    // 자리가 눈에 띄게 줄어듭니다. 같은 상자를 줘서 튐을 없앱니다.
+                    Icon(
+                        Icons.Filled.Close, "검색 닫기",
+                        tint = colors.onChatHeader,
+                        modifier = Modifier.size(Metrics.backIcon)
+                    )
                 }
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     if (searchText.isEmpty()) {
@@ -411,11 +423,22 @@ private fun ChatHeader(
                     style = KakaoText.caption,
                     color = colors.onChatHeaderDim
                 )
+                // 꺾쇠는 원래 납작해서 같은 상자를 줘도 X보다 작아 보입니다.
+                // 폭이 X와 비슷하게 읽히도록 한 단 키웠습니다. **원조 검색 막대를 재서
+                // 정한 값이 아니라 짐작입니다.** 그 화면 캡처를 아직 못 받았습니다.
                 IconButton(onClick = { onMoveSearch(1) }, enabled = hitCount > 0) {
-                    Icon(Icons.Filled.KeyboardArrowUp, "이전 결과", tint = colors.onChatHeader)
+                    Icon(
+                        Icons.Filled.KeyboardArrowUp, "이전 결과",
+                        tint = colors.onChatHeader,
+                        modifier = Modifier.size(Metrics.backIcon)
+                    )
                 }
                 IconButton(onClick = { onMoveSearch(-1) }, enabled = hitCount > 0) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "다음 결과", tint = colors.onChatHeader)
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown, "다음 결과",
+                        tint = colors.onChatHeader,
+                        modifier = Modifier.size(Metrics.backIcon)
+                    )
                 }
             }
         } else {
@@ -434,7 +457,15 @@ private fun ChatHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로", tint = colors.onChatHeader)
+                    // 크기를 적지 않으면 Material 기본값(24dp 상자)으로 그려지는데,
+                    // 화살표는 그 상자를 다 안 채워서 잉크가 60화소밖에 안 됩니다.
+                    // 옆의 돋보기(68화소)보다 작아 보였습니다. 원조는 반대로
+                    // 뒤로(72)가 돋보기(66)보다 조금 큽니다.
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack, "뒤로",
+                        tint = colors.onChatHeader,
+                        modifier = Modifier.size(Metrics.backIcon)
+                    )
                 }
                 Row(
                     Modifier
@@ -455,7 +486,7 @@ private fun ChatHeader(
                         Icon(
                             Icons.Filled.TheaterComedy, "말투 적용됨",
                             tint = colors.personaBadge,
-                            modifier = Modifier.size(14.dp).padding(start = 5.dp)
+                            modifier = Modifier.padding(start = 6.dp).size(16.dp)
                         )
                     }
                 }
@@ -573,55 +604,68 @@ private fun ChatInputBar(
         // 원조에는 `+`, 필드, `#`, 음성 이렇게 네 자리가 있습니다. 우리 앱에는 `#`과
         // 음성에 해당하는 기능이 없어서 **모양과 치수만 맞추고 단추 수는 우리 기능에
         // 맞췄습니다.** 눌러도 아무 일이 없는 단추를 모양 때문에 그려 넣지 않습니다.
+        // 좌우 여백과 사이 간격을 **0으로 둡니다.** 단추의 48dp 터치 상자가 28dp 원보다
+        // 사방 10dp씩 크기 때문에, 그 상자만으로 원조의 여백(왼쪽 36화소, 사이 33화소)이
+        // 거의 그대로 나옵니다. 여기에 여백을 또 주면 원이 40화소 더 안쪽으로 밀립니다.
+        // 오른쪽만 원조가 왼쪽보다 23화소 넓어서 그만큼 따로 줍니다.
         Row(
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = Metrics.inputBarHeight)
-                .padding(horizontal = Metrics.inputBarPadding, vertical = 6.dp),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(Metrics.inputGap)
+                .padding(end = Metrics.inputBarEndPadding, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            RoundInputButton(onClick = onPickImage) {
+            RoundInputButton(onClick = onPickImage, contentDescription = "사진 첨부") {
                 Icon(
                     Icons.Filled.AddPhotoAlternate, "사진 첨부",
                     tint = colors.textPrimary,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(Metrics.inputButtonGlyph)
                 )
             }
 
+            // 필드를 단추와 같은 높이(48dp)의 상자에 넣고 가운데에 둡니다.
+            // 넣지 않으면 아래끼리만 맞아서 원의 중심이 필드 중심보다 22화소 올라갑니다.
+            // 원조는 둘의 중심이 같습니다. 글이 길어지면 이 상자가 같이 자랍니다.
             Box(
-                Modifier
-                    .weight(1f)
-                    .heightIn(min = Metrics.inputFieldHeight)
-                    // 모서리를 높이의 절반으로 두어 완전한 알약이 되게 합니다.
-                    // 실측한 원조 필드도 알약이었습니다.
-                    .background(colors.sunken, RoundedCornerShape(percent = 50))
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                contentAlignment = Alignment.CenterStart
+                Modifier.weight(1f).heightIn(min = Metrics.touchTarget),
+                contentAlignment = Alignment.Center
             ) {
-                if (text.isEmpty()) {
-                    Text("메시지 입력", style = KakaoText.bubble, color = colors.textTertiary)
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Metrics.inputFieldHeight)
+                        // 모서리를 높이의 절반으로 두어 완전한 알약이 되게 합니다.
+                        // 실측한 원조 필드도 알약이었습니다.
+                        .background(colors.sunken, RoundedCornerShape(percent = 50))
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (text.isEmpty()) {
+                        Text("메시지 입력", style = KakaoText.bubble, color = colors.textTertiary)
+                    }
+                    BasicTextField(
+                        value = text,
+                        onValueChange = onTextChange,
+                        // 여러 줄을 받되 너무 자라지 않게 잘라 둡니다. 그 뒤로는 안에서 스크롤됩니다.
+                        maxLines = 5,
+                        textStyle = LocalTextStyle.current.merge(KakaoText.bubble).copy(color = colors.textPrimary),
+                        cursorBrush = SolidColor(colors.textPrimary),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp)
+                    )
                 }
-                BasicTextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    // 여러 줄을 받되 너무 자라지 않게 잘라 둡니다. 그 뒤로는 안에서 스크롤됩니다.
-                    maxLines = 5,
-                    textStyle = LocalTextStyle.current.merge(KakaoText.bubble).copy(color = colors.textPrimary),
-                    cursorBrush = SolidColor(colors.textPrimary),
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp)
-                )
             }
 
             RoundInputButton(
                 onClick = onSend,
                 enabled = canSend,
-                background = if (canSend) colors.bubbleMine else colors.sunken
+                background = if (canSend) colors.bubbleMine else colors.sunken,
+                contentDescription = "보내기"
             ) {
                 Icon(
                     Icons.Filled.Send, "보내기",
                     tint = if (canSend) colors.bubbleMineText else colors.textTertiary,
-                    modifier = Modifier.size(16.dp)
+                    // 꽉 찬 삼각형이라 같은 숫자면 더 커 보입니다. 한 단 줄여 눈으로 맞춥니다.
+                    modifier = Modifier.size(Metrics.inputButtonGlyph - 2.dp)
                 )
             }
         }
@@ -632,23 +676,35 @@ private fun ChatInputBar(
 ///
 /// 보이는 원은 28dp지만 누를 수 있는 넓이는 48dp로 둡니다. 원조도 원보다 넓은 자리를
 /// 받아 두었고, 28dp짜리 과녁은 손가락으로 맞히기에 작습니다.
+///
+/// **`IconButton`을 쓰지 않습니다.** Material3의 `IconButton`은 넘겨받은 수정자 뒤에
+/// 자기 크기(40dp)와 최소 터치 넓이(48dp)를 덧붙입니다. 그래서 `.size(28.dp)`를 주어도
+/// 원이 48dp로 그려졌습니다. 필드(36dp)보다 큰 원이 되어, 원조에서 필드보다 작던
+/// 단추가 오히려 커 보였습니다. 크기를 내가 정해야 하는 자리에는 맞지 않는 부품입니다.
 @Composable
 private fun RoundInputButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
     background: Color = KakaoTheme.colors.sunken,
+    contentDescription: String,
     content: @Composable () -> Unit
 ) {
     Box(
-        Modifier.size(Metrics.touchTarget),
+        Modifier
+            .size(Metrics.touchTarget)
+            .clickable(
+                enabled = enabled,
+                onClickLabel = contentDescription,
+                // 물결이 원 밖으로 번지지 않게 원 크기에 맞춥니다.
+                indication = ripple(bounded = false, radius = Metrics.inputButton / 2),
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
-        IconButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier
-                .size(Metrics.inputButton)
-                .background(background, CircleShape)
+        Box(
+            Modifier.size(Metrics.inputButton).background(background, CircleShape),
+            contentAlignment = Alignment.Center
         ) { content() }
     }
 }
@@ -692,6 +748,8 @@ private fun TypingIndicator(
         RoomAvatar(avatar, Metrics.bubbleAvatar)
         Column(Modifier.padding(start = Metrics.bubbleAvatarGap)) {
             Text(botName, style = KakaoText.senderName, color = colors.textPrimary)
+            // 안쪽 여백과 글줄 높이를 말풍선과 똑같이 씁니다.
+            // 다른 숫자를 쓰면 답변이 도착하는 순간 말풍선 높이가 튑니다.
             Row(
                 Modifier
                     .padding(top = Metrics.bubbleNameGap)
@@ -701,7 +759,10 @@ private fun TypingIndicator(
                         isMine = false
                     )
                     .clickable(onClick = onCancel)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(
+                        horizontal = Metrics.bubblePaddingH,
+                        vertical = Metrics.bubblePaddingV
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
@@ -744,16 +805,21 @@ private fun TypingDots(color: Color) {
         ),
         label = "위상"
     )
+    val density = LocalDensity.current
+    // 높이를 말풍선 한 줄과 같게 잡습니다. 점만 놓으면 말풍선이 낮아져서
+    // 답변이 도착하는 순간 높이가 튑니다.
     Row(
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
-        modifier = Modifier.height(13.dp)
+        modifier = Modifier.height(with(density) { KakaoText.bubble.lineHeight.toDp() })
     ) {
         repeat(3) { i ->
             val lift = typingDotLift(phase, i)
             Box(
                 Modifier
-                    .padding(bottom = (5f * lift).dp)
+                    // 여백이 아니라 `offset`으로 띄웁니다. 여백은 자리를 차지해서
+                    // 점이 뜰 때마다 옆 글자가 밀리고, 가운데 정렬도 흐트러집니다.
+                    .offset { IntOffset(0, -(5.dp.toPx() * lift).roundToInt()) }
                     .size(6.dp)
                     .background(color.copy(alpha = 0.45f + 0.55f * lift), CircleShape)
             )

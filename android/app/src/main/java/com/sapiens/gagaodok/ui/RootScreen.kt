@@ -150,7 +150,8 @@ private fun TabItem(
             tab.label,
             style = KakaoText.tabLabel,
             color = tint,
-            modifier = Modifier.padding(top = 3.dp)
+            // 실측: 아이콘 잉크 아래와 글자 잉크 위 사이가 26화소입니다.
+            modifier = Modifier.padding(top = 5.dp)
         )
     }
 }
