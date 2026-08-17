@@ -1,13 +1,46 @@
-# KakaoSapiens와 reference/ 밑 4개는 각자 자기 GitHub 저장소를 갖고 있습니다.
-# 여기서 추적하면 파일 내용 없이 커밋 해시만 가리키는 빈 링크가 됩니다.
+# Xcode & Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# App Bundles
+*.app
+*.dSYM
+AppIcon.iconset/
+output/
+
+# OS generated
+.DS_Store
+.Spotlight-V100
+.Trashes
+
+# Distribution artifacts (빌드된 배포용 파일은 GitHub Release로 올립니다)
+dist/
+
+# 아이콘 대조 도구가 만드는 것들 (reference/는 원본 캡처라 남깁니다)
+tools/iconcheck/out_*.png
+tools/iconcheck/iconshot
+tools/iconcheck/KakaoIcons.swift
+
+# 안드로이드
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+
+# 아직 정리 전인 옛 저장소 사본. 병합이 끝나면 폴더째 지웁니다.
 /KakaoSapiens/
+
+# 자기 GitHub 저장소를 따로 갖고 있는 참고 자료 클론들
 /reference/
 
 # Claude Code 로컬 전용 설정
 .claude/settings.local.json
-
-# OS
-.DS_Store
 
 # 정체를 확인 못한 생성물 (세션 중 어디선가 떨어진 것으로 보임)
 *.webp
