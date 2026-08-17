@@ -56,15 +56,28 @@ public enum ConversationCompactor {
     /// 실제 산출에 맞춰 올렸습니다. 이래도 압축 안 할 때보다 4배 넘게 쌉니다.
     public static let segmentTokenBudget = 1500
 
-    /// 구간 요약을 만들 때 주는 지침입니다.
+    /// 구간 요약을 만들 때 주는 지침입니다. **모드마다 다릅니다.**
     ///
-    /// 실제 대화 50턴을 손으로 요약해 보고 무엇이 남을 값어치가 있었는지 추린 것입니다.
-    /// 대화의 89%는 답변자가 쓴 글이고 그중 상당수가 연결어와 격려 문구라 덜어낼 여지가 큽니다.
-    /// 반면 학습자가 직접 쓴 말은 11%뿐인데, 되살릴 수 없는 것은 그쪽입니다.
+    /// 한동안 과외용 하나뿐이었습니다. 챗봇 방에도 그게 그대로 나갔는데, 캐릭터 대화를
+    /// "학습자의 상황 / 틀린 지점 / 이해가 뚫린 순간 / 지도 참고" 틀에 넣으면 살려야 할
+    /// 것 — 관계, 서로 부르는 법, 주고받은 약속, 감정의 결, 아직 안 풀린 긴장 — 이
+    /// 하나도 안 남습니다. 압축이 기억을 **줄이는** 것이 아니라 **버리는** 것이 됩니다.
+    ///
+    /// 요약은 한 번 쓰면 다시 안 만들기 때문에 그 손실은 되돌릴 수 없습니다.
     ///
     /// 전송 코드가 아니라 여기 둡니다. 무엇을 남기고 무엇을 버릴지는 압축 정책이고,
     /// 품질을 확인하는 별도 도구도 같은 글을 그대로 써야 시험이 성립합니다.
-    public static let summaryInstruction = """
+    public static func summaryInstruction(for mode: ChatMode) -> String {
+        switch mode {
+        case .mathMentor: return mentorSummaryInstruction
+        case .companion: return companionSummaryInstruction
+        }
+    }
+
+    /// 실제 대화 50턴을 손으로 요약해 보고 무엇이 남을 값어치가 있었는지 추린 것입니다.
+    /// 대화의 89%는 답변자가 쓴 글이고 그중 상당수가 연결어와 격려 문구라 덜어낼 여지가 큽니다.
+    /// 반면 학습자가 직접 쓴 말은 11%뿐인데, 되살릴 수 없는 것은 그쪽입니다.
+    static let mentorSummaryInstruction = """
     당신은 과외 대화 기록을 정리하는 사람이다. 아래 대화 구간을 나중에 읽고 그때를 기억할 수 있도록 정리한다.
 
     # 반드시 남길 것
@@ -120,6 +133,73 @@ public enum ConversationCompactor {
     답변에는 정리한 내용만 담고 인사나 설명을 덧붙이지 않는다.
     """
 
+    /// 챗봇 방의 요약 지침입니다.
+    ///
+    /// 과외 지침과 뼈대는 같지만 남길 것이 완전히 다릅니다. 여기서 기억이란
+    /// 무엇을 배웠는지가 아니라 **둘 사이에 무슨 일이 있었는지**입니다.
+    ///
+    /// **답변자 자신의 정체성은 적지 않습니다.** 이름도 말투도 성격도 방의 말투
+    /// 설정에서 매번 새로 정해집니다. 옛 요약에 그게 남아 있으면 지금 설정과 싸웁니다.
+    /// 과외 지침에도 같은 규칙이 있고, 여기서는 더 중요합니다.
+    static let companionSummaryInstruction = """
+    당신은 두 사람이 나눈 대화 기록을 정리하는 사람이다. 아래 대화 구간을 나중에 읽고
+    그때 무슨 일이 있었는지 떠올려 이어서 대화할 수 있도록 정리한다.
+
+    # 반드시 남길 것
+    - 관계: 서로를 뭐라 부르는지, 말을 놓는지 높이는지, 어떤 사이이고 분위기가 어떤지
+    - 있었던 일: 어떤 장면과 사건이 어떤 순서로 있었는지. 턴 번호를 함께 적는다.
+    - 주고받은 것: 약속, 다짐, 고백, 부탁, 그은 선, 삐친 일과 풀린 일
+    - 감정의 결: 어디서 가까워졌고 어디서 멀어졌는지, 구간이 끝날 때 서로의 감정이 어떤지
+    - 상대에 대해 알게 된 것: 사용자의 취향·사정·일상·습관 중 대화에서 드러난 것
+    - 반복되는 것: 자주 나오는 농담, 서로만 아는 말, 되풀이되는 화제
+    - 장면 상태: 구간이 끝나는 시점에 어디에서 무엇을 하는 중이었는지
+    - 사진을 주고받았다면 무엇을 찍은 사진이었는지
+
+    # 버릴 것
+    - 인사, 맞장구, 같은 감정 표현의 반복
+    - 대사를 그대로 옮기는 것. 무슨 일이 있었는지로 적는다.
+      다만 나중에 다시 꺼낼 만한 한마디는 따옴표로 짧게 남겨도 된다.
+    - 전송 오류 메시지
+    - **답변자 자신의 말투·이름·성격·정체성.** 그것은 방의 말투 설정에서 매번 새로
+      정해지므로 옛 기록이 남으면 지금 설정과 충돌한다. 절대 적지 않는다.
+
+    # 턴 번호
+    각 줄 앞에 [n턴]이 붙어 있다. 요약에 턴 번호를 적을 때는 반드시 그 번호를 그대로 쓴다.
+    번호를 새로 세거나 짐작해서 적지 않는다. 범위를 적을 때도 실제로 등장한 번호만 쓴다.
+
+    # 형식
+    아래 여섯 소제목을 이 순서로 그대로 쓴다. 각 줄은 '- '로 시작하는 평서문으로 적는다.
+    해당 내용이 없는 절은 소제목만 두고 비운다.
+
+    ■ 관계
+    한 줄로 뭉치지 말고 아래를 각각 한 줄씩 적는다. 대화에서 드러난 것만 적는다.
+    - 호칭: 서로를 뭐라 부르는지
+    - 말투: 사용자가 반말을 쓰는지 존댓말을 쓰는지
+    - 사이: 어떤 관계이고 지금 어느 정도로 가까운지
+
+    ■ 있었던 일
+    - 장면과 사건을 순서대로. 각 줄 앞에 턴 번호를 붙인다.
+
+    ■ 주고받은 것
+    - 약속·다짐·고백·부탁·그은 선을 한 줄에 하나씩. 언제 있었는지 턴 번호를 붙인다.
+
+    ■ 감정의 결
+    - 가까워지거나 멀어진 지점과 그 계기. 구간이 끝날 때의 감정 상태로 마무리한다.
+
+    ■ 사용자에 대해
+    - 취향, 사정, 일상, 습관 중 대화에서 드러난 것.
+
+    ■ 이어서
+    다음 대화를 이어받는 사람에게 넘기는 말이다. 아래를 각각 한 줄씩 적는다.
+    - 장면: 구간이 끝나는 시점에 어디에서 무엇을 하는 중이었는지
+    - 미해결: 답 안 한 질문, 미룬 이야기, 풀리지 않은 긴장
+    - 조심할 것: 건드리면 안 되는 화제나 상대가 그은 선
+
+    # 분량
+    한국어 1,800자를 넘기지 않는다.
+    답변에는 정리한 내용만 담고 인사나 설명을 덧붙이지 않는다.
+    """
+
     /// 요약에 넘길 대화를 글로 폅니다. 앱과 검증 도구가 같은 입력을 만들도록 여기 둡니다.
     ///
     /// 사진은 넣지 않습니다. 무엇을 찍은 사진이었는지는 앞뒤 대화에 이미 적혀 있고,
@@ -128,13 +208,18 @@ public enum ConversationCompactor {
     ///
     /// 번호 없이 넘겼더니 모델이 줄 수를 세어 번호를 지어냈습니다. 50턴을 넣었는데
     /// 76턴까지 적어 놓는 식이라, 나중에 그 번호로 원문을 찾을 수 없게 됩니다.
-    public static func transcript(for turns: [ConversationTurn], startingTurn: Int) -> String {
+    public static func transcript(for turns: [ConversationTurn], startingTurn: Int, mode: ChatMode) -> String {
+        // 부르는 이름도 모드를 따릅니다. 캐릭터 대화를 "학습자/답변자"로 옮겨 놓으면
+        // 요약하는 쪽이 그걸 수업 기록으로 읽습니다.
+        let userLabel = mode == .companion ? "사용자" : "학습자"
+        let botLabel = mode == .companion ? "상대" : "답변자"
+
         var lines: [String] = []
         var turnNumber = startingTurn - 1
         for turn in turns {
             if turn.sender == .user { turnNumber += 1 }
             guard !turn.text.hasPrefix("요청을 처리하는 중 오류가 발생했습니다:") else { continue }
-            let who = turn.sender == .user ? "학습자" : "답변자"
+            let who = turn.sender == .user ? userLabel : botLabel
             var line = turn.text
             if turn.attachment != nil { line = "[사진 첨부] " + line }
             guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -185,7 +270,7 @@ public enum ConversationCompactor {
         return Array(conversation[from..<to])
     }
 
-    public static func plan(conversation: [ConversationTurn], digest: ConversationDigest?) -> Plan {
+    public static func plan(conversation: [ConversationTurn], digest: ConversationDigest?, mode: ChatMode) -> Plan {
         let starts = userTurnStarts(conversation)
         let total = starts.count
         let digest = digest ?? ConversationDigest()
@@ -210,7 +295,7 @@ public enum ConversationCompactor {
         // 방금 정한 구간은 아직 글이 없으므로 다음 요청부터 반영됩니다.
         let verbatim = covered >= total ? [] : slice(conversation, turns: (covered + 1)...total)
         return Plan(
-            digestText: digest.isEmpty ? nil : render(digest),
+            digestText: digest.isEmpty ? nil : render(digest, mode: mode),
             verbatimTurns: verbatim,
             pending: pending,
             totalTurns: total,
@@ -219,13 +304,15 @@ public enum ConversationCompactor {
     }
 
     /// 요약을 요청 맨 앞에 넣을 글로 만듭니다.
-    public static func render(_ digest: ConversationDigest) -> String {
+    public static func render(_ digest: ConversationDigest, mode: ChatMode) -> String {
         var lines = [
             "# 이전 대화 요약",
             "",
             "아래는 이 대화방의 앞부분을 구간별로 정리한 기록이다.",
             "원문은 이 요청에 실려 있지 않으므로, 이 내용을 그때의 기억으로 삼아 이어서 대화한다.",
-            "요약에 적힌 미해결 항목과 지도 참고 사항은 지금도 유효한 것으로 간주한다.",
+            mode == .companion
+                ? "요약에 적힌 관계와 약속, 아직 안 끝난 이야기는 지금도 그대로인 것으로 간주한다."
+                : "요약에 적힌 미해결 항목과 지도 참고 사항은 지금도 유효한 것으로 간주한다.",
             ""
         ]
         for segment in digest.segments {

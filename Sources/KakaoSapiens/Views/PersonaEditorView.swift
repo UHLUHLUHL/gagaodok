@@ -23,13 +23,21 @@ public struct PersonaEditorView: View {
 
     @State private var lookupQuery: String = ""
     @State private var isLookingUp = false
+    /// 말투 조사에서 지금 무엇이 도착했는지. 답변 글자가 근거인 값입니다.
+    @State private var lookupProgress: String = ""
     @State private var lookupConfidence: String = ""
     @State private var lookupNote: String = ""
     @State private var lookupSources: [String] = []
     @State private var attachedShot: (base64: String, mime: String, name: String)?
 
-    @State private var isPreviewing = false
-    @State private var previews: [(situation: String, question: String, answer: String)] = []
+    /// 상황별로 받아 둔 답변입니다. 누른 것만 채워집니다.
+    @State private var previewAnswers: [String: String] = [:]
+    /// 지금 답을 기다리는 상황. 한 번에 하나만 보냅니다.
+    @State private var previewAsking: String?
+    @State private var customQuestion: String = ""
+
+    /// 직접 쓴 질문의 답을 담을 자리 이름입니다. 상황 이름과 겹치지 않게 둡니다.
+    private let customSituation = "\u{0}직접"
 
     @State private var refineInstruction: String = ""
     @State private var isRefining = false
@@ -267,6 +275,17 @@ public struct PersonaEditorView: View {
                 .foregroundColor(inkSecondary)
             }
 
+            // 검색 → 읽기 → 정리로 오래 걸리는 요청입니다. 진행률을 흉내 내지 않고,
+            // 답변에 실제로 도착한 절을 그대로 보여줍니다.
+            if isLookingUp, !lookupProgress.isEmpty {
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.small).scaleEffect(0.6).frame(width: 11, height: 11)
+                    Text(lookupProgress)
+                        .font(.custom("Pretendard-Regular", size: 10.5))
+                        .foregroundColor(inkSecondary)
+                }
+            }
+
             if !lookupConfidence.isEmpty { confidenceBadge }
 
             hint("이름·위키 링크·대사가 담긴 사진 중 아무거나 넣으면 됩니다. 못 찾으면 지어내지 않고 알려줍니다.")
@@ -351,7 +370,7 @@ public struct PersonaEditorView: View {
                 Button(action: {
                     styleGuide = guideBeforeRefine
                     canUndoRefine = false
-                    previews = []
+                    previewAnswers = [:]
                     status = "교정을 되돌렸습니다."
                 }) {
                     Text("되돌리기")
@@ -364,14 +383,15 @@ public struct PersonaEditorView: View {
         }
     }
 
+    /// 이 방의 모드에 맞는 미리보기 질문들입니다.
+    private var previewPrompts: [(situation: String, message: String)] {
+        GeminiService.previewPrompts(for: roomManager.getRoom(id: roomId)?.resolvedMode ?? .mathMentor)
+    }
+
+    private var canAsk: Bool { !(styleGuide.isEmpty && sampleLines.isEmpty) }
+
     private var previewCard: some View {
         card {
-            primaryButton(isPreviewing ? "시연 중" : "말 시켜보기",
-                          systemName: "play.fill",
-                          busy: isPreviewing,
-                          disabled: isPreviewing || (styleGuide.isEmpty && sampleLines.isEmpty),
-                          action: runPreview)
-
             if !sampleLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("원본 대사").font(.custom("Pretendard-Bold", size: 9.5)).foregroundColor(inkSecondary)
@@ -387,41 +407,99 @@ public struct PersonaEditorView: View {
                 .background(pageBackground, in: RoundedRectangle(cornerRadius: 8))
             }
 
-            if previews.isEmpty {
-                hint("세 가지 상황으로 답을 만들어 보여줍니다. 원본 대사와 결이 비슷하면 맞는 겁니다.")
-            } else {
-                ForEach(previews, id: \.situation) { item in
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(item.situation)
-                            .font(.custom("Pretendard-Bold", size: 9.5))
-                            .foregroundColor(inkSecondary)
-                        // 카카오톡 말풍선 배치 그대로: 내 말은 오른쪽 노랑, 상대는 왼쪽 흰색
-                        HStack {
-                            Spacer(minLength: 28)
-                            Text(item.question)
-                                .font(.custom("Pretendard-Regular", size: 10.5))
-                                .foregroundColor(inkPrimary)
-                                .padding(.horizontal, 8).padding(.vertical, 5)
-                                .background(kakaoYellow, in: RoundedRectangle(cornerRadius: 9))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        HStack {
-                            // 실제 채팅방과 같은 렌더러를 씁니다.
-                            // 미리보기 답변에도 수식과 마크다운이 섞여 나오므로
-                            // 평범한 Text로 두면 $x^2$ 같은 원문이 그대로 보입니다.
-                            PersonaPreviewBubble(text: item.answer,
-                                                 background: cardBackground,
-                                                 border: hairline,
-                                                 ink: inkPrimary)
-                            Spacer(minLength: 28)
-                        }
+            // **누른 것만 보냅니다.** 예전에는 열자마자 세 건을 한꺼번에 던졌습니다.
+            // 하나만 보고 싶어도 셋 값을 냈고, 셋 다 장부에 안 잡혔습니다.
+            hint("상황마다 따로 물어봅니다. 원본 대사와 결이 비슷하면 맞는 겁니다.")
+
+            ForEach(previewPrompts, id: \.situation) { item in
+                previewExchange(situation: item.situation, question: item.message)
+            }
+
+            HairlineDivider()
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("직접 물어보기")
+                    .font(.custom("Pretendard-Bold", size: 9.5))
+                    .foregroundColor(inkSecondary)
+                HStack(spacing: 6) {
+                    TextField("하고 싶은 말을 적으세요", text: $customQuestion)
+                        .textFieldStyle(.plain)
+                        .font(.custom("Pretendard-Regular", size: 11))
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .background(pageBackground, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(hairline))
+                    askButton(
+                        situation: customSituation,
+                        question: customQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                }
+                if let answer = previewAnswers[customSituation] {
+                    HStack {
+                        PersonaPreviewBubble(text: answer, background: cardBackground,
+                                             border: hairline, ink: inkPrimary)
+                        Spacer(minLength: 28)
                     }
-                    .padding(8)
-                    .background(Color(red: 0.639, green: 0.729, blue: 0.812).opacity(0.28),
-                                in: RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
+    }
+
+    /// 한 상황에 대한 질문·답변 한 쌍입니다.
+    private func previewExchange(situation: String, question: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text(situation)
+                    .font(.custom("Pretendard-Bold", size: 9.5))
+                    .foregroundColor(inkSecondary)
+                Spacer()
+                askButton(situation: situation, question: question)
+            }
+            // 카카오톡 말풍선 배치 그대로: 내 말은 오른쪽 노랑, 상대는 왼쪽 흰색
+            HStack {
+                Spacer(minLength: 28)
+                Text(question)
+                    .font(.custom("Pretendard-Regular", size: 10.5))
+                    .foregroundColor(inkPrimary)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(kakaoYellow, in: RoundedRectangle(cornerRadius: 9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let answer = previewAnswers[situation] {
+                HStack {
+                    // 실제 채팅방과 같은 렌더러를 씁니다.
+                    // 미리보기 답변에도 수식과 마크다운이 섞여 나오므로
+                    // 평범한 Text로 두면 $x^2$ 같은 원문이 그대로 보입니다.
+                    PersonaPreviewBubble(text: answer,
+                                         background: cardBackground,
+                                         border: hairline,
+                                         ink: inkPrimary)
+                    Spacer(minLength: 28)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color(red: 0.639, green: 0.729, blue: 0.812).opacity(0.28),
+                    in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func askButton(situation: String, question: String) -> some View {
+        let busy = previewAsking == situation
+        let disabled = !canAsk || question.isEmpty || previewAsking != nil
+        return Button { ask(situation: situation, message: question) } label: {
+            HStack(spacing: 4) {
+                if busy {
+                    ProgressView().controlSize(.small).scaleEffect(0.5).frame(width: 9, height: 9)
+                } else {
+                    Image(systemName: "play.fill").font(.system(size: 8))
+                }
+                Text(busy ? "묻는 중" : "물어보기").font(.custom("Pretendard-Medium", size: 10))
+            }
+            .foregroundColor(disabled ? inkSecondary : inkPrimary)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(disabled ? pageBackground : kakaoYellow, in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
     }
 
     private var tipCard: some View {
@@ -458,7 +536,7 @@ public struct PersonaEditorView: View {
             HStack(spacing: 8) {
                 Button(action: {
                     description = ""; samplesText = ""; styleGuide = ""; isEnabled = false
-                    previews = []; lookupConfidence = ""; lookupNote = ""; lookupSources = []
+                    previewAnswers = [:]; lookupConfidence = ""; lookupNote = ""; lookupSources = []
                     status = "지웠습니다."
                 }) {
                     Text("지우기")
@@ -493,16 +571,21 @@ public struct PersonaEditorView: View {
 
     private func lookup() {
         isLookingUp = true
+        lookupProgress = "자료를 찾고 있습니다…"
         status = ""
         let query = lookupQuery
         let shot = attachedShot
+        let room = roomId
         Task {
             do {
                 let result = try await GeminiService.shared.lookupPersona(
-                    query: query, imageBase64: shot?.base64, imageMimeType: shot?.mime
-                )
+                    query: query, roomId: room, imageBase64: shot?.base64, imageMimeType: shot?.mime
+                ) { label in
+                    await MainActor.run { lookupProgress = label }
+                }
                 await MainActor.run {
                     isLookingUp = false
+                    lookupProgress = ""
                     lookupConfidence = result.confidence
                     lookupNote = result.note
                     lookupSources = result.sources
@@ -516,21 +599,23 @@ public struct PersonaEditorView: View {
                         description = query.trimmingCharacters(in: .whitespaces)
                     }
                     isEnabled = true
-                    previews = []
+                    previewAnswers = [:]
                     status = "찾았습니다. 말 시켜보고 확인하세요."
                 }
             } catch {
                 await MainActor.run {
                     isLookingUp = false
+                    lookupProgress = ""
                     status = error.localizedDescription
                 }
             }
         }
     }
 
-    private func runPreview() {
-        isPreviewing = true
-        previews = []
+    /// 상황 하나만 물어봅니다.
+    private func ask(situation: String, message: String) {
+        guard !message.isEmpty, previewAsking == nil else { return }
+        previewAsking = situation
         status = ""
         let persona = PersonaStyle(
             description: description, samples: sampleLines, styleGuide: styleGuide, isEnabled: true
@@ -539,23 +624,23 @@ public struct PersonaEditorView: View {
         // 이 방의 모드로 미리봅니다. 챗봇 방인데 멘토 지침으로 미리보면
         // 여기서 괜찮아 보이던 말투가 실제 대화에서는 전혀 다르게 나옵니다.
         let mode = roomManager.getRoom(id: roomId)?.resolvedMode ?? .mathMentor
+        let room = roomId
         Task {
-            let results = await withTaskGroup(of: (Int, String, String, String).self) { group in
-                for (index, prompt) in GeminiService.previewPrompts(for: mode).enumerated() {
-                    group.addTask {
-                        let answer = (try? await GeminiService.shared.previewPersona(
-                            persona: persona, botName: botName, message: prompt.message, mode: mode
-                        )) ?? "(불러오지 못했습니다)"
-                        return (index, prompt.situation, prompt.message, answer)
-                    }
+            let answer: String
+            do {
+                answer = try await GeminiService.shared.previewPersona(
+                    roomId: room, persona: persona, botName: botName, message: message, mode: mode
+                )
+            } catch {
+                await MainActor.run {
+                    previewAsking = nil
+                    status = error.localizedDescription
                 }
-                var collected: [(Int, String, String, String)] = []
-                for await item in group { collected.append(item) }
-                return collected.sorted { $0.0 < $1.0 }
+                return
             }
             await MainActor.run {
-                previews = results.map { ($0.1, $0.2, $0.3) }
-                isPreviewing = false
+                previewAnswers[situation] = answer
+                previewAsking = nil
                 status = "원본 대사와 결이 비슷하면 저장하세요."
             }
         }
@@ -569,9 +654,11 @@ public struct PersonaEditorView: View {
         let instruction = refineInstruction
         let currentDescription = description
         let currentSamples = sampleLines
+        let room = roomId
         Task {
             do {
                 let revised = try await GeminiService.shared.refinePersonaStyle(
+                    roomId: room,
                     currentGuide: currentGuide,
                     instruction: instruction,
                     description: currentDescription,
@@ -582,7 +669,7 @@ public struct PersonaEditorView: View {
                     isRefining = false
                     canUndoRefine = true
                     refineInstruction = ""
-                    previews = []
+                    previewAnswers = [:]
                     status = "고쳤습니다. 말 시켜보고 확인하세요."
                 }
             } catch {
@@ -599,16 +686,17 @@ public struct PersonaEditorView: View {
         status = ""
         let currentDescription = description
         let currentSamples = sampleLines
+        let room = roomId
         Task {
             do {
                 let guide = try await GeminiService.shared.analyzePersonaStyle(
-                    description: currentDescription, samples: currentSamples
+                    roomId: room, description: currentDescription, samples: currentSamples
                 )
                 await MainActor.run {
                     styleGuide = guide
                     isEnabled = true
                     isAnalyzing = false
-                    previews = []
+                    previewAnswers = [:]
                     status = "규칙을 뽑았습니다. 말 시켜보고 확인하세요."
                 }
             } catch {

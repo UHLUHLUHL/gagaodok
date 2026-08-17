@@ -548,7 +548,12 @@ public struct SingleChatRoomView: View {
                     let alreadyShown = await MainActor.run {
                         self.messages.contains { $0.turnId == responseTurnId }
                     }
-                    if !alreadyShown, attempt < Self.silentRetryCount {
+                    // **다시 보내도 소용없는 실패는 다시 보내지 않습니다.**
+                    // 키가 틀렸거나(401) 요청이 잘못됐거나(400) 안전 필터에 걸린 요청은
+                    // 몇 번을 보내도 똑같이 실패합니다. 그 두 번은 화면에 아무것도
+                    // 남기지 않으면서 요금만 세 배로 냈습니다.
+                    // 전송 계층이 만든 오류가 아니면(주로 네트워크) 지금까지처럼 다시 시도합니다.
+                    if !alreadyShown, AIServiceError.isRetryable(error), attempt < Self.silentRetryCount {
                         try? await Task.sleep(nanoseconds: Self.retryBackoff[attempt])
                         attempt += 1
                         continue

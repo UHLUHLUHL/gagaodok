@@ -174,6 +174,23 @@ public struct KakaoUsageSettingsView: View {
             .padding(15)
             .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 12))
 
+            // 사용량을 못 받은 요청이 있으면 위 숫자가 실제보다 적습니다. 숨기지 않고 적습니다.
+            if usage.totalUnreportedRequests > 0 {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(KakaoTheme.dynamic(light: KakaoTheme.hex(0xB8860B), dark: KakaoTheme.hex(0xE0B341)))
+                    Text("사용량을 받지 못한 요청이 \(usage.totalUnreportedRequests)건 있습니다. 그만큼 위 금액이 실제보다 적습니다.")
+                        .font(.custom("Pretendard-Regular", size: 11))
+                        .foregroundColor(KakaoTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(KakaoTheme.dynamic(light: KakaoTheme.hex(0xFDF6E3), dark: KakaoTheme.hex(0x33290F)), in: RoundedRectangle(cornerRadius: 10))
+            }
+
             Text("모델별 사용량")
                 .font(.custom("Pretendard-Bold", size: 12.5))
                 .padding(.leading, 2)
@@ -301,6 +318,13 @@ public struct KakaoUsageSettingsView: View {
             }
             .font(.custom("Pretendard-Regular", size: 9.5))
             .foregroundColor(KakaoTheme.textSecondary)
+
+            // 캐시에 올린 토큰은 어느 요청의 입력에도 안 잡힙니다. 따로 보여줍니다.
+            if value.cacheCreateTokens > 0 {
+                Text("캐시에 올린 토큰 \(value.cacheCreateTokens.formatted())")
+                    .font(.custom("Pretendard-Regular", size: 9.5))
+                    .foregroundColor(KakaoTheme.textTertiary)
+            }
         }
         .padding(12)
         .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 11))

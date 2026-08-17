@@ -71,6 +71,34 @@ public actor StreamBubbleSink {
     }
 }
 
+/// 전송 계층이 만든 오류에서 "다시 보낼 값어치가 있는지"를 읽습니다.
+///
+/// 화면 쪽은 실패해도 사용자에게 알리기 전에 조용히 두 번 더 보냅니다. 그런데
+/// 키가 틀렸거나(401) 요청이 잘못됐거나(400) 안전 필터에 걸린 요청은 몇 번을 보내도
+/// 똑같이 실패합니다. 그 두 번은 **화면에 아무것도 남기지 않으면서 요금만 세 배로 냅니다.**
+public enum AIServiceError {
+    static let domain = "KakaoSapiens.AIService"
+    static let retryableKey = "retryable"
+
+    /// 그대로 다시 보내면 될 만한 상태 코드인지입니다.
+    ///
+    /// 429는 잠깐 몰린 것이고 5xx는 저쪽 사정이라 다시 보낼 값어치가 있습니다.
+    /// 400·401·403은 요청이나 키가 잘못된 것이라 몇 번을 보내도 같습니다.
+    public static func retryable(_ statusCode: Int) -> Bool {
+        statusCode == 429 || statusCode >= 500
+    }
+
+    /// 이 오류를 다시 보내도 되는지입니다.
+    ///
+    /// 우리가 만든 오류가 아니면 참입니다. 그쪽은 대부분 네트워크가 잠깐 끊긴 경우라
+    /// 다시 보내는 것이 맞습니다.
+    public static func isRetryable(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == domain else { return true }
+        return nsError.userInfo[retryableKey] as? Bool ?? false
+    }
+}
+
 public actor GeminiService {
     public static let shared = GeminiService()
 
@@ -162,10 +190,14 @@ public actor GeminiService {
     /// 검색 그라운딩과 URL 읽기를 함께 켜므로 이름이든 링크든 같은 입구로 처리됩니다.
     /// 스크린샷을 넘기면 거기 적힌 대사도 함께 읽습니다.
     /// 모르는 인물이면 지어내지 않고 확신도를 '낮음'으로 돌려줍니다.
+    /// - Parameter onProgress: 지금 무엇이 도착했는지를 알려 줍니다.
+    ///   자세한 것은 `lookupProgressLabel(_:)`에 적었습니다.
     public func lookupPersona(
         query: String,
+        roomId: UUID,
         imageBase64: String? = nil,
-        imageMimeType: String? = nil
+        imageMimeType: String? = nil,
+        onProgress: @Sendable @escaping (String) async -> Void = { _ in }
     ) async throws -> PersonaLookup {
         guard let apiKey = KeychainStore.geminiAPIKey else {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
@@ -220,35 +252,127 @@ public actor GeminiService {
             ]
         ]
 
-        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
+        await onProgress("자료를 찾고 있습니다…")
+        let result = try await streamGeminiText(body: body, apiKey: apiKey, roomId: roomId) { soFar in
+            await onProgress(Self.lookupProgressLabel(soFar))
+        }
+        guard !result.text.isEmpty else {
+            throw serviceError(geminiEmptyResponseMessage(finishReason: result.finishReason))
+        }
+        return Self.parsePersonaLookup(result.text, sources: result.sources)
+    }
+
+    private struct TextStreamResult {
+        let text: String
+        let finishReason: String?
+        let sources: [String]
+    }
+
+    /// 글 하나를 흘려 받습니다. 대화용 스트림과 달리 말풍선으로 가르지 않습니다.
+    ///
+    /// 지금은 말투 조사만 씁니다. 오래 걸리는 요청이라, 다 받을 때까지 기다리는 대신
+    /// 도착하는 대로 넘겨 화면이 무엇을 하고 있는지 보여줄 수 있게 합니다.
+    private func streamGeminiText(
+        body: [String: Any],
+        apiKey: String,
+        roomId: UUID,
+        onPartial: @Sendable (String) async -> Void
+    ) async throws -> TextStreamResult {
+        let model = AIModel.gemini37Flash
+        guard let url = URL(string:
+            "\(Self.geminiBaseURL)/models/\(model.rawValue):streamGenerateContent?alt=sse") else {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.timeoutInterval = 90
+        request.timeoutInterval = 120
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
-        guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
-              let responseParts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
-            throw serviceError("말투 조사 결과를 읽을 수 없습니다.")
-        }
-        let text = responseParts.compactMap { $0["text"] as? String }.joined()
-        guard !text.isEmpty else {
-            throw serviceError(geminiEmptyResponseMessage(finishReason: candidate["finishReason"] as? String))
-        }
-
+        var text = ""
+        var finishReason: String?
         var sources: [String] = []
-        if let grounding = candidate["groundingMetadata"] as? [String: Any],
-           let chunks = grounding["groundingChunks"] as? [[String: Any]] {
-            sources = chunks.compactMap { chunk in
-                ((chunk["web"] as? [String: Any])?["title"] as? String)
+        var reported: [String: Any] = [:]
+        var serverResponded = false
+
+        // 여기서도 빠져나가는 모든 길에서 적습니다. 도중에 끊겨도 서버는 이미 읽었습니다.
+        defer {
+            let snapshot = reported
+            let responded = serverResponded
+            Task {
+                if !snapshot.isEmpty {
+                    await self.recordGeminiUsage(snapshot, roomId: roomId, model: model)
+                } else if responded {
+                    await self.recordUnreported(roomId: roomId, model: model)
+                }
             }
         }
-        return Self.parsePersonaLookup(text, sources: sources)
+
+        let (bytes, response) = try await resilientSession.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw serviceError("Gemini 응답을 읽을 수 없습니다.")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            var raw = Data()
+            for try await byte in bytes { raw.append(byte) }
+            _ = try validatedJSON(data: raw, response: response, provider: "Gemini")
+            throw serviceError(
+                "Gemini 요청이 \(http.statusCode) 상태로 끝났습니다.",
+                retryable: AIServiceError.retryable(http.statusCode)
+            )
+        }
+
+        serverResponded = true
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard !payload.isEmpty, payload != "[DONE]",
+                  let data = payload.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+
+            if let usage = json["usageMetadata"] as? [String: Any] { reported = usage }
+            guard let candidate = (json["candidates"] as? [[String: Any]])?.first else { continue }
+            if let reason = candidate["finishReason"] as? String { finishReason = reason }
+            if let grounding = candidate["groundingMetadata"] as? [String: Any],
+               let chunks = grounding["groundingChunks"] as? [[String: Any]] {
+                for chunk in chunks {
+                    guard let title = (chunk["web"] as? [String: Any])?["title"] as? String,
+                          !title.isEmpty, !sources.contains(title) else { continue }
+                    sources.append(title)
+                }
+            }
+
+            let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
+            let piece = parts.compactMap { $0["text"] as? String }.joined()
+            guard !piece.isEmpty else { continue }
+            text += piece
+            await onPartial(text)
+        }
+
+        return TextStreamResult(text: text, finishReason: finishReason, sources: sources.sorted())
+    }
+
+    /// 지금까지 도착한 글을 보고 무슨 일을 하고 있는지 한 줄로 옮깁니다.
+    ///
+    /// **진행률을 흉내 내지 않습니다.** 이 요청은 오래 걸리는데(검색 → 읽기 → 정리)
+    /// 예전에는 "찾는 중" 한 줄만 떠서, 멈춘 것인지 되고 있는 것인지 알 수 없었습니다.
+    ///
+    /// 답변은 [확신도] → [대사] → [말투] 순서로 나오도록 지침에 적혀 있습니다.
+    /// 마지막으로 열린 절이 곧 지금 하고 있는 일입니다. 대사는 몇 줄까지 왔는지
+    /// 함께 셉니다 — 숫자가 늘어나는 것이 보여야 멈춘 것이 아님을 알 수 있습니다.
+    /// 시간을 재서 지어낸 단계가 아니라 방금 받은 글자가 근거입니다.
+    static func lookupProgressLabel(_ soFar: String) -> String {
+        if soFar.contains("[말투]") { return "말투 규칙을 적고 있습니다…" }
+        if soFar.contains("[대사]") {
+            let section = soFar.components(separatedBy: "[대사]").dropFirst().joined()
+                .components(separatedBy: "[말투]").first ?? ""
+            let lines = section.components(separatedBy: .newlines)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
+            return lines == 0 ? "대사를 모으고 있습니다…" : "대사를 모으고 있습니다… \(lines)줄"
+        }
+        if soFar.contains("[확신도]") { return "찾은 자료를 살펴보고 있습니다…" }
+        return "자료를 찾고 있습니다…"
     }
 
     static func parsePersonaLookup(_ text: String, sources: [String]) -> PersonaLookup {
@@ -324,6 +448,7 @@ public actor GeminiService {
     /// 저장하기 전에 이 말투가 실제 그 캐릭터 같은지 확인할 수 있도록 짧은 답변을 만듭니다.
     /// 실제 대화와 똑같은 시스템 지침을 쓰므로, 여기서 보이는 결이 채팅방에서도 그대로 나옵니다.
     public func previewPersona(
+        roomId: UUID,
         persona: PersonaStyle,
         botName: String,
         message: String,
@@ -336,7 +461,7 @@ public actor GeminiService {
         enabled.isEnabled = true
         let system = systemPrompt(botName: botName, persona: enabled, mode: mode)
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "systemInstruction": ["parts": [["text": system]]],
             "contents": [["role": "user", "parts": [["text": message]]]],
             "generationConfig": [
@@ -344,18 +469,12 @@ public actor GeminiService {
                 "thinkingConfig": ["thinkingLevel": "low"]
             ]
         ]
-        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
-            throw URLError(.badURL)
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.timeoutInterval = 60
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // 미리보기도 실제 대화와 같은 조건이어야 결을 판단할 수 있습니다.
+        // 챗봇 방은 대화에서 필터를 내리는데 미리보기만 안 내리면, 여기서만 답이
+        // 통째로 잘려 나가고 사용자는 말투가 잘못된 줄 압니다.
+        if let safety = mode.geminiSafetySettings { body["safetySettings"] = safety }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
         guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
               let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
             throw serviceError("미리보기를 읽을 수 없습니다.")
@@ -374,6 +493,7 @@ public actor GeminiService {
     /// "좀 더 딱딱하게", "이모지 빼줘", "존댓말로 바꿔줘" 같은 조정이 필요합니다.
     /// 원래 규칙을 통째로 다시 쓰지 않고 요청한 부분만 반영합니다.
     public func refinePersonaStyle(
+        roomId: UUID,
         currentGuide: String,
         instruction: String,
         description: String,
@@ -420,18 +540,7 @@ public actor GeminiService {
                 "thinkingConfig": ["thinkingLevel": "low"]
             ]
         ]
-        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
-            throw URLError(.badURL)
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.timeoutInterval = 60
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
         guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
               let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
             throw serviceError("교정 결과를 읽을 수 없습니다.")
@@ -449,7 +558,7 @@ public actor GeminiService {
     /// 모델에게 "이 캐릭터처럼 말해"라고만 하면 흉내가 흐려집니다.
     /// 관찰 가능한 항목(문장 끝맺음, 호칭, 자주 쓰는 어휘, 문장 길이 등)을 짚어서 적게 하면
     /// 이후 대화에서 재현이 훨씬 안정적입니다.
-    public func analyzePersonaStyle(description: String, samples: [String]) async throws -> String {
+    public func analyzePersonaStyle(roomId: UUID, description: String, samples: [String]) async throws -> String {
         guard let apiKey = KeychainStore.geminiAPIKey else {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
         }
@@ -491,18 +600,7 @@ public actor GeminiService {
         userText += "대사:\n\(joined)"
         body["contents"] = [["role": "user", "parts": [["text": userText]]]]
 
-        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(AIModel.gemini37Flash.rawValue):generateContent") else {
-            throw URLError(.badURL)
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.timeoutInterval = 60
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
         guard let candidate = (json["candidates"] as? [[String: Any]])?.first,
               let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
             throw serviceError("말투 분석 결과를 읽을 수 없습니다.")
@@ -516,19 +614,67 @@ public actor GeminiService {
     }
 
     /// generateContent에 한 번 보내고 JSON을 돌려줍니다.
-    private func postGemini(body: [String: Any], apiKey: String, model: AIModel) async throws -> [String: Any] {
+    ///
+    /// **여기서 사용량을 함께 적습니다.** 예전에는 대화 답변만 장부에 적히고
+    /// 이 길로 나가는 요청 — 구간 요약, 말투 조사, 말투 분석, 다듬기, 미리보기 — 은
+    /// 하나도 안 적혔습니다. 말투 조사는 검색 그라운딩까지 켜는 무거운 요청인데
+    /// 앱 화면에서는 공짜처럼 보였습니다. 요금이 과소평가되던 가장 큰 이유입니다.
+    private func postGemini(body: [String: Any], apiKey: String, roomId: UUID) async throws -> [String: Any] {
+        let model = AIModel.gemini37Flash
         guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // 키를 쿼리 문자열에 붙이면 URL이 남는 곳마다 그대로 노출되므로 헤더로 보냅니다.
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.timeoutInterval = 120
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await resilientSession.data(for: request)
-        return try validatedJSON(data: data, response: response, provider: "Gemini")
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await resilientSession.data(for: request)
+        } catch {
+            // 연결이 끊긴 것이라 서버가 읽었는지 알 수 없습니다. 건수만 남깁니다.
+            await recordUnreported(roomId: roomId, model: model)
+            throw error
+        }
+
+        // 상태 코드가 나쁘면 여기서 던집니다. 재시도할 값어치가 있는지도 함께 담겨 나갑니다.
+        //
+        // **HTTP 오류는 미보고 건수로 세지 않습니다.** 400·429·5xx는 생성이
+        // 시작되기 전에 거절당한 것이라 청구되지 않습니다. 이걸 세면 "요금이
+        // 실제보다 적다"는 화면 경고가 부풀어 믿을 수 없게 됩니다.
+        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+        await recordGeminiUsage(json["usageMetadata"] as? [String: Any], roomId: roomId, model: model)
+        return json
+    }
+
+    /// Gemini가 돌려준 `usageMetadata`를 장부에 적습니다. 없으면 건수만 남깁니다.
+    private func recordGeminiUsage(_ usage: [String: Any]?, roomId: UUID, model: AIModel) async {
+        guard let usage, !usage.isEmpty else {
+            await recordUnreported(roomId: roomId, model: model)
+            return
+        }
+        // 검색 그라운딩을 쓰면 도구가 쓴 입력이 따로 옵니다. 이것도 청구됩니다.
+        let input = intValue(usage["promptTokenCount"]) + intValue(usage["toolUsePromptTokenCount"])
+        // 사고 토큰은 화면에 한 글자도 안 보이지만 출력 단가로 청구됩니다.
+        let output = intValue(usage["candidatesTokenCount"]) + intValue(usage["thoughtsTokenCount"])
+        let cached = intValue(usage["cachedContentTokenCount"])
+        await MainActor.run {
+            TokenUsageManager.shared.recordUsage(
+                roomId: roomId, model: model,
+                inputTokens: input, outputTokens: output, cachedInputTokens: cached
+            )
+        }
+    }
+
+    private func recordUnreported(roomId: UUID, model: AIModel) async {
+        await MainActor.run {
+            TokenUsageManager.shared.recordUnreportedRequest(roomId: roomId, model: model)
+        }
     }
 
     private func systemPrompt(botName: String, persona: PersonaStyle? = nil, mode: ChatMode = .mathMentor) -> String {
@@ -555,6 +701,30 @@ public actor GeminiService {
         let coveredTurns: Int     // 이 캐시가 덮는 contents 앞부분의 개수
         let fingerprint: String   // 덮은 구간이 편집되지 않았는지 확인하는 지문
         let expiresAt: Date
+        /// 이 캐시에 올라가 있는 토큰 수입니다. 다시 만들 값어치가 있는지 따질 때 씁니다.
+        /// 예전 파일에는 없던 값이라 기본값을 둡니다.
+        var tokenCount: Int = 0
+
+        private enum CodingKeys: String, CodingKey {
+            case name, coveredTurns, fingerprint, expiresAt, tokenCount
+        }
+
+        init(name: String, coveredTurns: Int, fingerprint: String, expiresAt: Date, tokenCount: Int = 0) {
+            self.name = name
+            self.coveredTurns = coveredTurns
+            self.fingerprint = fingerprint
+            self.expiresAt = expiresAt
+            self.tokenCount = tokenCount
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            coveredTurns = try container.decode(Int.self, forKey: .coveredTurns)
+            fingerprint = try container.decode(String.self, forKey: .fingerprint)
+            expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+            tokenCount = try container.decodeIfPresent(Int.self, forKey: .tokenCount) ?? 0
+        }
     }
 
     // 캐시 이름을 메모리에만 두면 앱을 껐다 켤 때마다 서버에 살아 있는 캐시를 버리고
@@ -592,16 +762,50 @@ public actor GeminiService {
     private var refreshingRooms: Set<UUID> = []
     /// 같은 방의 요약을 두 번 겹쳐 만들지 않도록 막습니다.
     private var summarizingRooms: Set<UUID> = []
+
+    /// 방마다 **직전** 요청 시각입니다. 대화가 이어지는 중인지 보는 데 씁니다.
+    ///
+    /// 메모리에만 둡니다. 앱을 껐다 켜면 비어 있어서 그 방의 캐시가 한 메시지 늦게
+    /// 만들어집니다. 파일로 남길 값어치는 없다고 봤습니다.
+    private var lastRequestAt: [UUID: Date] = [:]
+
+    /// 직전 요청 시각을 꺼내면서 지금 시각으로 갱신합니다.
+    ///
+    /// **읽기 전에** 꺼내야 직전 값이 나옵니다. 읽고 나서 갱신하면 항상 자기 자신을
+    /// 보게 되어 "대화 중인지" 판단이 무의미해집니다.
+    private func markRequest(_ roomId: UUID) -> Date? {
+        let previous = lastRequestAt[roomId]
+        lastRequestAt[roomId] = Date()
+        return previous
+    }
+
     private static let cacheTTLSeconds = 900
     // 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 어림값이 실제보다 조금 클 수 있으므로
     // 여유를 둡니다. 그래도 거부되면 캐시 없이 그냥 진행하므로 대화에는 영향이 없습니다.
     private static let minimumCacheTokens = 1200
 
+    // 캐시를 다시 만들 기준입니다. 자세한 셈은 `refreshPrefixCache`에 적었습니다.
+    // 짧은 대화에서 몇 마디 붙었다고 다시 만들지 않게 하는 바닥값입니다. **정한 값입니다.**
+    private static let cacheRefreshMinTailTokens = 2000
+
+    // TTL이 이만큼도 안 남았으면 꼬리가 짧아도 새로 만듭니다. 그대로 두면
+    // 곧 만료되어 다음 요청이 통째로 전액이 됩니다.
+    private static let cacheRefreshTTLFloor: TimeInterval = 240
+
+    // 직전 요청이 이 안에 있었으면 "대화 중"으로 봅니다. 그때만 첫 캐시를 만듭니다.
+    // **정한 값입니다.** 실제 사용 기록을 보고 뽑은 값이 아닙니다.
+    private static let cacheBurstWindow: TimeInterval = 300
+
     /// 한 구간을 요약해 방의 요약 목록 뒤에 붙입니다.
     ///
     /// 실패하면 아무것도 바꾸지 않습니다. 그러면 다음 요청에서 같은 구간을 다시 시도하고,
     /// 그때까지는 그 구간이 원문으로 나가므로 대화에는 영향이 없습니다.
-    private func appendDigestSegment(roomId: UUID, pending: ConversationCompactor.PendingSegment, apiKey: String) async {
+    private func appendDigestSegment(
+        roomId: UUID,
+        pending: ConversationCompactor.PendingSegment,
+        mode: ChatMode,
+        apiKey: String
+    ) async {
         guard !summarizingRooms.contains(roomId) else { return }
         summarizingRooms.insert(roomId)
         defer { summarizingRooms.remove(roomId) }
@@ -611,7 +815,8 @@ public actor GeminiService {
         guard current.coveredTurns < pending.lastTurn else { return }
 
         guard let text = try? await requestSegmentSummary(
-            turns: pending.turns, startingTurn: pending.firstTurn, apiKey: apiKey),
+            roomId: roomId, turns: pending.turns, startingTurn: pending.firstTurn,
+            mode: mode, apiKey: apiKey),
               !text.isEmpty else { return }
 
         let updated = ConversationDigest(segments: current.segments + [
@@ -622,13 +827,19 @@ public actor GeminiService {
         }
     }
 
-    private func requestSegmentSummary(turns: [ConversationTurn], startingTurn: Int, apiKey: String) async throws -> String {
-        let transcript = ConversationCompactor.transcript(for: turns, startingTurn: startingTurn)
+    private func requestSegmentSummary(
+        roomId: UUID,
+        turns: [ConversationTurn],
+        startingTurn: Int,
+        mode: ChatMode,
+        apiKey: String
+    ) async throws -> String {
+        let transcript = ConversationCompactor.transcript(for: turns, startingTurn: startingTurn, mode: mode)
         guard !transcript.isEmpty else { return "" }
 
         let userText = "다음은 정리할 대화 구간이다.\n\n" + transcript
         let body: [String: Any] = [
-            "systemInstruction": ["parts": [["text": ConversationCompactor.summaryInstruction]]],
+            "systemInstruction": ["parts": [["text": ConversationCompactor.summaryInstruction(for: mode)]]],
             "contents": [["role": "user", "parts": [["text": userText]]]],
             "generationConfig": [
                 // 지시한 분량보다 넉넉히 잡습니다. 3.7은 사고 토큰도 이 예산에서 함께 쓰고,
@@ -638,7 +849,7 @@ public actor GeminiService {
             ]
         ]
 
-        let json = try await postGemini(body: body, apiKey: apiKey, model: AIModel.gemini37Flash)
+        let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
         guard let candidates = json["candidates"] as? [[String: Any]],
               let candidate = candidates.first,
               let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] else {
@@ -674,7 +885,7 @@ public actor GeminiService {
         // 대화가 아주 길어진 방에서는 앞부분을 구간 요약으로 갈아끼웁니다.
         // 기준에 못 미치면 plan이 원본을 그대로 돌려주므로 짧은 방은 지금까지와 똑같이 동작합니다.
         let digest = roomId.map { ChatRoomManager.shared.loadDigestForRoom(roomId: $0) }
-        let plan = ConversationCompactor.plan(conversation: conversation, digest: digest)
+        let plan = ConversationCompactor.plan(conversation: conversation, digest: digest, mode: mode)
 
         var contents = buildGeminiContents(plan.verbatimTurns)
         if let digestText = plan.digestText {
@@ -683,23 +894,22 @@ public actor GeminiService {
         let system = systemPrompt(botName: botName, persona: persona, mode: mode)
 
         // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
-        var reusedCache = roomId.flatMap { usablePrefixCache(for: $0, contents: contents, system: system) }
+        var reusedCache = roomId.flatMap {
+            usablePrefixCache(for: $0, contents: contents, system: system, apiKey: apiKey)
+        }
+        // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
+        let previousRequestAt = roomId.flatMap { markRequest($0) }
 
         // 흘려보낼 곳이 있으면 스트리밍으로, 없으면 지금까지처럼 한 번에 받습니다.
         // 스트림은 완성된 문단만 통과시키므로 화면에 깨진 수식이 뜨지 않습니다.
-        func run(cache: PrefixCache?) async throws -> (text: String, finishReason: String?, usage: [String: Any]) {
+        func run(cache: PrefixCache?, into outcome: StreamOutcome) async throws {
             let roleplaySoFar = mode == .companion && roleplayInProgress
             guard let onBubble else {
-                let json = try await performGeminiRequest(
+                try await performGeminiRequest(
+                    into: outcome,
                     contents: contents, system: system, cache: cache, apiKey: apiKey, model: model, mode: mode
                 )
-                let candidate = (json["candidates"] as? [[String: Any]])?.first
-                let parts = (candidate?["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
-                return (
-                    parts.compactMap { $0["text"] as? String }.joined(separator: "\n"),
-                    candidate?["finishReason"] as? String,
-                    json["usageMetadata"] as? [String: Any] ?? [:]
-                )
+                return
             }
             let buffer = StreamBubbleSink(
                 botName: botName,
@@ -711,47 +921,66 @@ public actor GeminiService {
                     rawText: paragraph, botName: botName, roleplay: roleplay
                 )
             }
-            let outcome = try await streamGeminiRequest(
+            try await streamGeminiRequest(
+                into: outcome,
                 contents: contents, system: system, cache: cache, apiKey: apiKey, model: model, mode: mode
             ) { piece in
                 await buffer.consume(piece)
             }
             await buffer.finish()
-            return (outcome.text, outcome.finishReason, outcome.usage)
         }
 
-        var result: (text: String, finishReason: String?, usage: [String: Any])
+        // 사용량을 **빠져나가는 모든 길에서** 적습니다.
+        //
+        // 예전에는 스트림이 정상적으로 끝난 뒤에만 적었습니다. 그런데 답변을 도중에
+        // 멈추면(사용자가 중지) 태스크가 취소되면서 그 자리를 건너뛰었습니다.
+        // 서버는 이미 입력을 다 읽고 답을 만들고 있었으므로 요금은 그대로 나갑니다.
+        // 사용량 조각은 매 청크에 실려 오기 때문에, 도중에 멈춰도 그때까지 받은 값은
+        // 상자에 남아 있습니다. 그걸 버리지 않고 적습니다.
+        let outcome = StreamOutcome()
+        defer {
+            if let roomId {
+                let reported = outcome.usage
+                let responded = outcome.serverResponded
+                Task {
+                    if !reported.isEmpty {
+                        await self.recordGeminiUsage(reported, roomId: roomId, model: model)
+                    } else if responded {
+                        // 답을 만들기 시작했는데 사용량을 못 받았습니다. 숫자를 지어내지
+                        // 않고 건수만 남깁니다.
+                        await self.recordUnreported(roomId: roomId, model: model)
+                    }
+                }
+            }
+        }
+
         do {
-            result = try await run(cache: reusedCache)
+            try await run(cache: reusedCache, into: outcome)
         } catch {
             // 캐시가 서버에서 이미 만료·삭제되었으면 캐시 없이 한 번만 다시 보냅니다.
             // 이미 말풍선을 내보낸 뒤라면 다시 보낼 수 없으므로 그대로 올립니다.
             guard reusedCache != nil, onBubble == nil else { throw error }
-            if let roomId { prefixCaches[roomId] = nil }
-            reusedCache = nil
-            result = try await run(cache: nil)
-        }
 
-        if !result.usage.isEmpty, let roomId {
-            let usage = result.usage
-            let input = intValue(usage["promptTokenCount"])
-            let output = intValue(usage["candidatesTokenCount"]) + intValue(usage["thoughtsTokenCount"])
-            let cached = intValue(usage["cachedContentTokenCount"])
-            await MainActor.run {
-                TokenUsageManager.shared.recordUsage(
-                    roomId: roomId,
-                    model: model,
-                    inputTokens: input,
-                    outputTokens: output,
-                    cachedInputTokens: cached
-                )
+            // 첫 시도가 서버에 닿아 사용량을 받았으면 **먼저 적고 상자를 비웁니다.**
+            // 안 그러면 두 번째 시도의 값이 덮어써서 첫 요청이 장부에서 사라집니다.
+            // 사용량을 아예 못 받은 실패(대개 캐시가 없다는 404)는 청구되지 않으므로
+            // 미보고 건수로도 세지 않습니다.
+            if let roomId, !outcome.usage.isEmpty {
+                await recordGeminiUsage(outcome.usage, roomId: roomId, model: model)
+                outcome.usage = [:]
             }
+
+            // 못 쓰게 된 캐시는 서버 쪽도 지웁니다. 남겨 두면 아무도 안 읽는 채로
+            // TTL이 다할 때까지 보관료를 먹습니다.
+            if let roomId { dropCache(for: roomId, deleteRemote: true, apiKey: apiKey) }
+            reusedCache = nil
+            try await run(cache: nil, into: outcome)
         }
 
-        let text = result.text
+        let text = outcome.text
         guard !text.isEmpty else {
             // 답변이 비었을 때 "왜" 비었는지가 3.7에서는 대부분 finishReason에 담겨 옵니다.
-            throw serviceError(geminiEmptyResponseMessage(finishReason: result.finishReason))
+            throw serviceError(geminiEmptyResponseMessage(finishReason: outcome.finishReason))
         }
 
         // 캐시에는 "방금 실제로 보낸 contents"를 그대로 올립니다.
@@ -760,12 +989,17 @@ public actor GeminiService {
         // 다음 요청의 앞부분과 반드시 일치하므로, 답변+새 질문 두 턴만 캐시 밖에 남습니다.
         // 답변을 이미 확보한 뒤이므로 화면 표시를 막지 않도록 백그라운드에서 진행합니다.
         if let roomId {
-            Task { await self.refreshPrefixCache(roomId: roomId, contents: contents, system: system, apiKey: apiKey) }
+            Task {
+                await self.refreshPrefixCache(
+                    roomId: roomId, contents: contents, system: system,
+                    apiKey: apiKey, previousRequestAt: previousRequestAt
+                )
+            }
         }
 
         // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
         if let roomId, let pending = plan.pending {
-            Task { await self.appendDigestSegment(roomId: roomId, pending: pending, apiKey: apiKey) }
+            Task { await self.appendDigestSegment(roomId: roomId, pending: pending, mode: mode, apiKey: apiKey) }
         }
         return text
     }
@@ -779,10 +1013,20 @@ public actor GeminiService {
     }
 
     /// 스트림 한 건의 결과입니다. 사용량과 종료 사유는 마지막 청크에 들어옵니다.
-    struct StreamOutcome {
+    ///
+    /// **구조체가 아니라 참조입니다.** 값으로 돌려주면 도중에 끊겼을 때 그때까지 받은
+    /// 것이 함께 사라집니다. 밖에서 상자를 만들어 넘기면, 예외로 빠져나가더라도
+    /// 상자에 담긴 것은 부르는 쪽 손에 남습니다.
+    final class StreamOutcome {
         var text = ""
         var finishReason: String?
         var usage: [String: Any] = [:]
+        /// 서버가 요청을 받아 답을 만들기 시작했는지.
+        ///
+        /// 사용량을 못 받았을 때 그것을 "청구는 됐는데 못 센 요청"으로 볼지 가르는
+        /// 기준입니다. 400·429·5xx로 거절당한 요청은 생성이 시작되지 않았으므로
+        /// 세지 않습니다. 세면 화면의 경고가 실제보다 부풀어 믿을 수 없게 됩니다.
+        var serverResponded = false
     }
 
     /// `streamGenerateContent`로 받아 도착하는 대로 흘려보냅니다.
@@ -790,6 +1034,7 @@ public actor GeminiService {
     /// 완성된 말풍선을 만드는 판단은 `StreamingBubbleBuffer`가 합니다. 여기서는
     /// 서버가 준 조각을 그대로 넘길 뿐이라, 청크가 어디서 끊기든 상관하지 않습니다.
     private func streamGeminiRequest(
+        into outcome: StreamOutcome,
         contents: [[String: Any]],
         system: String,
         cache: PrefixCache?,
@@ -797,7 +1042,7 @@ public actor GeminiService {
         model: AIModel,
         mode: ChatMode,
         onText: @Sendable (String) async -> Void
-    ) async throws -> StreamOutcome {
+    ) async throws {
         guard let url = URL(string:
             "\(Self.geminiBaseURL)/models/\(model.rawValue):streamGenerateContent?alt=sse") else {
             throw URLError(.badURL)
@@ -808,7 +1053,7 @@ public actor GeminiService {
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.timeoutInterval = 120
         request.httpBody = try JSONSerialization.data(
-            withJSONObject: streamBody(contents: contents, system: system, cache: cache, mode: mode))
+            withJSONObject: requestBody(contents: contents, system: system, cache: cache, mode: mode))
 
         let (bytes, response) = try await resilientSession.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -819,10 +1064,13 @@ public actor GeminiService {
             var raw = Data()
             for try await byte in bytes { raw.append(byte) }
             _ = try validatedJSON(data: raw, response: response, provider: "Gemini")
-            throw serviceError("Gemini 요청이 \(http.statusCode) 상태로 끝났습니다.")
+            throw serviceError(
+                "Gemini 요청이 \(http.statusCode) 상태로 끝났습니다.",
+                retryable: AIServiceError.retryable(http.statusCode)
+            )
         }
 
-        var outcome = StreamOutcome()
+        outcome.serverResponded = true
         for try await line in bytes.lines {
             guard line.hasPrefix("data:") else { continue }
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
@@ -840,52 +1088,22 @@ public actor GeminiService {
             outcome.text += piece
             await onText(piece)
         }
-        return outcome
     }
 
-    private func streamBody(contents: [[String: Any]], system: String, cache: PrefixCache?, mode: ChatMode) -> [String: Any] {
-        var body: [String: Any] = [
-            "generationConfig": [
-                "maxOutputTokens": Self.geminiMaxOutputTokens,
-                "thinkingConfig": ["thinkingLevel": "medium"]
-            ]
-        ]
-        // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
-        if let safety = mode.geminiSafetySettings { body["safetySettings"] = safety }
-        if let cache {
-            body["cachedContent"] = cache.name
-            body["contents"] = Array(contents.dropFirst(cache.coveredTurns))
-        } else {
-            body["systemInstruction"] = ["parts": [["text": system]]]
-            body["contents"] = contents
-        }
-        return body
-    }
-
-    private func performGeminiRequest(
-        contents: [[String: Any]],
-        system: String,
-        cache: PrefixCache?,
-        apiKey: String,
-        model: AIModel,
-        mode: ChatMode
-    ) async throws -> [String: Any] {
-        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
-            throw URLError(.badURL)
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // 키를 쿼리 문자열에 붙이면 URL이 남는 곳마다 그대로 노출되므로 헤더로 보냅니다.
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        request.timeoutInterval = 60
-
+    /// 대화 한 턴을 보낼 요청 본문입니다. 스트리밍이든 아니든 같은 것을 씁니다.
+    ///
+    /// 예전에는 두 벌이 따로 있었고 사고량 같은 값이 양쪽에 각각 박혀 있었습니다.
+    /// 한쪽만 고치면 다른 쪽이 조용히 옛 설정으로 나갑니다.
+    private func requestBody(contents: [[String: Any]], system: String, cache: PrefixCache?, mode: ChatMode) -> [String: Any] {
         // Gemini 3.x는 temperature·topP·topK·candidateCount를 받지 않고,
         // 사고량은 thinking_budget 숫자가 아니라 thinkingLevel 문자열(low/medium/high)로 지정합니다.
         var body: [String: Any] = [
             "generationConfig": [
                 "maxOutputTokens": Self.geminiMaxOutputTokens,
-                "thinkingConfig": ["thinkingLevel": "medium"]
+                // 사고량은 모드가 정합니다(`ChatMode.geminiThinkingLevel`).
+                // 챗봇 방에서는 낮음입니다. 안 보이는 사고 토큰이 출력 단가로
+                // 붙는데, 잡담의 말씨는 오래 생각한다고 좋아지지 않습니다.
+                "thinkingConfig": ["thinkingLevel": mode.geminiThinkingLevel]
             ]
         ]
         // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
@@ -899,40 +1117,98 @@ public actor GeminiService {
             body["systemInstruction"] = ["parts": [["text": system]]]
             body["contents"] = contents
         }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        return try validatedJSON(data: data, response: response, provider: "Gemini")
+        return body
     }
 
-    private func usablePrefixCache(for roomId: UUID, contents: [[String: Any]], system: String) -> PrefixCache? {
+    private func performGeminiRequest(
+        into outcome: StreamOutcome,
+        contents: [[String: Any]],
+        system: String,
+        cache: PrefixCache?,
+        apiKey: String,
+        model: AIModel,
+        mode: ChatMode
+    ) async throws {
+        guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
+            throw URLError(.badURL)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // 키를 쿼리 문자열에 붙이면 URL이 남는 곳마다 그대로 노출되므로 헤더로 보냅니다.
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.timeoutInterval = 60
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: requestBody(contents: contents, system: system, cache: cache, mode: mode))
+
+        let (data, response) = try await resilientSession.data(for: request)
+        let json = try validatedJSON(data: data, response: response, provider: "Gemini")
+
+        outcome.serverResponded = true
+        outcome.usage = json["usageMetadata"] as? [String: Any] ?? [:]
+        let candidate = (json["candidates"] as? [[String: Any]])?.first
+        outcome.finishReason = candidate?["finishReason"] as? String
+        let parts = (candidate?["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
+        outcome.text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+    }
+
+    private func usablePrefixCache(
+        for roomId: UUID,
+        contents: [[String: Any]],
+        system: String,
+        apiKey: String
+    ) -> PrefixCache? {
         guard let cache = prefixCaches[roomId] else { return nil }
+
+        // 만료된 것은 서버에도 없으므로 지울 것이 없습니다.
         guard cache.expiresAt > Date().addingTimeInterval(30) else {
-            prefixCaches[roomId] = nil
+            dropCache(for: roomId, deleteRemote: false, apiKey: apiKey)
             return nil
         }
+
         // 캐시가 덮는 만큼의 턴이 남아 있고, 그 구간이 편집되지 않았을 때만 재사용합니다.
-        guard contents.count > cache.coveredTurns else { return nil }
+        //
+        // **여기서 그냥 `nil`만 돌려주면 안 됩니다.** 예전에는 그랬는데, 메시지를
+        // 하나 고치거나 지워서 대화가 짧아지면 이 조건에 걸려 캐시를 안 쓰고,
+        // 갱신하는 쪽은 "이미 더 많이 덮는 캐시가 있다"며 그냥 돌아갔습니다.
+        // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
+        // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
+        guard contents.count > cache.coveredTurns else {
+            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey)
+            return nil
+        }
         guard fingerprint(Array(contents.prefix(cache.coveredTurns)), system: system) == cache.fingerprint else {
-            prefixCaches[roomId] = nil
+            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey)
             return nil
         }
         return cache
     }
 
-    private func refreshPrefixCache(roomId: UUID, contents: [[String: Any]], system: String, apiKey: String) async {
+    /// 로컬 기록에서 지우고, 서버에 남아 있을 것이면 그것도 지웁니다.
+    ///
+    /// 서버 쪽을 안 지우면 아무도 안 쓰는 캐시가 TTL이 다할 때까지 보관료를 먹습니다.
+    private func dropCache(for roomId: UUID, deleteRemote: Bool, apiKey: String) {
+        guard let removed = prefixCaches[roomId] else { return }
+        prefixCaches[roomId] = nil
+        if deleteRemote {
+            Task { await self.deleteCache(named: removed.name, apiKey: apiKey) }
+        }
+    }
+
+    private func refreshPrefixCache(
+        roomId: UUID,
+        contents: [[String: Any]],
+        system: String,
+        apiKey: String,
+        previousRequestAt: Date?
+    ) async {
         // 갱신 도중에는 URL 요청에서 액터가 풀리므로, 막지 않으면 같은 방에 대해
         // 갱신이 겹치면서 캐시가 여러 개 만들어지고 이전 것이 지워지지 않습니다.
         guard !refreshingRooms.contains(roomId) else { return }
         refreshingRooms.insert(roomId)
         defer { refreshingRooms.remove(roomId) }
 
-        // 이미 같은 구간을 덮는 캐시가 있으면 다시 만들 필요가 없습니다.
-        if let existing = prefixCaches[roomId],
-           existing.coveredTurns >= contents.count,
-           existing.expiresAt > Date().addingTimeInterval(60) {
-            return
-        }
+        let now = Date()
 
         // 사진도 함께 셉니다. 글자만 세던 시절에는 사진이 0자로 잡혀서,
         // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
@@ -941,6 +1217,45 @@ public actor GeminiService {
         guard estimatedTokens >= Self.minimumCacheTokens else { return }
 
         let previous = prefixCaches[roomId]
+
+        if previous == nil {
+            // **아직 캐시가 없으면, 대화가 이어지는 중일 때만 만듭니다.**
+            //
+            // 메신저는 몰아서 쓰고 한참 쉽니다. 예전에는 한참 만에 한 마디 던져도
+            // 그 뒤에 대화 전체를 캐시로 올렸는데, 사용자가 바로 앱을 닫으면
+            // 그 캐시는 아무도 안 읽고 TTL이 다할 때까지 보관료만 먹었습니다.
+            // 올리는 값까지 치면 그 한 마디의 요금을 두 배로 낸 셈입니다.
+            //
+            // 직전 요청이 얼마 전이면 지금은 대화 중이고, 다음 요청도 TTL 안에
+            // 올 가능성이 높습니다. 그때만 올립니다. 대신 한 묶음의 두 번째
+            // 메시지까지는 캐시 없이 갑니다 — 안 쓸 캐시를 만드는 것보다 낫습니다.
+            guard let previousRequestAt,
+                  now.timeIntervalSince(previousRequestAt) <= Self.cacheBurstWindow else { return }
+        }
+
+        if let previous {
+            // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
+            if previous.coveredTurns >= contents.count,
+               previous.expiresAt > now.addingTimeInterval(60) {
+                return
+            }
+
+            // **매 턴 다시 만들지 않습니다.**
+            //
+            // 예전에는 답변을 받을 때마다 대화 접두사 전체를 새 캐시로 올리고
+            // 옛것을 지웠습니다. 한 턴 아끼자고 수만 토큰을 매번 다시 올린 셈입니다.
+            // 캐시를 만드는 요청은 그 자체로 청구되고 보관료도 따로 붙는 반면,
+            // 안 만들고 넘어갔을 때 더 내는 것은 **새로 붙은 꼬리만큼**뿐입니다.
+            //
+            // 그래서 꼬리가 캐시의 5분의 1보다 커졌을 때만 새로 만듭니다.
+            // 그 아래에서는 새로 만드는 값이 아끼는 값보다 큽니다.
+            let tail = TokenEstimator.estimatedTokens(
+                contents: Array(contents.dropFirst(previous.coveredTurns)))
+            let worthIt = tail >= max(Self.cacheRefreshMinTailTokens, previous.tokenCount / 5)
+            let expiringSoon = previous.expiresAt <= now.addingTimeInterval(Self.cacheRefreshTTLFloor)
+            guard worthIt || expiringSoon else { return }
+        }
+
         guard let url = URL(string: "\(Self.geminiBaseURL)/cachedContents") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -965,23 +1280,29 @@ public actor GeminiService {
             return
         }
 
+        let cachedTokens = intValue((json["usageMetadata"] as? [String: Any])?["totalTokenCount"])
         prefixCaches[roomId] = PrefixCache(
             name: name,
             coveredTurns: contents.count,
             fingerprint: fingerprint(contents, system: system),
-            expiresAt: Date().addingTimeInterval(TimeInterval(Self.cacheTTLSeconds))
+            expiresAt: Date().addingTimeInterval(TimeInterval(Self.cacheTTLSeconds)),
+            tokenCount: cachedTokens > 0 ? cachedTokens : estimatedTokens
         )
 
-        // 캐시는 올려둔 토큰 수 × 보관 시간으로 요금이 매겨집니다.
-        // 이전 캐시를 바로 지우므로 실제 보관 시간은 다음 갱신까지지만,
-        // 최악의 경우인 TTL 전체를 기준으로 잡아 요금을 과소 표시하지 않습니다.
-        if let cachedTokens = (json["usageMetadata"] as? [String: Any])?["totalTokenCount"] as? Int {
-            let tokenHours = Double(cachedTokens) * (Double(Self.cacheTTLSeconds) / 3600.0)
+        // 올린 토큰과 보관량을 함께 적습니다.
+        //
+        // **올린 토큰을 입력 요금으로 칩니다.** 예전에는 보관료만 적어서, 캐시를
+        // 매 턴 새로 만드는 동안 그 비용이 앱 화면에서 통째로 사라져 있었습니다.
+        //
+        // 보관량은 실제 보관 시간이 아니라 TTL 전체로 잡습니다. 다음 갱신 때
+        // 이전 것을 지우므로 실제로는 그보다 짧습니다. 이것도 넉넉한 쪽입니다.
+        if cachedTokens > 0 {
             await MainActor.run {
-                TokenUsageManager.shared.recordCacheStorage(
+                TokenUsageManager.shared.recordCacheCreation(
                     roomId: roomId,
                     model: .gemini37Flash,
-                    tokenHours: tokenHours
+                    tokens: cachedTokens,
+                    tokenHours: Double(cachedTokens) * (Double(Self.cacheTTLSeconds) / 3600.0)
                 )
             }
         }
@@ -1261,7 +1582,10 @@ public actor GeminiService {
             let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             let error = parsed?["error"] as? [String: Any]
             let message = error?["message"] as? String ?? "HTTP \(http.statusCode)"
-            throw serviceError("\(provider) 오류: \(message)")
+            throw serviceError(
+                "\(provider) 오류: \(message)",
+                retryable: AIServiceError.retryable(http.statusCode)
+            )
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw serviceError("\(provider) 응답이 JSON 형식이 아닙니다.")
@@ -1275,8 +1599,24 @@ public actor GeminiService {
         return 0
     }
 
-    private func serviceError(_ message: String) -> NSError {
-        NSError(domain: "KakaoSapiens.AIService", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
+    /// - Parameter retryable: 같은 요청을 그대로 다시 보내면 될 만한 실패인지.
+    ///
+    ///   **거짓이면 다시 보내지 않습니다.** 예전에는 어떤 실패든 조용히 두 번 더 보냈는데,
+    ///   키가 틀렸거나 안전 필터에 걸린 요청은 몇 번을 보내도 똑같이 실패합니다.
+    ///   그 재시도는 화면에 아무것도 남기지 않으면서 요금만 세 배로 냈습니다.
+    ///
+    ///   기본값이 거짓인 이유는, 이 함수로 만드는 오류가 대부분 "키를 등록해주세요"처럼
+    ///   다시 보내도 소용없는 것들이기 때문입니다. 서버 상태 코드에서 온 실패만
+    ///   `AIServiceError.retryable(_:)`로 판단해 참이 됩니다.
+    private func serviceError(_ message: String, retryable: Bool = false) -> NSError {
+        NSError(
+            domain: AIServiceError.domain,
+            code: -1,
+            userInfo: [
+                NSLocalizedDescriptionKey: message,
+                AIServiceError.retryableKey: retryable
+            ]
+        )
     }
 
     /// - Parameter roleplay: 이 턴이 상황극임이 확인됐는지. 참일 때만 따옴표 없는

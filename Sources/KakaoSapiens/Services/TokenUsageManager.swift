@@ -4,31 +4,51 @@ import SwiftUI
 public struct ModelTokenUsage: Codable, Equatable {
     public var inputTokens: Int
     public var cachedInputTokens: Int
+    /// OpenAI식 캐시 쓰기입니다. **`inputTokens` 안에 들어 있는 부분집합**이라
+    /// 요금을 매길 때 입력에서 덜어 냅니다.
     public var cacheWriteTokens: Int
+    /// Gemini식 명시적 캐시를 **새로 만드느라 올린** 토큰입니다.
+    ///
+    /// 이건 별개의 요청(`cachedContents` POST)이라 어떤 `promptTokenCount`에도
+    /// 잡히지 않습니다. 그래서 덜어 내지 않고 그대로 더합니다.
+    /// 예전에는 이 값을 아예 안 세서, 캐시를 매 턴 새로 만드는 동안 그 비용이
+    /// 앱 화면에서 통째로 사라져 있었습니다.
+    public var cacheCreateTokens: Int
     public var outputTokens: Int
     public var requestCount: Int
     /// 명시적 캐시를 올려둔 누적량입니다. 토큰 수 × 보관 시간으로 요금이 매겨집니다.
     public var cacheStorageTokenHours: Double
+    /// 보낸 것은 확실한데 사용량을 못 받은 요청 수입니다.
+    ///
+    /// 스트림이 첫 조각도 오기 전에 끊기거나, 답변을 도중에 멈췄는데 그때까지
+    /// 사용량 조각이 하나도 안 왔을 때입니다. 청구서에는 있고 여기에는 없는
+    /// 요청이라, 숫자를 지어내는 대신 **몇 건인지만** 남깁니다.
+    public var unreportedRequests: Int
 
     public init(
         inputTokens: Int = 0,
         cachedInputTokens: Int = 0,
         cacheWriteTokens: Int = 0,
+        cacheCreateTokens: Int = 0,
         outputTokens: Int = 0,
         requestCount: Int = 0,
-        cacheStorageTokenHours: Double = 0
+        cacheStorageTokenHours: Double = 0,
+        unreportedRequests: Int = 0
     ) {
         self.inputTokens = inputTokens
         self.cachedInputTokens = cachedInputTokens
         self.cacheWriteTokens = cacheWriteTokens
+        self.cacheCreateTokens = cacheCreateTokens
         self.outputTokens = outputTokens
         self.requestCount = requestCount
         self.cacheStorageTokenHours = cacheStorageTokenHours
+        self.unreportedRequests = unreportedRequests
     }
 
-    // 이전 버전 장부에는 보관량 항목이 없었습니다. 없으면 0으로 읽습니다.
+    // 이전 버전 장부에는 뒤쪽 항목들이 없었습니다. 없으면 0으로 읽습니다.
     private enum CodingKeys: String, CodingKey {
-        case inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, requestCount, cacheStorageTokenHours
+        case inputTokens, cachedInputTokens, cacheWriteTokens, cacheCreateTokens
+        case outputTokens, requestCount, cacheStorageTokenHours, unreportedRequests
     }
 
     public init(from decoder: Decoder) throws {
@@ -36,9 +56,11 @@ public struct ModelTokenUsage: Codable, Equatable {
         inputTokens = try container.decodeIfPresent(Int.self, forKey: .inputTokens) ?? 0
         cachedInputTokens = try container.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0
         cacheWriteTokens = try container.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0
+        cacheCreateTokens = try container.decodeIfPresent(Int.self, forKey: .cacheCreateTokens) ?? 0
         outputTokens = try container.decodeIfPresent(Int.self, forKey: .outputTokens) ?? 0
         requestCount = try container.decodeIfPresent(Int.self, forKey: .requestCount) ?? 0
         cacheStorageTokenHours = try container.decodeIfPresent(Double.self, forKey: .cacheStorageTokenHours) ?? 0
+        unreportedRequests = try container.decodeIfPresent(Int.self, forKey: .unreportedRequests) ?? 0
     }
 
     public var totalTokens: Int { inputTokens + outputTokens }
@@ -55,6 +77,12 @@ public struct ModelTokenUsage: Codable, Equatable {
         return Double(regular) / 1_000_000 * model.inputPricePerMillion
             + Double(cached) / 1_000_000 * model.cachedInputPricePerMillion
             + Double(writes) / 1_000_000 * model.inputPricePerMillion * model.cacheWriteMultiplier
+            // 캐시 생성분은 어떤 promptTokenCount에도 안 잡히므로 덜어 내지 않고 그대로 더합니다.
+            //
+            // **입력 단가로 칩니다.** 캐시 생성 요청이 청구되는지 문서로 확인하지는 못했습니다.
+            // 확실하지 않을 때는 비싼 쪽으로 잡습니다 — 화면의 숫자가 실제보다 적은 것이
+            // 많은 것보다 나쁩니다.
+            + Double(cacheCreateTokens) / 1_000_000 * model.inputPricePerMillion
             + Double(outputTokens) / 1_000_000 * model.outputPricePerMillion
             + cacheStorageCostUSD(for: model)
     }
@@ -74,9 +102,11 @@ public struct ModelTokenUsage: Codable, Equatable {
             inputTokens: inputTokens + other.inputTokens,
             cachedInputTokens: cachedInputTokens + other.cachedInputTokens,
             cacheWriteTokens: cacheWriteTokens + other.cacheWriteTokens,
+            cacheCreateTokens: cacheCreateTokens + other.cacheCreateTokens,
             outputTokens: outputTokens + other.outputTokens,
             requestCount: requestCount + other.requestCount,
-            cacheStorageTokenHours: cacheStorageTokenHours + other.cacheStorageTokenHours
+            cacheStorageTokenHours: cacheStorageTokenHours + other.cacheStorageTokenHours,
+            unreportedRequests: unreportedRequests + other.unreportedRequests
         )
     }
 }
@@ -141,18 +171,18 @@ public final class TokenUsageManager: ObservableObject {
         cacheWriteTokens: Int = 0,
         cacheStorageTokenHours: Double = 0
     ) {
-        var room = usageByRoom[roomId] ?? [:]
-        let delta = ModelTokenUsage(
-            inputTokens: max(0, inputTokens),
-            cachedInputTokens: max(0, cachedInputTokens),
-            cacheWriteTokens: max(0, cacheWriteTokens),
-            outputTokens: max(0, outputTokens),
-            requestCount: 1,
-            cacheStorageTokenHours: max(0, cacheStorageTokenHours)
+        add(
+            roomId: roomId,
+            model: model,
+            delta: ModelTokenUsage(
+                inputTokens: max(0, inputTokens),
+                cachedInputTokens: max(0, cachedInputTokens),
+                cacheWriteTokens: max(0, cacheWriteTokens),
+                outputTokens: max(0, outputTokens),
+                requestCount: 1,
+                cacheStorageTokenHours: max(0, cacheStorageTokenHours)
+            )
         )
-        room[model] = (room[model] ?? ModelTokenUsage()).adding(delta)
-        usageByRoom[roomId] = room
-        saveUsage()
     }
 
     // 기존 호출부 호환. 새 코드는 모델을 명시합니다.
@@ -165,13 +195,30 @@ public final class TokenUsageManager: ObservableObject {
         )
     }
 
-    /// 캐시 보관량만 따로 더합니다. 요청 횟수는 늘리지 않습니다.
-    public func recordCacheStorage(roomId: UUID, model: AIModel, tokenHours: Double) {
-        guard tokenHours > 0 else { return }
+    /// 명시적 캐시를 새로 올린 몫입니다. 만든 토큰 수와 보관량을 함께 적습니다.
+    public func recordCacheCreation(roomId: UUID, model: AIModel, tokens: Int, tokenHours: Double) {
+        guard tokens > 0 || tokenHours > 0 else { return }
+        add(
+            roomId: roomId,
+            model: model,
+            delta: ModelTokenUsage(
+                cacheCreateTokens: max(0, tokens),
+                // 캐시를 만드는 것도 API 요청 한 건입니다. 그동안 이 요청은
+                // 횟수에도 안 잡혀서 "메시지 수보다 요청이 적은" 장부가 나왔습니다.
+                requestCount: 1,
+                cacheStorageTokenHours: max(0, tokenHours)
+            )
+        )
+    }
+
+    /// 보냈지만 사용량을 못 받은 요청을 한 건 적습니다.
+    public func recordUnreportedRequest(roomId: UUID, model: AIModel) {
+        add(roomId: roomId, model: model, delta: ModelTokenUsage(requestCount: 1, unreportedRequests: 1))
+    }
+
+    private func add(roomId: UUID, model: AIModel, delta: ModelTokenUsage) {
         var room = usageByRoom[roomId] ?? [:]
-        var entry = room[model] ?? ModelTokenUsage()
-        entry.cacheStorageTokenHours += tokenHours
-        room[model] = entry
+        room[model] = (room[model] ?? ModelTokenUsage()).adding(delta)
         usageByRoom[roomId] = room
         saveUsage()
     }
@@ -205,6 +252,10 @@ public final class TokenUsageManager: ObservableObject {
         AIModel.allCases.reduce(0) { $0 + totalUsage(for: $1).costUSD(for: $1) }
     }
     public var totalCostKRW: Double { totalCostUSD * exchangeRate }
+    /// 사용량을 못 받은 요청이 몇 건인지입니다. 0이 아니면 화면의 요금이 실제보다 적습니다.
+    public var totalUnreportedRequests: Int {
+        AIModel.allCases.reduce(0) { $0 + totalUsage(for: $1).unreportedRequests }
+    }
     public var totalSavingsUSD: Double {
         AIModel.allCases.reduce(0) {
             let usage = totalUsage(for: $1)

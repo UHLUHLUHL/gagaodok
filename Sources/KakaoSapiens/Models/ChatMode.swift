@@ -52,6 +52,25 @@ public enum ChatMode: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    // MARK: - 사고량
+
+    /// Gemini에 넘길 `thinkingLevel`입니다.
+    ///
+    /// 사고 토큰은 화면에 한 글자도 안 보이지만 **출력 단가로 청구됩니다.**
+    /// (모델이 생각을 안 하는 것이 아니라, Gemini가 사고한 내용을 안 돌려줄 뿐입니다.
+    /// 몇 토큰 썼는지는 `thoughtsTokenCount`로 옵니다.) 출력 단가는 입력의 다섯 배입니다.
+    ///
+    /// **모드마다 다르게 둡니다.**
+    /// 멘토는 계산이 틀리면 그대로 틀린 것을 가르치게 되므로 생각할 값어치가 있습니다.
+    /// 챗봇은 다릅니다. 여기서 필요한 것은 정답이 아니라 그 인물다운 말씨와 빠른 대꾸이고,
+    /// 그건 오래 생각한다고 좋아지는 종류가 아닙니다. 오히려 답이 늦어집니다.
+    public var geminiThinkingLevel: String {
+        switch self {
+        case .mathMentor: return "medium"
+        case .companion: return "low"
+        }
+    }
+
     // MARK: - 시스템 지침
 
     /// 방 이름 같은 동적 값이 섞이지 않은 고정 접두사입니다. 캐시가 이 부분을 그대로 재사용합니다.
