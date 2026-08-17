@@ -48,6 +48,10 @@ import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.PersonaStyle
 import com.sapiens.gagaodok.service.AIService
+import com.sapiens.gagaodok.service.analyzePersonaStyle
+import com.sapiens.gagaodok.service.lookupPersona
+import com.sapiens.gagaodok.service.previewPersona
+import com.sapiens.gagaodok.service.refinePersonaStyle
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.theme.KakaoText
