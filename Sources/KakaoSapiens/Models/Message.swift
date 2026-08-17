@@ -58,14 +58,31 @@ public struct ChatAttachment: Identifiable, Codable {
         let contentType = UTType(filenameExtension: ext)
         let isImage = contentType?.conforms(to: .image) == true
         let mime = contentType?.preferredMIMEType ?? "application/octet-stream"
-        
+
+        guard isImage else {
+            return ChatAttachment(
+                type: .file,
+                fileName: url.lastPathComponent,
+                fileSize: Int64(data.count),
+                fileExtension: ext,
+                dataBase64: data.base64EncodedString(),
+                mimeType: mime
+            )
+        }
+
+        // 사진은 타일 격자에 맞춰 줄여 담습니다. 줄일 것이 없으면 원본 그대로입니다.
+        let shrunk = ImageBudget.shrink(data)
+        let payload = shrunk?.data ?? data
+        let name = shrunk == nil
+            ? url.lastPathComponent
+            : url.deletingPathExtension().lastPathComponent + "." + shrunk!.fileExtension
         return ChatAttachment(
-            type: isImage ? .image : .file,
-            fileName: url.lastPathComponent,
-            fileSize: Int64(data.count),
-            fileExtension: ext,
-            dataBase64: data.base64EncodedString(),
-            mimeType: mime
+            type: .image,
+            fileName: name,
+            fileSize: Int64(payload.count),
+            fileExtension: shrunk?.fileExtension ?? ext,
+            dataBase64: payload.base64EncodedString(),
+            mimeType: shrunk?.mimeType ?? mime
         )
     }
     
@@ -104,14 +121,18 @@ public struct ChatAttachment: Identifiable, Codable {
     }
 
     private static func imageAttachment(data: Data, contentType: UTType) -> ChatAttachment {
-        let ext = contentType.preferredFilenameExtension ?? "png"
+        // 붙여넣는 것은 대개 화면 캡처입니다. 레티나 맥에서는 그대로 두면 3천 토큰이
+        // 넘고, 그 값을 그 사진이 대화창에 있는 내내 매 턴 다시 냅니다.
+        let shrunk = ImageBudget.shrink(data)
+        let payload = shrunk?.data ?? data
+        let ext = shrunk?.fileExtension ?? (contentType.preferredFilenameExtension ?? "png")
         return ChatAttachment(
             type: .image,
             fileName: "붙여넣은 이미지.\(ext)",
-            fileSize: Int64(data.count),
+            fileSize: Int64(payload.count),
             fileExtension: ext,
-            dataBase64: data.base64EncodedString(),
-            mimeType: contentType.preferredMIMEType ?? "image/png"
+            dataBase64: payload.base64EncodedString(),
+            mimeType: shrunk?.mimeType ?? (contentType.preferredMIMEType ?? "image/png")
         )
     }
 
