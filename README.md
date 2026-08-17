@@ -9,7 +9,7 @@
 | | 파일 | 요구 사항 |
 |---|---|---|
 | 🖥️ Mac | [KakaoSapiens.zip](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/KakaoSapiens.zip) | macOS 14(Sonoma)+, 인텔·애플실리콘 모두 |
-| 📱 Android | [가가오독.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/가가오독.apk) | Android 8.0+ |
+| 📱 Android | [gagaodok.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/gagaodok.apk) | Android 8.0+ |
 
 설치·초기 설정은 [설치방법.txt](설치방법.txt)를 보십시오. 둘 다 API 키(Gemini)를
 직접 발급받아 등록해야 동작합니다 — 앱에 내장된 키는 없습니다.
