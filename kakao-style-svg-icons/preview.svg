@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="632" height="170" viewBox="0 0 632 170" fill="none">
+  <rect width="632" height="170" rx="24" fill="#F7F7F7"/>
+  <g transform="translate(20 20)"><rect width="104" height="130" rx="18" fill="#fff"/><image href="sidebar-profile.svg" x="20" y="8" width="64" height="64"/><image href="sidebar-chat.svg" x="20" y="64" width="64" height="64"/></g>
+  <g transform="translate(158 30)"><rect width="130" height="110" rx="18" fill="#fff"/><image href="sidebar-status.svg" x="33" y="23" width="64" height="64"/></g>
+  <g transform="translate(322 30)"><rect width="130" height="110" rx="18" fill="#fff"/><image href="search.svg" x="33" y="23" width="64" height="64"/></g>
+  <g transform="translate(486 30)"><rect width="130" height="110" rx="18" fill="#fff"/><image href="new-chat.svg" x="33" y="23" width="64" height="64"/></g>
+</svg>

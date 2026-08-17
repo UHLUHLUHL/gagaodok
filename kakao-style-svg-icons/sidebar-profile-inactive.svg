@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Profile unselected</title>
+  <circle cx="32" cy="20" r="13" fill="#9E9E9E"/>
+  <path d="M8 55.5C8 44.73 18.75 37 32 37s24 7.73 24 18.5c0 .83-.67 1.5-1.5 1.5h-45c-.83 0-1.5-.67-1.5-1.5Z" fill="#9E9E9E"/>
+</svg>
