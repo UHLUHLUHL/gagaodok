@@ -11,9 +11,17 @@ import AppKit
 /// 뷰마다 colorScheme을 받아 분기하지 않아도 되고, 웹뷰가 아닌 기본 컨트롤도 함께 따라옵니다.
 public enum KakaoTheme {
     static func dynamic(light: NSColor, dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+        Color(nsColor: nsDynamic(light: light, dark: dark))
+    }
+
+    /// AppKit 컨트롤에 그대로 물릴 수 있는 동적 색입니다.
+    ///
+    /// `NSTextView`처럼 SwiftUI를 거치지 않는 뷰는 `Color`를 못 받습니다.
+    /// 그렇다고 고정 색을 박으면 한쪽 외형에서 바탕과 같은 색이 되어 안 보입니다.
+    static func nsDynamic(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-        })
+        }
     }
 
     static func hex(_ value: UInt32) -> NSColor {
@@ -61,6 +69,14 @@ public enum KakaoTheme {
     // MARK: - 글자
 
     public static let textPrimary = dynamic(light: hex(0x1A1A1A), dark: hex(0xECECEC))
+    /// `textPrimary`와 같은 색의 AppKit판입니다. 입력창의 `NSTextView`가 씁니다.
+    public static let nsTextPrimary = nsDynamic(light: hex(0x1A1A1A), dark: hex(0xECECEC))
+    /// 입력창 커서입니다. 알파를 나중에 씌우지 않고 양쪽 값에 미리 넣습니다.
+    /// 동적 색에 `withAlphaComponent`를 걸면 그 자리에서 한쪽으로 굳을 수 있습니다.
+    public static let nsCaret = nsDynamic(
+        light: hex(0x1A1A1A).withAlphaComponent(0.85),
+        dark: hex(0xECECEC).withAlphaComponent(0.85)
+    )
     public static let textSecondary = dynamic(light: white(0, 0.58), dark: hex(0x9A9A9A))
     public static let textTertiary = dynamic(light: white(0, 0.40), dark: hex(0x6E6E6E))
     /// 대화방 상단 바 위의 글자·아이콘. 라이트에서는 하늘색 위라 검정 계열입니다.

@@ -250,9 +250,13 @@ public struct NativeChatTextView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
-        textView.textColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+        // 고정 색을 박으면 안 됩니다. 입력창 바탕은 다크에서 #1A1A1A인데
+        // 글자색이 #1A1A1A에 고정돼 있어서, 다크 모드에서 친 글자가 바탕과 같은
+        // 색이 되어 사라졌습니다. 플레이스홀더만 동적 색이라 "치기 전엔 보이는데
+        // 치면 없어지는" 모양이었습니다.
+        textView.textColor = KakaoTheme.nsTextPrimary
         textView.font = NSFont(name: "Pretendard-Regular", size: 13.5) ?? NSFont.systemFont(ofSize: 13.5)
-        textView.insertionPointColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 0.85)
+        textView.insertionPointColor = KakaoTheme.nsCaret
         
         // 텍스트 인셋 및 라인 패딩 정밀 정렬 (플레이스홀더와 1:1 일치)
         textView.textContainer?.lineFragmentPadding = 0
