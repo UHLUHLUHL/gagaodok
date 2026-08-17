@@ -151,6 +151,7 @@ import com.sapiens.gagaodok.service.lookupPersona   // ← 이런 줄이 필요�
 
 ## 같이 볼 문서
 
+- `TOKEN_COST.md` — 턴이 쌓일수록 요금이 왜 오르는지, 어디를 고쳐야 하는지 (실사용 장부에서 역산)
 - `MAC_BACKPORT.md` — 안드로이드에서 고친 것 중 맥에 옮긴 것, 그리고 아직 확인이 필요한 것
 - `android/MEASURED.md` — 원조 카카오톡 캡처에서 화소로 잰 치수
 - `android/README.md` — 안드로이드 판의 판별 기록
