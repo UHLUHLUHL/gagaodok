@@ -203,6 +203,16 @@
                 return s.replace(/^(\\quad|\\qquad|\\,|\\;|\\!|\\s)+/, '').replace(/(\\quad|\\qquad|\\,|\\;|\\!|\\s)+$/, '').trim();
             }
 
+            function splitTrailingAnnotation(line) {
+                const match = line.match(/^([\s\S]*?)(?:\\quad|\\qquad|\s)*(\([^\)]*\\text\{[^\}]*\}[^\)]*\)|\([^\)]+\))$/);
+                if (match && match[1].trim() && match[2].trim()) {
+                    if (line.length > 32) {
+                        return { expr: match[1].trim(), annot: match[2].trim() };
+                    }
+                }
+                return null;
+            }
+
             // 1급 관계 연산자 목록 (긴 문자열 우선 매칭)
             const relOps = [
                 '\\stackrel{\\text{def}}{=}', '\\coloneqq', ':=',
@@ -301,35 +311,49 @@
 
                 if (totalOpsCount >= 2 || hasLogicalSep || trimmed.length > 42) {
                     let aligned = '\\begin{aligned}\n';
-                    for (let idx = 0; idx < parsedParts.length; idx++) {
-                        const pp = parsedParts[idx];
-                        const prevSep = idx > 0 ? separators[idx - 1] : '';
-                        const isLogicLeader = prevSep === '\\implies' || prevSep === '\\iff';
-                        const sepPrefix = isLogicLeader ? prevSep + ' ' : '';
+                    
+                    if (hasLogicalSep) {
+                        for (let idx = 0; idx < parsedParts.length; idx++) {
+                            const pp = parsedParts[idx];
+                            const prevSep = idx > 0 ? separators[idx - 1] : '';
+                            const isLogicLeader = prevSep === '\\implies' || prevSep === '\\iff';
+                            const sepPrefix = isLogicLeader ? prevSep + ' ' : '';
 
-                        if (pp.ops.length >= 2) {
-                            for (let k = 0; k < pp.ops.length - 1; k++) {
-                                if (k === 0) {
-                                    aligned += sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr);
-                                } else {
-                                    aligned += ' \\\\\n&' + pp.ops[k].op + ' ' + cleanStr(pp.ops[k + 1].expr);
-                                }
-                            }
-                        } else {
-                            aligned += sepPrefix + cleanStr(pp.raw);
-                        }
-
-                        if (idx < parsedParts.length - 1) {
-                            const nextSep = separators[idx];
-                            if (nextSep === ',' || nextSep === ';') {
-                                aligned += nextSep + ' \\\\\n';
+                            let lineContent = sepPrefix + cleanStr(pp.raw);
+                            const splitAnnot = splitTrailingAnnotation(lineContent);
+                            if (splitAnnot) {
+                                aligned += '&' + cleanStr(splitAnnot.expr) + ' \\\\\n&\\quad ' + cleanStr(splitAnnot.annot);
                             } else {
-                                aligned += ' \\\\\n';
+                                aligned += '&' + lineContent;
                             }
-                        } else {
-                            aligned += '\n';
+
+                            if (idx < parsedParts.length - 1) {
+                                aligned += ' \\\\\n';
+                            } else {
+                                aligned += '\n';
+                            }
+                        }
+                    } else {
+                        for (let idx = 0; idx < parsedParts.length; idx++) {
+                            const pp = parsedParts[idx];
+                            const sep = separators[idx] || '';
+                            const sepSuffix = (idx < parsedParts.length - 1 && (sep === ',' || sep === ';')) ? sep + ' \\\\\n' : (idx < parsedParts.length - 1 ? ' \\\\\n' : '\n');
+
+                            if (pp.ops.length >= 2) {
+                                for (let k = 0; k < pp.ops.length - 1; k++) {
+                                    if (k === 0) {
+                                        aligned += cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr);
+                                    } else {
+                                        aligned += ' \\\\\n&' + pp.ops[k].op + ' ' + cleanStr(pp.ops[k + 1].expr);
+                                    }
+                                }
+                                aligned += sepSuffix;
+                            } else {
+                                aligned += cleanStr(pp.raw) + sepSuffix;
+                            }
                         }
                     }
+
                     aligned += '\\end{aligned}';
                     return aligned;
                 }
@@ -364,7 +388,7 @@
                     const needed = formula.scrollWidth;
                     if (needed <= available) break;
                     const current = parseFloat(getComputedStyle(formula).fontSize);
-                    const target = Math.max(current * (available / needed) * 0.98, 12);
+                    const target = Math.max(current * (available / needed) * 0.98, 13.5);
                     formula.style.setProperty('font-size', target + 'px', 'important');
                 }
                 if (formula.scrollWidth > block.clientWidth + 1) {
