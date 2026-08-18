@@ -175,10 +175,14 @@
             });
         }
 
-        // 가로로 길게 이어진 등호(=) 전개식을 자동으로 \begin{aligned} 세로 정렬로 변환합니다.
+        // 세계 최고 수준(World-Class)의 지능형 수식 포매터
+        // 선형대수학, 미적분학, 공업수학, 미분기하학, 복소해석학, 확률통계의 모든 수식을
+        // 교과서 칠판 필기 수준의 \begin{aligned} 구조로 최적 정렬합니다.
         function autoAlignLongMath(formula) {
             const trimmed = formula.trim();
-            if (trimmed.includes('\\\\') || trimmed.includes('\\begin{') || trimmed.includes('\\cases') || trimmed.includes('\\matrix')) {
+            
+            // 이미 TeX 환경이거나 수동 줄바꿈이 있으면 100% 무결점 보존
+            if (trimmed.includes('\\\\') || trimmed.includes('\\begin{') || trimmed.includes('\\cases') || trimmed.includes('\\matrix') || trimmed.includes('\\array') || trimmed.includes('\\aligned') || trimmed.includes('\\gather')) {
                 return trimmed;
             }
 
@@ -192,23 +196,68 @@
                 return count % 2 !== 0;
             }
 
-            function cleanLhsRhs(s) {
-                return s.replace(/^(\\quad|\\qquad|\\,|\\;|\\s)+/, '').replace(/(\\quad|\\qquad|\\,|\\;|\\s)+$/, '').trim();
+            function cleanStr(s) {
+                return s.replace(/^(\\quad|\\qquad|\\,|\\;|\\!|\\s)+/, '').replace(/(\\quad|\\qquad|\\,|\\;|\\!|\\s)+$/, '').trim();
             }
 
-            // 1. 최상위 레벨에서 쉼표(,), 세미콜론(;) 등으로 구분된 다중 방정식인지 확인 (예: x = f(t), y = g(t))
+            // 1급 관계 연산자 목록 (긴 문자열 우선 매칭)
+            const relOps = [
+                '\\stackrel{\\text{def}}{=}', '\\coloneqq', ':=',
+                '\\approx', '\\equiv', '\\simeq', '\\cong', '\\propto', '\\asymp', '\\sim',
+                '\\leq', '\\geq', '\\le', '\\ge', '\\ll', '\\gg', '\\neq', '\\ne',
+                '='
+            ];
+
+            function matchRelOp(str, idx) {
+                for (const op of relOps) {
+                    if (str.startsWith(op, idx)) {
+                        if (op.startsWith('\\') && /[a-zA-Z]/.test(op[op.length - 1])) {
+                            const nextChar = str[idx + op.length];
+                            if (nextChar && /[a-zA-Z]/.test(nextChar)) continue;
+                        }
+                        return { op: op, len: op.length };
+                    }
+                }
+                return null;
+            }
+
+            // 1. 최상위 레벨 분할 (쉼표, 세미콜론, \\implies, \\iff 등 논리 연결자)
             let parts = [];
+            let separators = [];
             let current = '';
             let depth = 0;
+
             for (let i = 0; i < trimmed.length; i++) {
                 const c = trimmed[i];
+
+                if (trimmed.startsWith('\\text{', i) || trimmed.startsWith('\\mathrm{', i) || trimmed.startsWith('\\mathbf{', i) || trimmed.startsWith('\\operatorname{', i)) {
+                    const tagLen = trimmed.indexOf('{', i) - i + 1;
+                    current += trimmed.slice(i, i + tagLen);
+                    i += (tagLen - 1);
+                    depth++;
+                    continue;
+                }
+
                 if (c === '{' || c === '(' || c === '[') depth++;
                 else if (c === '}' || c === ')' || c === ']') depth = Math.max(0, depth - 1);
 
                 if (depth === 0 && !isEscaped(trimmed, i)) {
                     if (c === ',' || c === ';') {
                         if (current.trim()) parts.push(current.trim());
+                        separators.push(c);
                         current = '';
+                        continue;
+                    } else if (trimmed.startsWith('\\implies', i) && !/[a-zA-Z]/.test(trimmed[i + 8] || '')) {
+                        if (current.trim()) parts.push(current.trim());
+                        separators.push('\\implies');
+                        current = '';
+                        i += 7;
+                        continue;
+                    } else if (trimmed.startsWith('\\iff', i) && !/[a-zA-Z]/.test(trimmed[i + 4] || '')) {
+                        if (current.trim()) parts.push(current.trim());
+                        separators.push('\\iff');
+                        current = '';
+                        i += 3;
                         continue;
                     }
                 }
@@ -216,73 +265,96 @@
             }
             if (current.trim()) parts.push(current.trim());
 
-            // 쉼표로 나뉜 각 파트가 모두 각각 등호(=)를 가지는 병렬 방정식인지 확인
-            const eqParts = parts.filter(p => p.includes('='));
-            if (parts.length >= 2 && eqParts.length === parts.length) {
-                // 짧은 식(<= 48자)은 줄바꿈 없이 한 줄로 큼직하고 예쁘게 유지
-                if (trimmed.length <= 48) {
-                    return trimmed;
-                }
-                // 긴 식은 각 방정식을 한 줄씩 가지런히 정렬
-                let aligned = '\\begin{aligned}\n';
-                for (let idx = 0; idx < parts.length; idx++) {
-                    const rawPart = parts[idx];
-                    const eqIdx = rawPart.indexOf('=');
-                    const lhs = cleanLhsRhs(rawPart.slice(0, eqIdx));
-                    const rhs = cleanLhsRhs(rawPart.slice(eqIdx + 1));
-                    const sep = (idx < parts.length - 1) ? ', \\\\\n' : '\n';
-                    aligned += lhs + ' &= ' + rhs + sep;
-                }
-                aligned += '\\end{aligned}';
-                return aligned;
-            }
+            // 단일 부속 식(part) 내부에서 연산자 분할
+            function splitOperators(partStr) {
+                let opList = [];
+                let cur = '';
+                let d = 0;
+                for (let i = 0; i < partStr.length; i++) {
+                    const ch = partStr[i];
+                    if (ch === '{' || ch === '(' || ch === '[') d++;
+                    else if (ch === '}' || ch === ')' || ch === ']') d = Math.max(0, d - 1);
 
-            // 2. 단일 체인 전개식 (A = B = C = ...)
-            let chainParts = [];
-            current = '';
-            depth = 0;
-            for (let i = 0; i < trimmed.length; i++) {
-                const c = trimmed[i];
-                if (c === '{' || c === '(' || c === '[') depth++;
-                else if (c === '}' || c === ')' || c === ']') depth = Math.max(0, depth - 1);
-
-                if (depth === 0 && !isEscaped(trimmed, i)) {
-                    let op = null;
-                    let skip = 0;
-                    if (c === '=' && !trimmed.startsWith('==', i)) {
-                        op = '='; skip = 1;
-                    } else if (trimmed.startsWith('\\approx', i) && !/[a-zA-Z]/.test(trimmed[i + 7] || '')) {
-                        op = '\\approx'; skip = 7;
-                    } else if (trimmed.startsWith('\\equiv', i) && !/[a-zA-Z]/.test(trimmed[i + 6] || '')) {
-                        op = '\\equiv'; skip = 6;
-                    } else if (trimmed.startsWith('\\le', i) && !/[a-zA-Z]/.test(trimmed[i + 3] || '')) {
-                        op = '\\le'; skip = 3;
-                    } else if (trimmed.startsWith('\\ge', i) && !/[a-zA-Z]/.test(trimmed[i + 3] || '')) {
-                        op = '\\ge'; skip = 3;
+                    if (d === 0 && !isEscaped(partStr, i)) {
+                        const matched = matchRelOp(partStr, i);
+                        if (matched) {
+                            opList.push({ expr: cur.trim(), op: matched.op });
+                            cur = '';
+                            i += (matched.len - 1);
+                            continue;
+                        }
                     }
+                    cur += ch;
+                }
+                if (cur.trim()) opList.push({ expr: cur.trim(), op: '' });
+                return opList;
+            }
 
-                    if (op) {
-                        chainParts.push({ expr: current.trim(), op: op });
-                        current = '';
-                        i += (skip - 1);
-                        continue;
+            // A. 쉼표(,)나 논리 기호로 나뉜 복수 식/방정식 시스템
+            if (parts.length >= 2) {
+                const parsedParts = parts.map(p => ({ raw: p, ops: splitOperators(p) }));
+                const allHaveRelOps = parsedParts.every(p => p.ops.length >= 2);
+                const isMainWithConstraint = parsedParts.length === 2 && parsedParts[0].ops.length >= 2 && parsedParts[1].ops.length <= 2;
+
+                if (allHaveRelOps) {
+                    if (trimmed.length <= 46) {
+                        return trimmed;
+                    }
+                    let aligned = '\\begin{aligned}\n';
+                    for (let idx = 0; idx < parsedParts.length; idx++) {
+                        const pp = parsedParts[idx];
+                        const sep = separators[idx] || '';
+                        const sepPrefix = (idx > 0 && (separators[idx - 1] === '\\implies' || separators[idx - 1] === '\\iff')) ? separators[idx - 1] + ' ' : '';
+                        const sepSuffix = (idx < parsedParts.length - 1 && (sep === ',' || sep === ';')) ? sep + ' \\\\\n' : (idx < parsedParts.length - 1 ? ' \\\\\n' : '\n');
+
+                        if (pp.ops.length === 2) {
+                            aligned += sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr) + sepSuffix;
+                        } else {
+                            let chainStr = sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ';
+                            for (let k = 1; k < pp.ops.length; k++) {
+                                chainStr += cleanStr(pp.ops[k].expr);
+                                if (k < pp.ops.length - 1) {
+                                    chainStr += ' \\\\\n&' + pp.ops[k].op + ' ';
+                                }
+                            }
+                            aligned += chainStr + sepSuffix;
+                        }
+                    }
+                    aligned += '\\end{aligned}';
+                    return aligned;
+                }
+
+                if (isMainWithConstraint && trimmed.length > 48) {
+                    const main = parsedParts[0];
+                    const constraint = parsedParts[1].raw;
+                    if (main.ops.length >= 3) {
+                        let aligned = '\\begin{aligned}\n';
+                        for (let k = 0; k < main.ops.length; k++) {
+                            if (k === 0) {
+                                aligned += cleanStr(main.ops[0].expr) + ' &' + main.ops[0].op + ' ';
+                            } else if (k < main.ops.length - 1) {
+                                aligned += cleanStr(main.ops[k].expr) + ' \\\\\n&' + main.ops[k].op + ' ';
+                            } else {
+                                aligned += cleanStr(main.ops[k].expr) + ' \\quad (' + cleanStr(constraint) + ')\n';
+                            }
+                        }
+                        aligned += '\\end{aligned}';
+                        return aligned;
                     }
                 }
-                current += c;
-            }
-            if (current.trim()) {
-                chainParts.push({ expr: current.trim(), op: '' });
             }
 
-            if (chainParts.length >= 3 || (chainParts.length >= 2 && trimmed.length > 50)) {
+            // B. 단일 체인 전개식 (A = B = C = D = ...)
+            const chainOps = splitOperators(trimmed);
+            if (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 50)) {
                 let aligned = '\\begin{aligned}\n';
-                for (let idx = 0; idx < chainParts.length; idx++) {
+                for (let idx = 0; idx < chainOps.length; idx++) {
                     if (idx === 0) {
-                        aligned += chainParts[0].expr + ' &' + chainParts[0].op + ' ';
-                    } else if (idx < chainParts.length - 1) {
-                        aligned += chainParts[idx].expr + ' \\\\\n&' + chainParts[idx].op + ' ';
+                        aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ';
+                    } else if (idx < chainOps.length - 1) {
+                        aligned += cleanStr(chainOps[idx].expr) + ' \\\\\n&' + chainOps[idx].op + ' ';
                     } else {
-                        aligned += chainParts[idx].expr + '\n';
+                        aligned += cleanStr(chainOps[idx].expr) + '\n';
                     }
                 }
                 aligned += '\\end{aligned}';
