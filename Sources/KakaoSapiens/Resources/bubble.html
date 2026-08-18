@@ -34,11 +34,10 @@
 
         /* 수식 폰트 크기 스케일업 & 두께 보정 */
         .katex {
-            font-size: 1.18em !important;
-            line-height: 1.25 !important;
-            text-rendering: optimizeLegibility !important;
+            font-size: 1.05em;
             -webkit-text-stroke: 0.18px currentColor !important;
             letter-spacing: 0.2px;
+            white-space: nowrap;
         }
         .katex-display {
             margin: 7px 0 !important;
@@ -46,8 +45,12 @@
             overflow-x: auto;
             overflow-y: hidden;
             padding: 4px 2px !important;
+            white-space: normal;
         }
-        .katex-display > .katex { font-size: 1.22em !important; }
+        .katex-display > .katex {
+            font-size: 1.22em !important;
+            white-space: normal !important;
+        }
 
         /* 가로로 넘치는 수식이 남아 있을 때 잘렸다는 걸 알 수 있게 오른쪽 끝을 흐리게 처리합니다. */
         .katex-display.is-overflowing {
@@ -290,74 +293,57 @@
                 return opList;
             }
 
-            // A. 쉼표(,)나 논리 기호로 나뉜 복수 식/방정식 시스템
+            // A. 쉼표(,)나 논리 기호(\implies, \iff)로 나뉜 복수 식/방정식 시스템
             if (parts.length >= 2) {
                 const parsedParts = parts.map(p => ({ raw: p, ops: splitOperators(p) }));
-                const allHaveRelOps = parsedParts.every(p => p.ops.length >= 2);
-                const isMainWithConstraint = parsedParts.length === 2 && parsedParts[0].ops.length >= 2 && parsedParts[1].ops.length <= 2;
+                const hasLogicalSep = separators.some(s => s === '\\implies' || s === '\\iff');
+                const totalOpsCount = parsedParts.reduce((acc, p) => acc + (p.ops.length - 1), 0);
 
-                if (allHaveRelOps) {
-                    if (trimmed.length <= 46) {
-                        return trimmed;
-                    }
+                if (totalOpsCount >= 2 || hasLogicalSep || trimmed.length > 42) {
                     let aligned = '\\begin{aligned}\n';
                     for (let idx = 0; idx < parsedParts.length; idx++) {
                         const pp = parsedParts[idx];
-                        const sep = separators[idx] || '';
-                        const sepPrefix = (idx > 0 && (separators[idx - 1] === '\\implies' || separators[idx - 1] === '\\iff')) ? separators[idx - 1] + ' ' : '';
-                        const sepSuffix = (idx < parsedParts.length - 1 && (sep === ',' || sep === ';')) ? sep + ' \\\\\n' : (idx < parsedParts.length - 1 ? ' \\\\\n' : '\n');
+                        const prevSep = idx > 0 ? separators[idx - 1] : '';
+                        const isLogicLeader = prevSep === '\\implies' || prevSep === '\\iff';
+                        const sepPrefix = isLogicLeader ? prevSep + ' ' : '';
 
-                        if (pp.ops.length === 2) {
-                            aligned += sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr) + sepSuffix;
-                        } else {
-                            let chainStr = sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ';
-                            for (let k = 1; k < pp.ops.length; k++) {
-                                chainStr += cleanStr(pp.ops[k].expr);
-                                if (k < pp.ops.length - 1) {
-                                    chainStr += ' \\\\\n&' + pp.ops[k].op + ' ';
+                        if (pp.ops.length >= 2) {
+                            for (let k = 0; k < pp.ops.length - 1; k++) {
+                                if (k === 0) {
+                                    aligned += sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr);
+                                } else {
+                                    aligned += ' \\\\\n&' + pp.ops[k].op + ' ' + cleanStr(pp.ops[k + 1].expr);
                                 }
                             }
-                            aligned += chainStr + sepSuffix;
+                        } else {
+                            aligned += sepPrefix + cleanStr(pp.raw);
+                        }
+
+                        if (idx < parsedParts.length - 1) {
+                            const nextSep = separators[idx];
+                            if (nextSep === ',' || nextSep === ';') {
+                                aligned += nextSep + ' \\\\\n';
+                            } else {
+                                aligned += ' \\\\\n';
+                            }
+                        } else {
+                            aligned += '\n';
                         }
                     }
                     aligned += '\\end{aligned}';
                     return aligned;
                 }
-
-                if (isMainWithConstraint && trimmed.length > 48) {
-                    const main = parsedParts[0];
-                    const constraint = parsedParts[1].raw;
-                    if (main.ops.length >= 3) {
-                        let aligned = '\\begin{aligned}\n';
-                        for (let k = 0; k < main.ops.length; k++) {
-                            if (k === 0) {
-                                aligned += cleanStr(main.ops[0].expr) + ' &' + main.ops[0].op + ' ';
-                            } else if (k < main.ops.length - 1) {
-                                aligned += cleanStr(main.ops[k].expr) + ' \\\\\n&' + main.ops[k].op + ' ';
-                            } else {
-                                aligned += cleanStr(main.ops[k].expr) + ' \\quad (' + cleanStr(constraint) + ')\n';
-                            }
-                        }
-                        aligned += '\\end{aligned}';
-                        return aligned;
-                    }
-                }
             }
 
             // B. 단일 체인 전개식 (A = B = C = D = ...)
             const chainOps = splitOperators(trimmed);
-            if (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 50)) {
+            if (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 45)) {
                 let aligned = '\\begin{aligned}\n';
-                for (let idx = 0; idx < chainOps.length; idx++) {
-                    if (idx === 0) {
-                        aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ';
-                    } else if (idx < chainOps.length - 1) {
-                        aligned += cleanStr(chainOps[idx].expr) + ' \\\\\n&' + chainOps[idx].op + ' ';
-                    } else {
-                        aligned += cleanStr(chainOps[idx].expr) + '\n';
-                    }
+                aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ' + cleanStr(chainOps[1].expr);
+                for (let i = 1; i < chainOps.length - 1; i++) {
+                    aligned += ' \\\\\n&' + chainOps[i].op + ' ' + cleanStr(chainOps[i + 1].expr);
                 }
-                aligned += '\\end{aligned}';
+                aligned += '\n\\end{aligned}';
                 return aligned;
             }
 
@@ -442,9 +428,22 @@
             });
         };
 
+        // 번호 매기기 목록(1., 2.)이나 글머리 기호(-, *)에 붙은 긴 인라인 수식이나 등호 2개 이상 전개식을
+        // 독립 디스플레이 수식($$ ... $$)으로 승격시켜 autoAlignLongMath의 세로 정렬 혜택을 받도록 합니다.
+        function promoteLongInlineMath(source) {
+            return source.replace(/^(\s*(?:\d+\.|\-|\*)\s*)\$([^$\n]+)\$(\s*)$/gm, (match, prefix, math, suffix) => {
+                const trimmedMath = math.trim();
+                if (trimmedMath.includes('=') && (trimmedMath.split('=').length >= 3 || trimmedMath.length > 28)) {
+                    return `${prefix}\n$$\n${trimmedMath}\n$$\n`;
+                }
+                return match;
+            });
+        }
+
         window.renderContent = function (rawMarkdown) {
             const displayMathBlocks = [];
-            let source = protectDisplayMath(rawMarkdown, '$$', '$$', displayMathBlocks);
+            let source = promoteLongInlineMath(rawMarkdown);
+            source = protectDisplayMath(source, '$$', '$$', displayMathBlocks);
             source = protectDisplayMath(source, '\\[', '\\]', displayMathBlocks);
             source = fixTightBoldDelimiters(source);
 
