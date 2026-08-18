@@ -181,6 +181,22 @@
             if (trimmed.includes('\\\\') || trimmed.includes('\\begin{') || trimmed.includes('\\cases') || trimmed.includes('\\matrix')) {
                 return trimmed;
             }
+
+            function isEscaped(str, index) {
+                let count = 0;
+                let i = index - 1;
+                while (i >= 0 && str[i] === '\\') {
+                    count++;
+                    i--;
+                }
+                return count % 2 !== 0;
+            }
+
+            function cleanLhsRhs(s) {
+                return s.replace(/^(\\quad|\\qquad|\\,|\\;|\\s)+/, '').replace(/(\\quad|\\qquad|\\,|\\;|\\s)+$/, '').trim();
+            }
+
+            // 1. 최상위 레벨에서 쉼표(,), 세미콜론(;) 등으로 구분된 다중 방정식인지 확인 (예: x = f(t), y = g(t))
             let parts = [];
             let current = '';
             let depth = 0;
@@ -188,8 +204,49 @@
                 const c = trimmed[i];
                 if (c === '{' || c === '(' || c === '[') depth++;
                 else if (c === '}' || c === ')' || c === ']') depth = Math.max(0, depth - 1);
-                
-                if (depth === 0) {
+
+                if (depth === 0 && !isEscaped(trimmed, i)) {
+                    if (c === ',' || c === ';') {
+                        if (current.trim()) parts.push(current.trim());
+                        current = '';
+                        continue;
+                    }
+                }
+                current += c;
+            }
+            if (current.trim()) parts.push(current.trim());
+
+            // 쉼표로 나뉜 각 파트가 모두 각각 등호(=)를 가지는 병렬 방정식인지 확인
+            const eqParts = parts.filter(p => p.includes('='));
+            if (parts.length >= 2 && eqParts.length === parts.length) {
+                // 짧은 식(<= 48자)은 줄바꿈 없이 한 줄로 큼직하고 예쁘게 유지
+                if (trimmed.length <= 48) {
+                    return trimmed;
+                }
+                // 긴 식은 각 방정식을 한 줄씩 가지런히 정렬
+                let aligned = '\\begin{aligned}\n';
+                for (let idx = 0; idx < parts.length; idx++) {
+                    const rawPart = parts[idx];
+                    const eqIdx = rawPart.indexOf('=');
+                    const lhs = cleanLhsRhs(rawPart.slice(0, eqIdx));
+                    const rhs = cleanLhsRhs(rawPart.slice(eqIdx + 1));
+                    const sep = (idx < parts.length - 1) ? ', \\\\\n' : '\n';
+                    aligned += lhs + ' &= ' + rhs + sep;
+                }
+                aligned += '\\end{aligned}';
+                return aligned;
+            }
+
+            // 2. 단일 체인 전개식 (A = B = C = ...)
+            let chainParts = [];
+            current = '';
+            depth = 0;
+            for (let i = 0; i < trimmed.length; i++) {
+                const c = trimmed[i];
+                if (c === '{' || c === '(' || c === '[') depth++;
+                else if (c === '}' || c === ')' || c === ']') depth = Math.max(0, depth - 1);
+
+                if (depth === 0 && !isEscaped(trimmed, i)) {
                     let op = null;
                     let skip = 0;
                     if (c === '=' && !trimmed.startsWith('==', i)) {
@@ -203,8 +260,9 @@
                     } else if (trimmed.startsWith('\\ge', i) && !/[a-zA-Z]/.test(trimmed[i + 3] || '')) {
                         op = '\\ge'; skip = 3;
                     }
+
                     if (op) {
-                        parts.push({ expr: current.trim(), op: op });
+                        chainParts.push({ expr: current.trim(), op: op });
                         current = '';
                         i += (skip - 1);
                         continue;
@@ -213,22 +271,24 @@
                 current += c;
             }
             if (current.trim()) {
-                parts.push({ expr: current.trim(), op: '' });
+                chainParts.push({ expr: current.trim(), op: '' });
             }
-            if (parts.length >= 3 || (parts.length >= 2 && trimmed.length > 48)) {
+
+            if (chainParts.length >= 3 || (chainParts.length >= 2 && trimmed.length > 50)) {
                 let aligned = '\\begin{aligned}\n';
-                for (let idx = 0; idx < parts.length; idx++) {
+                for (let idx = 0; idx < chainParts.length; idx++) {
                     if (idx === 0) {
-                        aligned += parts[0].expr + ' &' + parts[0].op + ' ';
-                    } else if (idx < parts.length - 1) {
-                        aligned += parts[idx].expr + ' \\\\\n&' + parts[idx].op + ' ';
+                        aligned += chainParts[0].expr + ' &' + chainParts[0].op + ' ';
+                    } else if (idx < chainParts.length - 1) {
+                        aligned += chainParts[idx].expr + ' \\\\\n&' + chainParts[idx].op + ' ';
                     } else {
-                        aligned += parts[idx].expr + '\n';
+                        aligned += chainParts[idx].expr + '\n';
                     }
                 }
                 aligned += '\\end{aligned}';
                 return aligned;
             }
+
             return trimmed;
         }
 
