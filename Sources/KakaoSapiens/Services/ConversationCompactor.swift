@@ -38,35 +38,54 @@ public struct ConversationDigest: Codable, Equatable {
 
 /// 요청에 실을 이력을 정합니다. API도 화면도 모르는 순수 계산이라 그대로 시험해 볼 수 있습니다.
 public enum ConversationCompactor {
-    /// 이 턴 수를 넘기기 전에는 아무것도 하지 않습니다.
-    /// 손익분기가 60~70턴 언저리인데, 그 근처에서 켜 봐야 아끼는 돈은 없고 기억만 먼저 잃습니다.
+    /// 기본 턴 수 (하위 호환용)
     public static let thresholdTurns = 150
-
-    /// 어떤 경우에도 이만큼은 원문 그대로 보냅니다.
     public static let verbatimWindowTurns = 20
-
-    /// 요약을 다시 만드는 간격입니다. 한 번 만들 때 이만큼씩 흡수합니다.
-    /// 매 턴 만들면 캐시가 매번 깨져 압축을 안 하느니만 못합니다.
     public static let refreshPeriodTurns = 50
-
-    /// 구간 하나를 적는 데 쓰는 토큰입니다. 50턴을 한글 1,800자쯤으로 줄이는 분량입니다.
-    ///
-    /// 처음에 1,000으로 잡았는데 실제로 돌려보니 모델이 1,470토큰을 썼고, 넘긴 만큼이
-    /// 버릴 내용이 아니라 살릴 값어치가 있는 내용이었습니다. 지시로 억누르기보다
-    /// 실제 산출에 맞춰 올렸습니다. 이래도 압축 안 할 때보다 4배 넘게 쌉니다.
     public static let segmentTokenBudget = 1500
 
+    /// 모드별 최적 압축 시작 턴 수입니다.
+    /// - 멘토 모드: 60턴(약 30,000토큰)에서 신속하게 첫 압축을 시작하여 토큰 누적을 차단합니다.
+    /// - 챗봇 모드: 150턴까지 원문을 길게 유지하여 감정선과 미묘한 대화 뉘앙스를 보존합니다.
+    public static func thresholdTurns(for mode: ChatMode) -> Int {
+        switch mode {
+        case .mathMentor: return 60
+        case .companion: return 150
+        }
+    }
+
+    /// 모드별 원문 보존 윈도우입니다.
+    /// - 멘토 모드: 최근 25턴(일반 문항 6~8개, 중급 문항 4~5개)을 100% 무손실 원문으로 보존합니다.
+    /// - 챗봇 모드: 최근 20턴을 원문으로 보존합니다.
+    public static func verbatimWindowTurns(for mode: ChatMode) -> Int {
+        switch mode {
+        case .mathMentor: return 25
+        case .companion: return 20
+        }
+    }
+
+    /// 모드별 요약 흡수 주기입니다.
+    /// - 멘토 모드: 40턴 분량(약 20,000토큰)을 묶어 1,000토큰짜리 세그먼트 1개로 압축합니다.
+    /// - 챗봇 모드: 50턴 단위로 갱신합니다.
+    public static func refreshPeriodTurns(for mode: ChatMode) -> Int {
+        switch mode {
+        case .mathMentor: return 40
+        case .companion: return 50
+        }
+    }
+
+    public static func refreshTriggerTurns(for mode: ChatMode) -> Int {
+        verbatimWindowTurns(for: mode) + refreshPeriodTurns(for: mode)
+    }
+
+    public static func segmentTokenBudget(for mode: ChatMode) -> Int {
+        switch mode {
+        case .mathMentor: return 1200
+        case .companion: return 1500
+        }
+    }
+
     /// 구간 요약을 만들 때 주는 지침입니다. **모드마다 다릅니다.**
-    ///
-    /// 한동안 과외용 하나뿐이었습니다. 챗봇 방에도 그게 그대로 나갔는데, 캐릭터 대화를
-    /// "학습자의 상황 / 틀린 지점 / 이해가 뚫린 순간 / 지도 참고" 틀에 넣으면 살려야 할
-    /// 것 — 관계, 서로 부르는 법, 주고받은 약속, 감정의 결, 아직 안 풀린 긴장 — 이
-    /// 하나도 안 남습니다. 압축이 기억을 **줄이는** 것이 아니라 **버리는** 것이 됩니다.
-    ///
-    /// 요약은 한 번 쓰면 다시 안 만들기 때문에 그 손실은 되돌릴 수 없습니다.
-    ///
-    /// 전송 코드가 아니라 여기 둡니다. 무엇을 남기고 무엇을 버릴지는 압축 정책이고,
-    /// 품질을 확인하는 별도 도구도 같은 글을 그대로 써야 시험이 성립합니다.
     public static func summaryInstruction(for mode: ChatMode) -> String {
         switch mode {
         case .mathMentor: return mentorSummaryInstruction
@@ -82,11 +101,11 @@ public enum ConversationCompactor {
 
     # 반드시 남길 것
     - 학습자의 상황: 목표, 진도, 아직 안 배운 영역, 말투나 호칭 같은 관계 설정, 주고받은 약속
+    - 교재 및 문서 (첨부파일): 첨부된 PDF 문서나 문제 사진의 파일명, 다룬 문항 번호나 페이지, 문서에서 도출된 핵심 결과
     - 흐름: 어떤 문제를 어떤 순서로 다뤘는지. 턴 번호를 함께 적는다.
     - 틀린 지점: 무엇을 어떻게 틀렸고 정답은 무엇이며 왜 틀렸는지. 원인까지 반드시 적는다.
     - 이해가 뚫린 순간: 어떤 설명이 통했고 어떤 설명이 안 통했는지
     - 미해결: 답을 못 낸 문제, 나중에 하기로 한 것
-    - 사진을 주고받았다면 무엇을 찍은 사진이었는지
 
     # 버릴 것
     - 인사, 맞장구, 감탄사, 잡담
@@ -99,7 +118,7 @@ public enum ConversationCompactor {
     번호를 새로 세거나 짐작해서 적지 않는다. 범위를 적을 때도 실제로 등장한 번호만 쓴다.
 
     # 형식
-    아래 여섯 소제목을 이 순서로 그대로 쓴다. 각 줄은 '- '로 시작하는 평서문으로 적는다.
+    아래 일곱 소제목을 이 순서로 그대로 쓴다. 각 줄은 '- '로 시작하는 평서문으로 적는다.
     해당 내용이 없는 절은 소제목만 두고 비운다.
 
     ■ 상황
@@ -109,6 +128,10 @@ public enum ConversationCompactor {
     - 관계: 학습자가 반말을 쓰는지 존댓말을 쓰는지, 서로를 어떻게 부르는지, 대화 분위기는 어떤지.
       답변자 자신의 말투나 이름, 정체성은 적지 않는다. 그것은 매번 새로 정해지므로 옛 기록이 남으면 방해가 된다.
     - 약속: 나중에 하기로 한 것, 주고받은 다짐이나 농담 섞인 약속
+
+    ■ 교재 및 문서 (첨부파일)
+    - 대화 중 첨부된 PDF/문서/사진의 파일명과 성격 (예: [첨부문서: 2026_한양대_기출.pdf])
+    - 그 문서에서 다룬 구체적인 문제 번호, 페이지, 핵심 공식 및 결론
 
     ■ 흐름
     - 다룬 주제를 순서대로. 각 줄 앞에 턴 번호를 붙인다.
@@ -202,15 +225,11 @@ public enum ConversationCompactor {
 
     /// 요약에 넘길 대화를 글로 폅니다. 앱과 검증 도구가 같은 입력을 만들도록 여기 둡니다.
     ///
-    /// 사진은 넣지 않습니다. 무엇을 찍은 사진이었는지는 앞뒤 대화에 이미 적혀 있고,
-    /// 이미지를 함께 올리면 요약 한 번에 수천 토큰이 더 듭니다.
+    /// 사진/문서는 바이너리 자체를 넣지 않고 메타데이터와 파일명을 남깁니다.
+    /// 이미지를 함께 올리면 요약 한 번에 수천 토큰이 더 들지만, 파일명과 문서 식별자를 남기면
+    /// 요약 모델이 어떤 교재/PDF를 다루었는지 정확하게 기억합니다.
     /// 턴 번호를 반드시 함께 넘깁니다.
-    ///
-    /// 번호 없이 넘겼더니 모델이 줄 수를 세어 번호를 지어냈습니다. 50턴을 넣었는데
-    /// 76턴까지 적어 놓는 식이라, 나중에 그 번호로 원문을 찾을 수 없게 됩니다.
     public static func transcript(for turns: [ConversationTurn], startingTurn: Int, mode: ChatMode) -> String {
-        // 부르는 이름도 모드를 따릅니다. 캐릭터 대화를 "학습자/답변자"로 옮겨 놓으면
-        // 요약하는 쪽이 그걸 수업 기록으로 읽습니다.
         let userLabel = mode == .companion ? "사용자" : "학습자"
         let botLabel = mode == .companion ? "상대" : "답변자"
 
@@ -221,15 +240,18 @@ public enum ConversationCompactor {
             guard !turn.text.hasPrefix("요청을 처리하는 중 오류가 발생했습니다:") else { continue }
             let who = turn.sender == .user ? userLabel : botLabel
             var line = turn.text
-            if turn.attachment != nil { line = "[사진 첨부] " + line }
+            if let att = turn.attachment {
+                let typeLabel = att.type == .file ? "첨부문서" : "첨부사진"
+                let name = att.fileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? (att.type == .file ? "문서" : "사진")
+                    : att.fileName
+                line = "[\(typeLabel): \(name)] " + line
+            }
             guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             lines.append("[\(turnNumber)턴] \(who): \(line)")
         }
         return lines.joined(separator: "\n")
     }
-
-    /// 원문 구간은 창과 창+주기 사이를 오갑니다. 이 값을 넘으면 요약을 새로 만듭니다.
-    static var refreshTriggerTurns: Int { verbatimWindowTurns + refreshPeriodTurns }
 
     /// 아직 요약되지 않은, 이번에 요약해야 할 구간입니다.
     public struct PendingSegment {
@@ -276,17 +298,22 @@ public enum ConversationCompactor {
         let digest = digest ?? ConversationDigest()
         let covered = min(digest.coveredTurns, total)
 
+        let threshold = thresholdTurns(for: mode)
+        let verbatimWindow = verbatimWindowTurns(for: mode)
+        let refreshPeriod = refreshPeriodTurns(for: mode)
+        let refreshTrigger = verbatimWindow + refreshPeriod
+
         // 아직 켤 때가 아니면 지금까지처럼 전부 보냅니다.
-        guard total >= thresholdTurns else {
+        guard total >= threshold else {
             return Plan(digestText: nil, verbatimTurns: conversation, pending: nil,
                         totalTurns: total, coveredTurns: 0)
         }
 
         let verbatimCount = total - covered
         var pending: PendingSegment?
-        if verbatimCount >= refreshTriggerTurns {
+        if verbatimCount >= refreshTrigger {
             let first = covered + 1
-            let last = covered + refreshPeriodTurns
+            let last = covered + refreshPeriod
             pending = PendingSegment(firstTurn: first, lastTurn: last,
                                      turns: slice(conversation, turns: first...last))
         }

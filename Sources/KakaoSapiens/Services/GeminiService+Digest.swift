@@ -50,7 +50,7 @@ extension GeminiService {
             "generationConfig": [
                 // 지시한 분량보다 넉넉히 잡습니다. 3.7은 사고 토큰도 이 예산에서 함께 쓰고,
                 // 모자라면 문장 한가운데서 잘린 글이 나옵니다.
-                "maxOutputTokens": ConversationCompactor.segmentTokenBudget + 1200,
+                "maxOutputTokens": ConversationCompactor.segmentTokenBudget(for: mode) + 1200,
                 "thinkingConfig": ["thinkingLevel": "low"]
             ]
         ]
