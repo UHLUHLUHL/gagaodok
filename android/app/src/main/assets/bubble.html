@@ -199,7 +199,17 @@
             }
 
             function cleanStr(s) {
-                return s.replace(/^(\\quad|\\qquad|\\,|\\;|\\!|\\s)+/, '').replace(/(\\quad|\\qquad|\\,|\\;|\\!|\\s)+$/, '').trim();
+                return s.replace(/^(\\(?:quad|qquad|,|;|!)|\s)+/g, '').replace(/(\\(?:quad|qquad|,|;|!)|\s)+$/g, '').trim();
+            }
+
+            function splitTrailingAnnotation(line) {
+                const match = line.match(/^([\s\S]*?)(?:\\quad|\\qquad|\s)*(\([^\)]*\\text\{[^\}]*\}[^\)]*\)|\([^\)]+\))$/);
+                if (match && match[1].trim() && match[2].trim()) {
+                    if (line.length > 32) {
+                        return { expr: match[1].trim(), annot: match[2].trim() };
+                    }
+                }
+                return null;
             }
 
             // 1급 관계 연산자 목록 (긴 문자열 우선 매칭)
@@ -292,74 +302,71 @@
                 return opList;
             }
 
-            // A. 쉼표(,)나 논리 기호로 나뉜 복수 식/방정식 시스템
+            // A. 쉼표(,)나 논리 기호(\implies, \iff)로 나뉜 복수 식/방정식 시스템
             if (parts.length >= 2) {
                 const parsedParts = parts.map(p => ({ raw: p, ops: splitOperators(p) }));
-                const allHaveRelOps = parsedParts.every(p => p.ops.length >= 2);
-                const isMainWithConstraint = parsedParts.length === 2 && parsedParts[0].ops.length >= 2 && parsedParts[1].ops.length <= 2;
+                const hasLogicalSep = separators.some(s => s === '\\implies' || s === '\\iff');
+                const totalOpsCount = parsedParts.reduce((acc, p) => acc + (p.ops.length - 1), 0);
 
-                if (allHaveRelOps) {
-                    if (trimmed.length <= 46) {
-                        return trimmed;
-                    }
+                if (totalOpsCount >= 2 || hasLogicalSep || trimmed.length > 42) {
                     let aligned = '\\begin{aligned}\n';
-                    for (let idx = 0; idx < parsedParts.length; idx++) {
-                        const pp = parsedParts[idx];
-                        const sep = separators[idx] || '';
-                        const sepPrefix = (idx > 0 && (separators[idx - 1] === '\\implies' || separators[idx - 1] === '\\iff')) ? separators[idx - 1] + ' ' : '';
-                        const sepSuffix = (idx < parsedParts.length - 1 && (sep === ',' || sep === ';')) ? sep + ' \\\\\n' : (idx < parsedParts.length - 1 ? ' \\\\\n' : '\n');
+                    
+                    if (hasLogicalSep) {
+                        for (let idx = 0; idx < parsedParts.length; idx++) {
+                            const pp = parsedParts[idx];
+                            const prevSep = idx > 0 ? separators[idx - 1] : '';
+                            const isLogicLeader = prevSep === '\\implies' || prevSep === '\\iff';
+                            const sepPrefix = isLogicLeader ? prevSep + ' ' : '';
 
-                        if (pp.ops.length === 2) {
-                            aligned += sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr) + sepSuffix;
-                        } else {
-                            let chainStr = sepPrefix + cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ';
-                            for (let k = 1; k < pp.ops.length; k++) {
-                                chainStr += cleanStr(pp.ops[k].expr);
-                                if (k < pp.ops.length - 1) {
-                                    chainStr += ' \\\\\n&' + pp.ops[k].op + ' ';
-                                }
+                            let lineContent = sepPrefix + cleanStr(pp.raw);
+                            const splitAnnot = splitTrailingAnnotation(lineContent);
+                            if (splitAnnot) {
+                                aligned += '&' + cleanStr(splitAnnot.expr) + ' \\\\\n&\\quad ' + cleanStr(splitAnnot.annot);
+                            } else {
+                                aligned += '&' + lineContent;
                             }
-                            aligned += chainStr + sepSuffix;
+
+                            if (idx < parsedParts.length - 1) {
+                                aligned += ' \\\\\n';
+                            } else {
+                                aligned += '\n';
+                            }
+                        }
+                    } else {
+                        for (let idx = 0; idx < parsedParts.length; idx++) {
+                            const pp = parsedParts[idx];
+                            const sep = separators[idx] || '';
+                            const sepSuffix = (idx < parsedParts.length - 1 && (sep === ',' || sep === ';')) ? sep + ' \\\\\n' : (idx < parsedParts.length - 1 ? ' \\\\\n' : '\n');
+
+                            if (pp.ops.length >= 2) {
+                                for (let k = 0; k < pp.ops.length - 1; k++) {
+                                    if (k === 0) {
+                                        aligned += cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr);
+                                    } else {
+                                        aligned += ' \\\\\n&' + pp.ops[k].op + ' ' + cleanStr(pp.ops[k + 1].expr);
+                                    }
+                                }
+                                aligned += sepSuffix;
+                            } else {
+                                aligned += cleanStr(pp.raw) + sepSuffix;
+                            }
                         }
                     }
+
                     aligned += '\\end{aligned}';
                     return aligned;
-                }
-
-                if (isMainWithConstraint && trimmed.length > 48) {
-                    const main = parsedParts[0];
-                    const constraint = parsedParts[1].raw;
-                    if (main.ops.length >= 3) {
-                        let aligned = '\\begin{aligned}\n';
-                        for (let k = 0; k < main.ops.length; k++) {
-                            if (k === 0) {
-                                aligned += cleanStr(main.ops[0].expr) + ' &' + main.ops[0].op + ' ';
-                            } else if (k < main.ops.length - 1) {
-                                aligned += cleanStr(main.ops[k].expr) + ' \\\\\n&' + main.ops[k].op + ' ';
-                            } else {
-                                aligned += cleanStr(main.ops[k].expr) + ' \\quad (' + cleanStr(constraint) + ')\n';
-                            }
-                        }
-                        aligned += '\\end{aligned}';
-                        return aligned;
-                    }
                 }
             }
 
             // B. 단일 체인 전개식 (A = B = C = D = ...)
             const chainOps = splitOperators(trimmed);
-            if (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 50)) {
+            if (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 45)) {
                 let aligned = '\\begin{aligned}\n';
-                for (let idx = 0; idx < chainOps.length; idx++) {
-                    if (idx === 0) {
-                        aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ';
-                    } else if (idx < chainOps.length - 1) {
-                        aligned += cleanStr(chainOps[idx].expr) + ' \\\\\n&' + chainOps[idx].op + ' ';
-                    } else {
-                        aligned += cleanStr(chainOps[idx].expr) + '\n';
-                    }
+                aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ' + cleanStr(chainOps[1].expr);
+                for (let i = 1; i < chainOps.length - 1; i++) {
+                    aligned += ' \\\\\n&' + chainOps[i].op + ' ' + cleanStr(chainOps[i + 1].expr);
                 }
-                aligned += '\\end{aligned}';
+                aligned += '\n\\end{aligned}';
                 return aligned;
             }
 

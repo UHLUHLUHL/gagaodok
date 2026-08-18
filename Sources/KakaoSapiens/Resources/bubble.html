@@ -200,7 +200,7 @@
             }
 
             function cleanStr(s) {
-                return s.replace(/^(\\quad|\\qquad|\\,|\\;|\\!|\\s)+/, '').replace(/(\\quad|\\qquad|\\,|\\;|\\!|\\s)+$/, '').trim();
+                return s.replace(/^(\\(?:quad|qquad|,|;|!)|\s)+/g, '').replace(/(\\(?:quad|qquad|,|;|!)|\s)+$/g, '').trim();
             }
 
             function splitTrailingAnnotation(line) {
