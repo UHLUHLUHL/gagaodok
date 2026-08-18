@@ -361,7 +361,13 @@
 
             // B. 단일 체인 전개식 (A = B = C = D = ...)
             const chainOps = splitOperators(trimmed);
-            if (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 45)) {
+            
+            // -1 \leq x \leq 1 같은 짧은 유계 부등식(샌드위치 범위)은 세로로 쪼개지 않고 한 줄로 보존
+            const isBoundedIneq = chainOps.length === 3 && trimmed.length <= 38 && 
+                ['\\leq', '\\geq', '\\le', '\\ge'].includes(chainOps[0].op) && 
+                ['\\leq', '\\geq', '\\le', '\\ge'].includes(chainOps[1].op);
+
+            if (!isBoundedIneq && (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 48))) {
                 let aligned = '\\begin{aligned}\n';
                 aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ' + cleanStr(chainOps[1].expr);
                 for (let i = 1; i < chainOps.length - 1; i++) {
