@@ -88,17 +88,33 @@
             margin: 4px 0;
             color: rgba(0, 0, 0, 0.75);
         }
-        hr { border: none; border-top: 1px solid rgba(0, 0, 0, 0.14); margin: 9px 0; }
         table {
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0;
             width: 100%;
-            margin: 5px 0;
+            margin: 6px 0;
             font-size: 13.5px;
-            display: block;
+            border: 1px solid rgba(0, 0, 0, 0.14);
+            border-radius: 7px;
             overflow-x: auto;
+            display: table;
         }
-        th, td { border: 1px solid rgba(0, 0, 0, 0.15); padding: 3px 6px; text-align: left; }
-        th { background-color: rgba(0, 0, 0, 0.04); font-weight: 700; }
+        th, td {
+            border-right: 1px solid rgba(0, 0, 0, 0.10);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.10);
+            padding: 5px 8px;
+            text-align: center;
+            vertical-align: middle;
+        }
+        th:last-child, td:last-child { border-right: none; }
+        tr:last-child td { border-bottom: none; }
+        th {
+            background-color: rgba(0, 0, 0, 0.05);
+            font-weight: 700;
+            font-size: 13px;
+            color: rgba(0, 0, 0, 0.85);
+        }
+        td { background-color: rgba(255, 255, 255, 0.45); }
 
         /* 다크 모드.
            `prefers-color-scheme`을 쓰지 않습니다. 안드로이드 웹뷰에서는 그 값이 앱의
@@ -108,8 +124,10 @@
         html.dark .katex, html.dark .katex * { color: inherit; }
         html.dark code, html.dark pre { background-color: rgba(255, 255, 255, 0.10); }
         html.dark blockquote { color: rgba(255, 255, 255, 0.72); }
-        html.dark th { background-color: rgba(255, 255, 255, 0.08); }
-        html.dark td, html.dark th { border-color: rgba(255, 255, 255, 0.16); }
+        html.dark table { border-color: rgba(255, 255, 255, 0.18); }
+        html.dark th, html.dark td { border-color: rgba(255, 255, 255, 0.12); }
+        html.dark th { background-color: rgba(255, 255, 255, 0.10); color: rgba(255, 255, 255, 0.92); }
+        html.dark td { background-color: rgba(255, 255, 255, 0.04); }
         html.dark hr { border-color: rgba(255, 255, 255, 0.16); }
         html.dark a { color: #6FB3FF; }
     </style>

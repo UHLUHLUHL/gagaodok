@@ -118,6 +118,7 @@ internal fun AIService.splitTextAndComplexMath(paragraph: String): List<String> 
     val buffer = mutableListOf<String>()
     var mathMode: Boolean? = null
     var displayMathClosing: String? = null
+    var inTable = false
 
     fun flush() {
         if (buffer.isEmpty()) return
@@ -148,6 +149,21 @@ internal fun AIService.splitTextAndComplexMath(paragraph: String): List<String> 
             continue
         }
 
+        // 표(Markdown Table) 처리: 마크다운 표 행들은 절대 수식 행으로 쪼개지 않고 표 전체를 온전히 유지합니다.
+        val isTable = isMarkdownTableLine(trimmed)
+        if (isTable) {
+            if (!inTable) {
+                flush()
+                inTable = true
+                mathMode = null
+            }
+            buffer += trimmed
+            continue
+        } else if (inTable) {
+            flush()
+            inTable = false
+        }
+
         val isMath = isStandaloneMathLine(trimmed)
         if (mathMode != null && mathMode != isMath) flush()
         mathMode = isMath
@@ -155,6 +171,16 @@ internal fun AIService.splitTextAndComplexMath(paragraph: String): List<String> 
     }
     flush()
     return result.ifEmpty { listOf(paragraph) }
+}
+
+internal fun AIService.isMarkdownTableLine(line: String): Boolean {
+    val trimmed = line.trim()
+    if (trimmed.isEmpty()) return false
+    if (trimmed.startsWith("|")) return true
+    val pipeCount = trimmed.count { it == '|' }
+    if (pipeCount >= 2) return true
+    if (trimmed.contains("---") && trimmed.contains("|")) return true
+    return false
 }
 
 internal fun AIService.isStandaloneMathLine(line: String): Boolean {

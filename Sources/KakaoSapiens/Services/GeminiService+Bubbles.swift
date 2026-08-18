@@ -143,6 +143,7 @@ extension GeminiService {
         var buffer: [String] = []
         var mathMode: Bool?
         var displayMathClosingDelimiter: String?
+        var inTable = false
 
         func flushBuffer() {
             guard !buffer.isEmpty else { return }
@@ -172,6 +173,21 @@ extension GeminiService {
                 continue
             }
 
+            // 표(Markdown Table) 처리: 마크다운 표 행들은 절대 수식 행으로 쪼개지 않고 표 전체를 온전히 유지합니다.
+            let isTable = isMarkdownTableLine(trimmed)
+            if isTable {
+                if !inTable {
+                    flushBuffer()
+                    inTable = true
+                    mathMode = nil
+                }
+                buffer.append(trimmed)
+                continue
+            } else if inTable {
+                flushBuffer()
+                inTable = false
+            }
+
             let isMath = isStandaloneMathLine(trimmed)
             if let mode = mathMode, mode != isMath {
                 flushBuffer()
@@ -181,6 +197,16 @@ extension GeminiService {
         }
         flushBuffer()
         return result.isEmpty ? [paragraph] : result
+    }
+
+    func isMarkdownTableLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.hasPrefix("|") { return true }
+        let pipeCount = trimmed.filter { $0 == "|" }.count
+        if pipeCount >= 2 { return true }
+        if trimmed.contains("---") && trimmed.contains("|") { return true }
+        return false
     }
 
     func isStandaloneMathLine(_ line: String) -> Bool {

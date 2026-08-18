@@ -115,6 +115,27 @@ class StreamingBubbleBufferTest {
     }
 }
 
+class BubbleSplitterTableTest {
+
+    @Test
+    fun `마크다운 표는 수식 행이 있어도 하나로 유지된다`() {
+        val tableMarkdown = """
+            💡 딱 이렇게 3개 대칭으로만 정리하세요
+            | 삼각 (역함수) | 쌍곡선 (역함수) |
+            |---|---|
+            | $(\arcsin x)' = \frac{1}{\sqrt{1-x^2}}$ | $(\sinh^{-1} x)' = \frac{1}{\sqrt{1+x^2}}$ |
+            | $(\arccos x)' = -\frac{1}{\sqrt{1-x^2}}$ | $(\cosh^{-1} x)' = \frac{1}{\sqrt{x^2-1}}$ |
+            | $(\arctan x)' = \frac{1}{1+x^2}$ | $(\tanh^{-1} x)' = \frac{1}{1-x^2}$ |
+        """.trimIndent()
+
+        val chunks = com.sapiens.gagaodok.service.AIService.splitTextAndComplexMath(tableMarkdown)
+        assertEquals(2, chunks.size)
+        assertEquals("💡 딱 이렇게 3개 대칭으로만 정리하세요", chunks[0])
+        assertTrue(chunks[1].startsWith("| 삼각 (역함수) | 쌍곡선 (역함수) |"))
+        assertTrue(chunks[1].contains("(\\tanh^{-1} x)' = \\frac{1}{1-x^2} |"))
+    }
+}
+
 class MathExpressionTest {
 
     private fun eval(source: String, x: Double): Double? =
