@@ -177,7 +177,7 @@ public final class ObsidianBatchExportCoordinator: ObservableObject {
                 var visualErrors: [String] = []
                 for spec in note.visuals {
                     do {
-                        let data = try await ObsidianVisualRenderer.shared.render(spec: spec)
+                        let data = try await MathVisualRenderer.shared.render(spec: spec)
                         visuals.append(ObsidianGeneratedVisual(spec: spec, data: data))
                     } catch {
                         visualErrors.append("\(spec.title): \(error.localizedDescription)")

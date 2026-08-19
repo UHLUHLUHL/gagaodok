@@ -345,7 +345,7 @@ public final class ObsidianExportCoordinator: ObservableObject {
             for spec in visualSpecs {
                 guard !Task.isCancelled else { return }
                 do {
-                    let data = try await ObsidianVisualRenderer.shared.render(spec: spec)
+                    let data = try await MathVisualRenderer.shared.render(spec: spec)
                     visuals.append(ObsidianGeneratedVisual(spec: spec, data: data))
                 } catch {
                     visualErrors.append("\(spec.title): \(error.localizedDescription)")

@@ -151,10 +151,11 @@ extension GeminiService {
     원문에 없는 조건, 계산, 결론을 만들지 않는다. 틀린 아이디어는 최종 풀이에 섞지 말고 confusions에서 왜 틀렸는지 교정한다.
     각 아이디어와 교정에는 근거 턴을 자연어로 남긴다. 결론이 없으면 unresolved에 적는다.
     수식은 Obsidian MathJax와 호환되는 인라인 $...$ 또는 블록 $$...$$ LaTeX로 쓴다.
-    문제를 이해하는 데 함수 그래프, 3차원 표면, 좌표 도식이 실제로 도움이 될 때만 visuals에 시각자료를 넣는다.
-    시각자료의 함수식·좌표·범위는 원문에 있는 내용만 사용하고, 필요하지 않으면 visuals는 빈 배열로 둔다.
+    문제를 이해하는 데 함수 그래프, 음함수 곡선, 수치적분 함수족, 1계 미분방정식의 수치해, 3차원 표면, 좌표 도식이 실제로 도움이 될 때만 visuals에 시각자료를 넣는다.
+    시각자료의 함수식·좌표·범위·적분 구간·초기값·등고선 값은 원문과 검증된 풀이에서 나온 내용만 사용하고, 필요하지 않으면 반드시 visuals를 빈 배열로 둔다.
     함수식의 곱셈은 생략하지 말고 반드시 * 기호를 쓴다.
-    function2D는 y=f(x), surface3D는 z=f(x,y), coordinateDiagram은 points와 segments를 사용한다.
+    function2D는 y=f(x), parametric2D는 xExpression=x(t)와 yExpression=y(t), implicit2D는 expression=F(x,y)와 contourValue, integral2D는 y(x)=initialY+∫[parameterMin,parameterMax]expression(x,t)dt, ode2D는 y'=expression(x,y)와 initialX·initialY, surface3D는 z=f(x,y), coordinateDiagram은 points와 segments를 사용한다.
+    사용하지 않는 문자열 필드는 빈 문자열, 점·선분 필드는 빈 배열, 사용하지 않는 수치 필드는 유한한 기본값으로 채운다. 축 라벨과 범례는 그래프가 나타내는 수학적 의미를 짧고 정확하게 적는다.
     JSON 객체 하나만 출력하고 Markdown 코드 펜스를 쓰지 않는다.
     """
 
@@ -259,7 +260,7 @@ extension GeminiService {
         관련 턴의 추가 질문, 유효한 아이디어, 오답, 혼동과 교정을 빠뜨리지 않는다.
 
         정확히 다음 JSON 키를 사용한다.
-        {"title":"짧은 제목","problem":"자립적인 문제","givens":["조건"],"ideas":["아이디어 — N턴"],"confusions":["오해와 교정 — N턴"],"solution":"완결된 최종 해설","answer":"최종 답","concepts":["개념과 다음 기준"],"unresolved":["미해결"],"evidenceTurns":[정수],"coverage":[{"turn":정수,"status":"included|unrelated|merged","reason":"근거"}],"visuals":[{"id":"graph-1","kind":"function2D","title":"제목","caption":"설명","expression":"함수식 또는 빈 문자열","xMin":-4,"xMax":4,"yMin":-4,"yMax":4,"zMin":-4,"zMax":4,"points":[{"x":0,"y":0,"z":0,"label":""}],"segments":[{"start":{"x":0,"y":0,"z":0,"label":""},"end":{"x":1,"y":1,"z":0,"label":""},"label":""}]}]} (kind는 function2D, surface3D, coordinateDiagram 중 하나)
+        {"title":"짧은 제목","problem":"자립적인 문제","givens":["조건"],"ideas":["아이디어 — N턴"],"confusions":["오해와 교정 — N턴"],"solution":"완결된 최종 해설","answer":"최종 답","concepts":["개념과 다음 기준"],"unresolved":["미해결"],"evidenceTurns":[정수],"coverage":[{"turn":정수,"status":"included|unrelated|merged","reason":"근거"}],"visuals":[{"id":"graph-1","kind":"function2D","title":"제목","caption":"설명","expression":"sin(x)","xExpression":"","yExpression":"","legend":"y=sin(x)","xLabel":"x","yLabel":"y","zLabel":"z","xMin":-6.28,"xMax":6.28,"yMin":-2,"yMax":2,"zMin":-1,"zMax":1,"parameterMin":0,"parameterMax":1,"initialX":0,"initialY":0,"contourValue":0,"points":[],"segments":[]}]} (kind는 function2D, parametric2D, implicit2D, integral2D, ode2D, surface3D, coordinateDiagram 중 하나)
         coverage에는 범위의 모든 사용자 턴을 정확히 한 번씩 넣는다.
 
         source:
