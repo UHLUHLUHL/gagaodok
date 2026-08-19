@@ -55,11 +55,11 @@ public enum ConversationCompactor {
     }
 
     /// 모드별 원문 보존 윈도우입니다.
-    /// - 멘토 모드: 최근 25턴(일반 문항 6~8개, 중급 문항 4~5개)을 100% 무손실 원문으로 보존합니다.
+    /// - 멘토 모드: 최근 20턴을 100% 무손실 원문으로 보존합니다.
     /// - 챗봇 모드: 최근 20턴을 원문으로 보존합니다.
     public static func verbatimWindowTurns(for mode: ChatMode) -> Int {
         switch mode {
-        case .mathMentor: return 25
+        case .mathMentor: return 20
         case .companion: return 20
         }
     }
