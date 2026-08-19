@@ -733,6 +733,7 @@ private struct PersonaPreviewBubble: View {
     let ink: Color
 
     @State private var height: CGFloat = 20
+    @State private var messageID = UUID()
 
     private var looksRich: Bool {
         text.contains("$") || text.contains("**") || text.contains("\\(") || text.contains("\\[")
@@ -741,7 +742,7 @@ private struct PersonaPreviewBubble: View {
     var body: some View {
         Group {
             if looksRich {
-                LaTeXMarkdownView(content: text, isUser: false, dynamicHeight: $height)
+                LaTeXMarkdownView(messageID: messageID, content: text, isUser: false, dynamicHeight: $height)
                     .frame(height: height)
                     .frame(maxWidth: 250)
             } else {

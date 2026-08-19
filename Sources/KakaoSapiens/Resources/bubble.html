@@ -200,13 +200,32 @@
             }
 
             function splitTrailingAnnotation(line) {
-                const match = line.match(/^([\s\S]*?)(?:\\quad|\\qquad|\s)*(\([^\)]*\\text\{[^\}]*\}[^\)]*\)|\([^\)]+\))$/);
-                if (match && match[1].trim() && match[2].trim()) {
-                    if (line.length > 32) {
-                        return { expr: match[1].trim(), annot: match[2].trim() };
+                const value = line.trim();
+                if (!value.endsWith(')') || value.length <= 32) return null;
+                let depth = 0;
+                let opening = -1;
+                for (let i = value.length - 1; i >= 0; i--) {
+                    if (value[i] === ')') depth++;
+                    else if (value[i] === '(') {
+                        depth--;
+                        if (depth === 0) { opening = i; break; }
                     }
                 }
+                if (opening <= 0) return null;
+                const annot = value.slice(opening).trim();
+                const expr = value.slice(0, opening).replace(/(?:\\quad|\\qquad|\s)+$/g, '').trim();
+                if (expr && annot.includes('\\text{')) {
+                    return { expr: expr, annot: annot };
+                }
                 return null;
+            }
+
+            // 긴 본식 뒤의 "(단, ...)" 조건은 브라우저의 임의 글루 지점에서 한 글자만
+            // 떨어뜨리지 않고, 조건 전체를 의도적인 둘째 행으로 옮깁니다.
+            const trailingAnnotation = splitTrailingAnnotation(trimmed);
+            if (trailingAnnotation && trimmed.length > 42) {
+                return '\\begin{gathered}\n' + cleanStr(trailingAnnotation.expr) +
+                    ' \\\\\n' + cleanStr(trailingAnnotation.annot) + '\n\\end{gathered}';
             }
 
             // 1급 관계 연산자 목록 (긴 문자열 우선 매칭)

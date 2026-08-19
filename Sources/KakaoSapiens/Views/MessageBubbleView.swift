@@ -30,7 +30,7 @@ public struct MessageBubbleView: View {
         isSelected ? KakaoTheme.selection : Color.clear
     }
 
-    @State private var webViewHeight: CGFloat = 30
+    @State private var webViewHeight: CGFloat
     @State private var isHovering: Bool = false
     @State private var hoverDismissTask: Task<Void, Never>?
     
@@ -62,6 +62,7 @@ public struct MessageBubbleView: View {
         self.isEditingThisMessage = isEditingThisMessage
         self.isSelected = isSelected
         self.isRichContentActive = isRichContentActive
+        _webViewHeight = State(initialValue: BubbleMessageHeightCache.shared.height(for: message.id, content: message.text) ?? 30)
         self.onImageTapped = onImageTapped
         self.onEditMessage = onEditMessage
         self.onDeleteMessage = onDeleteMessage
@@ -164,16 +165,12 @@ public struct MessageBubbleView: View {
                     VStack(alignment: .trailing, spacing: 2) {
                     Group {
                         if message.containsLaTeXOrMarkdown {
-                            if isRichContentActive {
-                                LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight,
-                                                  searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
-                                    .frame(height: webViewHeight)
-                                    .frame(minWidth: 36, maxWidth: 300)
-                            } else {
-                                Color.clear
-                                    .frame(height: webViewHeight)
-                                    .frame(minWidth: 36, maxWidth: 300)
-                            }
+                            LaTeXMarkdownView(messageID: message.id, content: message.text, isUser: true,
+                                              dynamicHeight: $webViewHeight,
+                                              isRenderingEnabled: isRichContentActive,
+                                              searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
+                                .frame(height: webViewHeight)
+                                .frame(minWidth: 36, maxWidth: 300)
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
@@ -308,16 +305,12 @@ public struct MessageBubbleView: View {
                 if !message.text.isEmpty {
                     Group {
                         if message.containsLaTeXOrMarkdown {
-                            if isRichContentActive {
-                                LaTeXMarkdownView(content: message.text, isUser: false, dynamicHeight: $webViewHeight,
-                                                  searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
-                                    .frame(height: webViewHeight)
-                                    .frame(minWidth: 36, maxWidth: 320)
-                            } else {
-                                Color.clear
-                                    .frame(height: webViewHeight)
-                                    .frame(minWidth: 36, maxWidth: 320)
-                            }
+                            LaTeXMarkdownView(messageID: message.id, content: message.text, isUser: false,
+                                              dynamicHeight: $webViewHeight,
+                                              isRenderingEnabled: isRichContentActive,
+                                              searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
+                                .frame(height: webViewHeight)
+                                .frame(minWidth: 36, maxWidth: 320)
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))

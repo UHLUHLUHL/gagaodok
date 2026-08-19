@@ -47,6 +47,84 @@ struct BubbleSnapshotKey: Hashable {
     }
 }
 
+/// 이미지 캐시에서 스냅샷이 밀려나도 이미 확정한 레이아웃 높이는 보존합니다.
+/// 높이 값은 이미지에 비해 매우 작고, 제한을 둬 오래된 대화가 무한히 쌓이지 않게 합니다.
+final class BubbleLayoutHeightCache {
+    private let capacity: Int
+    private var values: [BubbleSnapshotKey: CGFloat] = [:]
+    private var order: [BubbleSnapshotKey] = []
+
+    init(capacity: Int = 5_000) {
+        self.capacity = max(1, capacity)
+    }
+
+    func height(for key: BubbleSnapshotKey) -> CGFloat? { values[key] }
+
+    func insert(_ height: CGFloat, for key: BubbleSnapshotKey) {
+        if values[key] != nil { order.removeAll { $0 == key } }
+        values[key] = height
+        order.append(key)
+        while values.count > capacity, let oldest = order.first {
+            order.removeFirst()
+            values.removeValue(forKey: oldest)
+        }
+    }
+}
+
+/// LazyVStack가 행 자체를 재생성해도 30pt 기본 높이로 돌아가지 않게 하는 작은 캐시입니다.
+final class BubbleMessageHeightCache: @unchecked Sendable {
+    static let shared = BubbleMessageHeightCache()
+
+    private struct Entry { let content: String; let height: CGFloat }
+    private let capacity: Int
+    private let lock = NSLock()
+    private var values: [UUID: Entry] = [:]
+    private var order: [UUID] = []
+
+    init(capacity: Int = 5_000) {
+        self.capacity = max(1, capacity)
+    }
+
+    func height(for id: UUID, content: String) -> CGFloat? {
+        lock.lock(); defer { lock.unlock() }
+        guard let entry = values[id], entry.content == content else { return nil }
+        return entry.height
+    }
+
+    func insert(_ height: CGFloat, for id: UUID, content: String) {
+        lock.lock(); defer { lock.unlock() }
+        if values[id] != nil { order.removeAll { $0 == id } }
+        values[id] = Entry(content: content, height: height)
+        order.append(id)
+        while values.count > capacity, let oldest = order.first {
+            order.removeFirst()
+            values.removeValue(forKey: oldest)
+        }
+    }
+}
+
+enum BubbleRenderRequestDelay {
+    static func nanoseconds(hasRenderedKey: Bool, widthChanged: Bool) -> UInt64 {
+        hasRenderedKey && widthChanged ? 300_000_000 : 0
+    }
+}
+
+enum BubbleSnapshotReusePolicy {
+    static func shouldApply(key: BubbleSnapshotKey, lastAppliedKey: BubbleSnapshotKey?) -> Bool {
+        key != lastAppliedKey
+    }
+}
+
+struct BubbleHeightStabilityTracker {
+    private var lastHeight: CGFloat?
+
+    mutating func observe(_ height: CGFloat) -> Bool {
+        defer { lastHeight = height }
+        guard let lastHeight else { return false }
+        return abs(lastHeight - height) <= 0.5
+    }
+}
+
 private struct BubbleSnapshot {
     let image: NSImage
     let height: CGFloat
@@ -70,6 +148,7 @@ private final class BubbleSnapshotRenderer: NSObject, WKNavigationDelegate, WKSc
     private var cacheOrder: [BubbleSnapshotKey] = []
     private var cacheCost = 0
     private let cacheCostLimit = 64 * 1024 * 1024
+    private let heightCache = BubbleLayoutHeightCache()
 
     override init() {
         let controller = WKUserContentController()
@@ -93,6 +172,15 @@ private final class BubbleSnapshotRenderer: NSObject, WKNavigationDelegate, WKSc
         // 빠르게 스크롤했을 때 이미 지나간 요청보다 현재 화면 요청을 먼저 그립니다.
         queue.insert(Job(key: key, content: content), at: 0)
         pump()
+    }
+
+    func cachedSnapshot(for key: BubbleSnapshotKey) -> (NSImage, CGFloat)? {
+        guard let snapshot = cache[key] else { return nil }
+        return (snapshot.image, snapshot.height)
+    }
+
+    func cachedHeight(for key: BubbleSnapshotKey) -> CGFloat? {
+        heightCache.height(for: key)
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -123,10 +211,32 @@ private final class BubbleSnapshotRenderer: NSObject, WKNavigationDelegate, WKSc
         webView.evaluateJavaScript("renderContent(\(literal)[0])") { [weak self] result, _ in
             Task { @MainActor in
                 guard let self else { return }
+                let initialHeight = max(18, CGFloat((result as? NSNumber)?.doubleValue ?? 30))
+                var tracker = BubbleHeightStabilityTracker()
+                _ = tracker.observe(initialHeight)
+                self.settleHeight(job: job, tracker: tracker, attemptsRemaining: 6)
+            }
+        }
+    }
+
+    private func settleHeight(job: Job, tracker: BubbleHeightStabilityTracker, attemptsRemaining: Int) {
+        webView.evaluateJavaScript("fitDisplayMath(); Math.ceil(container.scrollHeight)") { [weak self] result, _ in
+            Task { @MainActor in
+                guard let self else { return }
                 let height = max(18, CGFloat((result as? NSNumber)?.doubleValue ?? 30))
-                self.webView.frame.size.height = height
-                self.applyHighlight(for: job) {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { self.capture(job: job, height: height) }
+                var nextTracker = tracker
+                let isStable = nextTracker.observe(height)
+                if isStable || attemptsRemaining <= 1 {
+                    self.webView.frame.size.height = height
+                    self.applyHighlight(for: job) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                            self.capture(job: job, height: height)
+                        }
+                    }
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                        self.settleHeight(job: job, tracker: nextTracker, attemptsRemaining: attemptsRemaining - 1)
+                    }
                 }
             }
         }
@@ -153,6 +263,7 @@ private final class BubbleSnapshotRenderer: NSObject, WKNavigationDelegate, WKSc
 
     private func finish(job: Job, image: NSImage, height: CGFloat) {
         let cost = max(1, job.key.width * Int(height.rounded()) * 8)
+        heightCache.insert(height, for: job.key)
         cache[job.key] = BubbleSnapshot(image: image, height: height, cost: cost)
         cacheOrder.append(job.key)
         cacheCost += cost
@@ -221,15 +332,18 @@ public final class BubbleSnapshotView: NSView {
 }
 
 public struct LaTeXMarkdownView: NSViewRepresentable {
+    let messageID: UUID
     let content: String
     let isUser: Bool
     @Binding var dynamicHeight: CGFloat
+    var isRenderingEnabled: Bool = true
     var searchQuery: String = ""
     var isCurrentSearchHit: Bool = false
 
-    public init(content: String, isUser: Bool, dynamicHeight: Binding<CGFloat>,
-                searchQuery: String = "", isCurrentSearchHit: Bool = false) {
-        self.content = content; self.isUser = isUser; self._dynamicHeight = dynamicHeight
+    public init(messageID: UUID, content: String, isUser: Bool, dynamicHeight: Binding<CGFloat>,
+                isRenderingEnabled: Bool = true, searchQuery: String = "", isCurrentSearchHit: Bool = false) {
+        self.messageID = messageID; self.content = content; self.isUser = isUser; self._dynamicHeight = dynamicHeight
+        self.isRenderingEnabled = isRenderingEnabled
         self.searchQuery = searchQuery; self.isCurrentSearchHit = isCurrentSearchHit
     }
 
@@ -242,15 +356,15 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
             guard let coordinator, let view else { return }
             coordinator.request(width: width, in: view)
         }
-        DispatchQueue.main.async { context.coordinator.request(width: isUser ? 280 : 300, in: view) }
         return view
     }
 
     public func updateNSView(_ nsView: BubbleSnapshotView, context: Context) {
         context.coordinator.parent = self
         nsView.showFallback(content)
-        let width = nsView.bounds.width > 35 ? nsView.bounds.width : (isUser ? 280 : 300)
-        context.coordinator.request(width: width, in: nsView)
+        if nsView.bounds.width > 35 {
+            context.coordinator.request(width: nsView.bounds.width, in: nsView)
+        }
     }
 
     public final class Coordinator {
@@ -262,25 +376,59 @@ public struct LaTeXMarkdownView: NSViewRepresentable {
 
         @MainActor
         func request(width: CGFloat, in view: BubbleSnapshotView) {
+            guard parent.isRenderingEnabled else { return }
             let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             let key = BubbleSnapshotKey(content: parent.content, width: width, query: parent.searchQuery,
                                         isCurrentHit: parent.isCurrentSearchHit, isDark: dark)
-            guard key != lastKey, key != pendingKey else { return }
+
+            guard BubbleSnapshotReusePolicy.shouldApply(key: key, lastAppliedKey: lastKey),
+                  key != pendingKey else { return }
+
+            if let (image, height) = BubbleSnapshotRenderer.shared.cachedSnapshot(for: key) {
+                pendingTask?.cancel()
+                pendingKey = nil
+                lastKey = key
+                apply(image: image, height: height, key: key, in: view)
+                return
+            }
+
+            if let height = BubbleSnapshotRenderer.shared.cachedHeight(for: key) {
+                applyHeight(height)
+            }
+
+            let previousKey = lastKey
+            let delay = BubbleRenderRequestDelay.nanoseconds(
+                hasRenderedKey: previousKey != nil,
+                widthChanged: previousKey?.width != key.width
+            )
             pendingKey = key
             pendingTask?.cancel()
             pendingTask = Task { @MainActor [weak self, weak view] in
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
                 guard !Task.isCancelled, let self, let view, self.pendingKey == key else { return }
                 self.pendingKey = nil
                 self.lastKey = key
                 BubbleSnapshotRenderer.shared.render(key: key, content: self.parent.content) { [weak self, weak view] image, height in
                     guard let self, let view, self.lastKey == key else { return }
-                    view.show(image: image)
-                    if abs(self.parent.dynamicHeight - height) > 0.5 {
-                        self.parent.dynamicHeight = height
-                        NotificationCenter.default.post(name: .bubbleHeightSettled, object: nil)
-                    }
+                    self.apply(image: image, height: height, key: key, in: view)
                 }
+            }
+        }
+
+
+        @MainActor
+        private func apply(image: NSImage, height: CGFloat, key: BubbleSnapshotKey, in view: BubbleSnapshotView) {
+            guard lastKey == key else { return }
+            view.show(image: image)
+            applyHeight(height)
+        }
+
+        @MainActor
+        private func applyHeight(_ height: CGFloat) {
+            BubbleMessageHeightCache.shared.insert(height, for: parent.messageID, content: parent.content)
+            if abs(parent.dynamicHeight - height) > 0.5 {
+                parent.dynamicHeight = height
+                NotificationCenter.default.post(name: .bubbleHeightSettled, object: nil)
             }
         }
     }
