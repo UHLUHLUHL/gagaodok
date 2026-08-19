@@ -37,25 +37,21 @@
             font-size: 1.05em;
             -webkit-text-stroke: 0.18px currentColor !important;
             letter-spacing: 0.2px;
-            white-space: nowrap;
+            /* 인라인 수식은 문장 안의 안전한 glue 지점에서 줄을 바꿀 수 있어야 합니다. */
+            white-space: normal;
         }
         .katex-display {
             margin: 7px 0 !important;
-            /* 자동 축소로도 안 들어가는 아주 긴 수식만 마지막 수단으로 가로 스크롤합니다. */
-            overflow-x: auto;
+            /* 수식은 JS에서 의미 단위로 나누고 마지막에는 폭에 맞춥니다. 가로 스크롤은 만들지 않습니다. */
+            overflow-x: hidden;
             overflow-y: hidden;
             padding: 4px 2px !important;
             white-space: normal;
+            max-width: 100%;
         }
         .katex-display > .katex {
             font-size: 1.22em !important;
             white-space: normal !important;
-        }
-
-        /* 가로로 넘치는 수식이 남아 있을 때 잘렸다는 걸 알 수 있게 오른쪽 끝을 흐리게 처리합니다. */
-        .katex-display.is-overflowing {
-            -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
-            mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
         }
 
         .katex .frac-line { border-bottom-width: 1.5px !important; }
@@ -303,6 +299,75 @@
                 return opList;
             }
 
+            // 괄호·분수·행렬 안은 건드리지 않고 최상위 +, -, \pm, \mp 항만 나눕니다.
+            // 미분의 곱법칙처럼 등호는 하나지만 우변이 긴 합인 식을 여러 줄로 만드는 핵심입니다.
+            function splitAdditiveTerms(expression) {
+                const terms = [];
+                let current = '';
+                let pendingSign = '';
+                let d = 0;
+
+                function flush() {
+                    const value = current.trim();
+                    if (value) terms.push({ sign: pendingSign, expr: value });
+                    current = '';
+                    pendingSign = '';
+                }
+
+                for (let i = 0; i < expression.length; i++) {
+                    const ch = expression[i];
+                    if (ch === '{' || ch === '(' || ch === '[') d++;
+                    else if (ch === '}' || ch === ')' || ch === ']') d = Math.max(0, d - 1);
+
+                    if (d === 0 && !isEscaped(expression, i)) {
+                        let sign = '';
+                        let length = 1;
+                        if (expression.startsWith('\\pm', i) && !/[a-zA-Z]/.test(expression[i + 3] || '')) {
+                            sign = '\\pm'; length = 3;
+                        } else if (expression.startsWith('\\mp', i) && !/[a-zA-Z]/.test(expression[i + 3] || '')) {
+                            sign = '\\mp'; length = 3;
+                        } else if ((ch === '+' || ch === '-') && current.trim()) {
+                            sign = ch;
+                        }
+
+                        if (sign && current.trim()) {
+                            flush();
+                            pendingSign = sign;
+                            i += length - 1;
+                            continue;
+                        }
+                    }
+                    current += ch;
+                }
+                flush();
+                return terms;
+            }
+
+            function relationLines(ops, leader, wholeLength) {
+                let output = '';
+                for (let i = 0; i < ops.length - 1; i++) {
+                    const left = cleanStr(ops[i].expr);
+                    const right = cleanStr(ops[i + 1].expr);
+                    const terms = splitAdditiveTerms(right);
+                    const wrapTerms = terms.length >= 2 && (right.length > 30 || wholeLength > 46);
+                    const firstRight = wrapTerms ? terms[0].expr : right;
+
+                    if (i === 0) {
+                        output += leader + left + ' &' + ops[i].op + ' ' + firstRight;
+                    } else {
+                        output += ' \\\\\n&' + ops[i].op + ' ' + firstRight;
+                    }
+
+                    if (wrapTerms) {
+                        for (let termIndex = 1; termIndex < terms.length; termIndex++) {
+                            const term = terms[termIndex];
+                            output += ' \\\\\n&\\quad ' + term.sign + ' ' + term.expr;
+                        }
+                    }
+                }
+                return output;
+            }
+
             // A. 쉼표(,)나 논리 기호(\implies, \iff)로 나뉜 복수 식/방정식 시스템
             if (parts.length >= 2) {
                 const parsedParts = parts.map(p => ({ raw: p, ops: splitOperators(p) }));
@@ -319,12 +384,14 @@
                             const isLogicLeader = prevSep === '\\implies' || prevSep === '\\iff';
                             const sepPrefix = isLogicLeader ? prevSep + ' ' : '';
 
-                            let lineContent = sepPrefix + cleanStr(pp.raw);
+                            const lineContent = cleanStr(pp.raw);
                             const splitAnnot = splitTrailingAnnotation(lineContent);
-                            if (splitAnnot) {
-                                aligned += '&' + cleanStr(splitAnnot.expr) + ' \\\\\n&\\quad ' + cleanStr(splitAnnot.annot);
+                            if (pp.ops.length >= 2) {
+                                aligned += relationLines(pp.ops, sepPrefix, trimmed.length);
+                            } else if (splitAnnot) {
+                                aligned += '&' + sepPrefix + cleanStr(splitAnnot.expr) + ' \\\\\n&\\quad ' + cleanStr(splitAnnot.annot);
                             } else {
-                                aligned += '&' + lineContent;
+                                aligned += '&' + sepPrefix + lineContent;
                             }
 
                             if (idx < parsedParts.length - 1) {
@@ -340,13 +407,7 @@
                             const sepSuffix = (idx < parsedParts.length - 1 && (sep === ',' || sep === ';')) ? sep + ' \\\\\n' : (idx < parsedParts.length - 1 ? ' \\\\\n' : '\n');
 
                             if (pp.ops.length >= 2) {
-                                for (let k = 0; k < pp.ops.length - 1; k++) {
-                                    if (k === 0) {
-                                        aligned += cleanStr(pp.ops[0].expr) + ' &' + pp.ops[0].op + ' ' + cleanStr(pp.ops[1].expr);
-                                    } else {
-                                        aligned += ' \\\\\n&' + pp.ops[k].op + ' ' + cleanStr(pp.ops[k + 1].expr);
-                                    }
-                                }
+                                aligned += relationLines(pp.ops, '', trimmed.length);
                                 aligned += sepSuffix;
                             } else {
                                 aligned += cleanStr(pp.raw) + sepSuffix;
@@ -369,9 +430,17 @@
 
             if (!isBoundedIneq && (chainOps.length >= 3 || (chainOps.length >= 2 && trimmed.length > 48))) {
                 let aligned = '\\begin{aligned}\n';
-                aligned += cleanStr(chainOps[0].expr) + ' &' + chainOps[0].op + ' ' + cleanStr(chainOps[1].expr);
-                for (let i = 1; i < chainOps.length - 1; i++) {
-                    aligned += ' \\\\\n&' + chainOps[i].op + ' ' + cleanStr(chainOps[i + 1].expr);
+                aligned += relationLines(chainOps, '', trimmed.length);
+                aligned += '\n\\end{aligned}';
+                return aligned;
+            }
+
+            // 관계 연산자가 없는 긴 합도 항 단위로 줄을 바꿉니다.
+            const standaloneTerms = splitAdditiveTerms(trimmed);
+            if (standaloneTerms.length >= 2 && trimmed.length > 42) {
+                let aligned = '\\begin{aligned}\n&' + standaloneTerms[0].expr;
+                for (let i = 1; i < standaloneTerms.length; i++) {
+                    aligned += ' \\\\\n&\\quad ' + standaloneTerms[i].sign + ' ' + standaloneTerms[i].expr;
                 }
                 aligned += '\n\\end{aligned}';
                 return aligned;
@@ -380,25 +449,32 @@
             return trimmed;
         }
 
-        // 긴 수식이 말풍선 폭을 넘으면 글자 크기를 줄여 통째로 보이게 맞춥니다.
+        // 의미 단위로도 나눌 수 없는 긴 원자식은 마지막 안전장치로 폭에 맞춥니다.
+        // 가로 스크롤이나 오른쪽 잘림은 어떤 경우에도 남기지 않습니다.
         function fitDisplayMath() {
             const blocks = container.querySelectorAll('.katex-display');
             for (const block of blocks) {
                 const formula = block.querySelector('.katex');
                 if (!formula) continue;
                 formula.style.removeProperty('font-size');
-                block.classList.remove('is-overflowing');
+                formula.style.removeProperty('transform');
+                formula.style.removeProperty('transform-origin');
+                formula.style.removeProperty('display');
                 const available = block.clientWidth;
                 if (available <= 0) continue;
-                for (let pass = 0; pass < 2; pass++) {
+                for (let pass = 0; pass < 3; pass++) {
                     const needed = formula.scrollWidth;
                     if (needed <= available) break;
                     const current = parseFloat(getComputedStyle(formula).fontSize);
-                    const target = Math.max(current * (available / needed) * 0.98, 13.5);
+                    const target = Math.max(current * (available / needed) * 0.98, 9.5);
                     formula.style.setProperty('font-size', target + 'px', 'important');
                 }
                 if (formula.scrollWidth > block.clientWidth + 1) {
-                    block.classList.add('is-overflowing');
+                    const scale = Math.max((block.clientWidth / formula.scrollWidth) * 0.98, 0.1);
+                    formula.style.setProperty('display', 'inline-block');
+                    formula.style.setProperty('transform', `scale(${scale})`);
+                    // KaTeX 원래 박스의 왼쪽에서 축소해야 오른쪽으로 밀려 다시 잘리지 않습니다.
+                    formula.style.setProperty('transform-origin', 'left top');
                 }
             }
         }
@@ -504,7 +580,15 @@
             return Math.ceil(container.scrollHeight);
         };
 
-        const resizeObserver = new ResizeObserver(() => { sendHeight(); });
+        let lastObservedWidth = 0;
+        const resizeObserver = new ResizeObserver(() => {
+            const width = container.clientWidth;
+            if (Math.abs(width - lastObservedWidth) > 0.5) {
+                lastObservedWidth = width;
+                fitDisplayMath();
+            }
+            sendHeight();
+        });
         resizeObserver.observe(container);
 
         if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.readyHandler) {
