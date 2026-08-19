@@ -99,12 +99,34 @@ public enum ChatMode: String, CaseIterable, Codable, Identifiable {
     - 같은 설명을 반복하거나 불필요한 서론을 붙이지 않는다.
 
     # 그래프
-    그래프가 학습에 실질적으로 도움이 될 때만 별도 문단에 다음 형식 중 하나를 쓴다.
+    그래프가 학습에 실질적으로 도움이 될 때만 사용한다. 원문과 검증된 풀이에 없는 함수, 범위, 초기조건, 특징점을 만들지 않는다.
+
+    닫힌 꼴 초등함수는 별도 문단에 기존 형식을 우선 사용한다.
     [GRAPH: type=cartesian, func=sin(x), xmin=-6.28, xmax=6.28, ymin=-2, ymax=2, title="y = sin(x)"]
     [GRAPH: type=parametric, x=t*cos(t), y=t*sin(t), tmin=0, tmax=6.28, xmin=-7, xmax=7, ymin=-7, ymax=7, title="매개변수 곡선"]
+
     수식에는 + - * / ^ 와 괄호, 그리고 sin, cos, tan, asin, acos, atan, sinh, cosh, tanh,
     exp, ln, log, sqrt, abs를 쓸 수 있다. 상수 pi와 e도 쓸 수 있고 2x처럼 곱셈 기호를 생략해도 된다.
-    직교함수는 변수 x를, 매개변수 곡선은 변수 t를 쓴다. 이 범위를 벗어나는 식은 그래프 태그로 만들지 않는다.
+    직교함수는 변수 x를, 매개변수 곡선은 변수 t를 쓴다.
+
+    음함수, 고정 구간 수치적분으로 정의된 함수족, 1계 미분방정식 초기값 문제처럼 기본 형식으로 정확히 나타낼 수 없는 경우에만 아래 고급 형식을 쓴다. 고급 그래프의 시작 줄부터 종료 줄까지 빈 줄 없이 하나의 별도 문단으로 출력한다. 앱이 이 제한된 명세를 검증하고 로컬에서 수치 계산하여 고해상도 PNG로 만든다. Python 코드나 실행 명령은 출력하지 않는다.
+
+    음함수 F(x,y)=contourValue 예시:
+    [NUMERIC_GRAPH]
+    {"id":"graph-1","kind":"implicit2D","title":"단위원","caption":"x^2+y^2=1의 음함수 곡선","expression":"x^2+y^2","xExpression":"","yExpression":"","legend":"F(x,y)=1","xLabel":"x","yLabel":"y","zLabel":"","xMin":-1.5,"xMax":1.5,"yMin":-1.5,"yMax":1.5,"zMin":-1,"zMax":1,"parameterMin":0,"parameterMax":1,"initialX":0,"initialY":0,"contourValue":1,"points":[],"segments":[]}
+    [/NUMERIC_GRAPH]
+
+    고정 구간 적분 y(x)=initialY+∫[parameterMin,parameterMax]expression(x,t)dt 예시:
+    [NUMERIC_GRAPH]
+    {"id":"graph-2","kind":"integral2D","title":"완전 타원적분의 개형","caption":"적분으로 정의된 함수의 수치 그래프","expression":"1/sqrt(1-x*sin(t)^2)","xExpression":"","yExpression":"","legend":"K(x)","xLabel":"x","yLabel":"K(x)","zLabel":"","xMin":0,"xMax":0.95,"yMin":1,"yMax":3,"zMin":-1,"zMax":1,"parameterMin":0,"parameterMax":1.57079632679,"initialX":0,"initialY":0,"contourValue":0,"points":[],"segments":[]}
+    [/NUMERIC_GRAPH]
+
+    1계 미분방정식 y'=expression(x,y), y(initialX)=initialY 예시:
+    [NUMERIC_GRAPH]
+    {"id":"graph-3","kind":"ode2D","title":"미분방정식의 수치해","caption":"y'=y, y(0)=1의 해 곡선","expression":"y","xExpression":"","yExpression":"","legend":"수치해 y(x)","xLabel":"x","yLabel":"y","zLabel":"","xMin":-2,"xMax":2,"yMin":0,"yMax":8,"zMin":-1,"zMax":1,"parameterMin":0,"parameterMax":1,"initialX":0,"initialY":1,"contourValue":0,"points":[{"x":0,"y":1,"z":0,"label":"초기값"}],"segments":[]}
+    [/NUMERIC_GRAPH]
+
+    고급 명세의 모든 키를 빠짐없이 쓴다. 사용하지 않는 문자열은 "", 배열은 [], 수치 필드는 유한한 기본값으로 채운다. 축 라벨과 범례를 명확히 쓰고, 접점·변곡점 같은 주요 점은 풀이에서 실제로 확인된 경우에만 points 또는 segments에 넣는다. 그래프가 필요하지 않거나 지원 범위를 벗어나면 그래프 태그를 만들지 않는다.
     """
 
     // 이 지침은 "무엇을 하지 마라"가 절반입니다.

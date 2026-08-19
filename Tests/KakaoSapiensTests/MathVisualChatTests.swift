@@ -10,6 +10,7 @@ struct MathVisualChatTests {
         testMalformedDuplicateAndOversizedBlocksAreRejectedSafely()
         try await testRenderedGraphBecomesPNGAttachment()
         try await testChatPipelineKeepsValidImagesAndReportsRejectedGraphs()
+        testMathMentorPromptExamplesMatchTheImplementedGrammar()
         print("MathVisualChatTests passed")
     }
 
@@ -85,6 +86,12 @@ struct MathVisualChatTests {
         let rejected = await MathVisualChatPipeline.render(invalid, using: renderer)
         precondition(rejected.attachments.isEmpty)
         precondition(rejected.hadFailures)
+    }
+
+    static func testMathMentorPromptExamplesMatchTheImplementedGrammar() {
+        let parsed = MathVisualTagParser.extract(from: ChatMode.mathMentor.stableSystemPrompt)
+        precondition(parsed.specs.count == 5, "기본 2개와 고급 3개 예시가 모두 실제 파서에서 열려야 합니다.")
+        precondition(!parsed.hadFailures, "시스템 프롬프트에 앱이 거부하는 그래프 예시가 있으면 안 됩니다.")
     }
 
     static func advancedBlock(id: String) -> String {
