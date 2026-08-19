@@ -121,16 +121,30 @@ public enum ObsidianStructuredOutput {
 
     private static let visual: [String: Any] = object([
         "id": string,
-        "kind": ["type": "string", "enum": ["function2D", "surface3D", "coordinateDiagram"]],
+        "kind": ["type": "string", "enum": [
+            "function2D", "parametric2D", "implicit2D", "integral2D", "ode2D",
+            "surface3D", "coordinateDiagram"
+        ]],
         "title": string,
         "caption": string,
         "expression": string,
+        "xExpression": string,
+        "yExpression": string,
+        "legend": string,
+        "xLabel": string,
+        "yLabel": string,
+        "zLabel": string,
         "xMin": number,
         "xMax": number,
         "yMin": number,
         "yMax": number,
         "zMin": number,
         "zMax": number,
+        "parameterMin": number,
+        "parameterMax": number,
+        "initialX": number,
+        "initialY": number,
+        "contourValue": number,
         "points": array(point),
         "segments": array(segment)
     ])

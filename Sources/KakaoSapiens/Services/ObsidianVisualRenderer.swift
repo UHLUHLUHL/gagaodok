@@ -120,6 +120,8 @@ public final class ObsidianVisualRenderer: NSObject, WKNavigationDelegate {
                 xMin: spec.xMin, xMax: spec.xMax, yMin: spec.yMin, yMax: spec.yMax, zMin: spec.zMin, zMax: spec.zMax,
                 curves: [], points: [], segments: [], triangles: try sampleSurface(spec)
             )
+        case .parametric2D, .implicit2D, .integral2D, .ode2D:
+            throw RendererError.invalidSpec
         }
     }
 

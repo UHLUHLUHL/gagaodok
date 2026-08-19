@@ -53,6 +53,8 @@ public enum ObsidianVisualMath {
         switch visual.kind {
         case .function2D, .surface3D:
             return (try? validateExpression(visual.expression)) != nil
+        case .parametric2D, .implicit2D, .integral2D, .ode2D:
+            return false
         case .coordinateDiagram:
             return !visual.points.isEmpty || !visual.segments.isEmpty
         }

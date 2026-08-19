@@ -226,83 +226,10 @@ public struct TurnCoverage: Codable, Equatable, Identifiable {
     }
 }
 
-public enum ObsidianVisualKind: String, Codable, Equatable, CaseIterable {
-    case function2D
-    case surface3D
-    case coordinateDiagram
-}
-
-public struct ObsidianVisualPoint: Codable, Equatable {
-    public var x: Double
-    public var y: Double
-    public var z: Double
-    public var label: String
-
-    public init(x: Double, y: Double, z: Double = 0, label: String = "") {
-        self.x = x
-        self.y = y
-        self.z = z
-        self.label = label
-    }
-}
-
-public struct ObsidianVisualSegment: Codable, Equatable {
-    public var start: ObsidianVisualPoint
-    public var end: ObsidianVisualPoint
-    public var label: String
-
-    public init(start: ObsidianVisualPoint, end: ObsidianVisualPoint, label: String = "") {
-        self.start = start
-        self.end = end
-        self.label = label
-    }
-}
-
-public struct ObsidianVisualSpec: Codable, Equatable, Identifiable {
-    public var id: String
-    public var kind: ObsidianVisualKind
-    public var title: String
-    public var caption: String
-    public var expression: String
-    public var xMin: Double
-    public var xMax: Double
-    public var yMin: Double
-    public var yMax: Double
-    public var zMin: Double
-    public var zMax: Double
-    public var points: [ObsidianVisualPoint]
-    public var segments: [ObsidianVisualSegment]
-
-    public init(
-        id: String,
-        kind: ObsidianVisualKind,
-        title: String,
-        caption: String,
-        expression: String,
-        xMin: Double,
-        xMax: Double,
-        yMin: Double,
-        yMax: Double,
-        zMin: Double,
-        zMax: Double,
-        points: [ObsidianVisualPoint],
-        segments: [ObsidianVisualSegment]
-    ) {
-        self.id = id
-        self.kind = kind
-        self.title = title
-        self.caption = caption
-        self.expression = expression
-        self.xMin = xMin
-        self.xMax = xMax
-        self.yMin = yMin
-        self.yMax = yMax
-        self.zMin = zMin
-        self.zMax = zMax
-        self.points = points
-        self.segments = segments
-    }
-}
+public typealias ObsidianVisualKind = MathVisualKind
+public typealias ObsidianVisualPoint = MathVisualPoint
+public typealias ObsidianVisualSegment = MathVisualSegment
+public typealias ObsidianVisualSpec = MathVisualSpec
 
 public struct ObsidianVisualReference: Equatable {
     public let id: String
