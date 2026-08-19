@@ -10,6 +10,8 @@
 - 그 브랜치는 `origin/main`의 `0179225` 위에 Obsidian 관련 3개 커밋이 올라간 상태다.
 - GitHub push와 `main` 병합은 아직 하지 않았다.
 - 새 작업에서는 먼저 `git status --short --branch`와 관련 심볼만 확인한다. 기존 변경을 reset하거나 덮어쓰지 않는다.
+- `main`에는 이전 80/30/50 압축 실험을 보존한 `100c2db`가 별도로 남아 있다. 현재 기준 브랜치의 활성 정책은 최신 요구에 맞는 멘토 60/20/40이다.
+- `KakaoSapiens-backup-20260814-110708/`와 `exec-34b9ed07-11b9-454b-89d3-c768f9a79aa9.png`는 로컬 백업·캡처라 커밋하지 않았다. 삭제하지 않고 보존 중이다.
 
 ## 현재 제품 기준
 
@@ -63,4 +65,3 @@ codesign --verify --deep --strict /Applications/가가오독.app
 ## 새 채팅 시작 문구 예시
 
 > `/Users/dlgksdnf/Desktop/ClaudeCode`의 `codex/obsidian-mentor-export` 기준으로 작업을 이어가자. 기존 변경은 보존하고, 이번에는 [원하는 작업]을 수정해줘.
-
