@@ -21,6 +21,7 @@ private struct MathVisualRenderPayload: Codable {
     let xLabel: String
     let yLabel: String
     let zLabel: String
+    let equalAspect: Bool
     let xMin: Double
     let xMax: Double
     let yMin: Double
@@ -114,6 +115,7 @@ public final class MathVisualRenderer: NSObject, WKNavigationDelegate {
             xLabel: spec.xLabel,
             yLabel: spec.yLabel,
             zLabel: spec.zLabel,
+            equalAspect: [.parametric2D, .implicit2D, .coordinateDiagram].contains(spec.kind),
             xMin: spec.xMin,
             xMax: spec.xMax,
             yMin: spec.yMin,

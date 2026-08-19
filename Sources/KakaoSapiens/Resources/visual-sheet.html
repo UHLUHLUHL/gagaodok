@@ -47,26 +47,35 @@
             if (Math.abs(value) < 1e-8) return '0';
             return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(2).replace(/\.00$/, '');
         }
-        function xMap(x, p) { return margin + (x - p.xMin) / (p.xMax - p.xMin) * (width - 2 * margin); }
-        function yMap(y, p) { return height - margin - (y - p.yMin) / (p.yMax - p.yMin) * (height - 2 * margin); }
+        function plotBox(p) {
+            const availableWidth = width - 2 * margin, availableHeight = height - 2 * margin;
+            if (!p.equalAspect) return {left: margin, right: width-margin, top: margin, bottom: height-margin};
+            const scale = Math.min(availableWidth / (p.xMax-p.xMin), availableHeight / (p.yMax-p.yMin));
+            const plotWidth = (p.xMax-p.xMin) * scale, plotHeight = (p.yMax-p.yMin) * scale;
+            const left = (width-plotWidth)/2, top = (height-plotHeight)/2;
+            return {left, right: left+plotWidth, top, bottom: top+plotHeight};
+        }
+        function xMap(x, p) { const box=plotBox(p); return box.left + (x-p.xMin)/(p.xMax-p.xMin)*(box.right-box.left); }
+        function yMap(y, p) { const box=plotBox(p); return box.bottom - (y-p.yMin)/(p.yMax-p.yMin)*(box.bottom-box.top); }
         function axisMarkup(p) {
             let out = '';
+            const box = plotBox(p);
             const xStep = (p.xMax - p.xMin) / 8, yStep = (p.yMax - p.yMin) / 8;
             for (let i = 0; i <= 8; i++) {
                 const x = p.xMin + i * xStep, sx = xMap(x, p);
                 const y = p.yMin + i * yStep, sy = yMap(y, p);
-                out += `<line class="grid" x1="${sx}" y1="${margin}" x2="${sx}" y2="${height-margin}"/>`;
-                out += `<line class="grid" x1="${margin}" y1="${sy}" x2="${width-margin}" y2="${sy}"/>`;
-                out += `<text class="tick-label" x="${sx}" y="${height-margin+27}" text-anchor="middle">${esc(fmt(x))}</text>`;
-                out += `<text class="tick-label" x="${margin-13}" y="${sy+5}" text-anchor="end">${esc(fmt(y))}</text>`;
+                out += `<line class="grid" x1="${sx}" y1="${box.top}" x2="${sx}" y2="${box.bottom}"/>`;
+                out += `<line class="grid" x1="${box.left}" y1="${sy}" x2="${box.right}" y2="${sy}"/>`;
+                out += `<text class="tick-label" x="${sx}" y="${box.bottom+27}" text-anchor="middle">${esc(fmt(x))}</text>`;
+                out += `<text class="tick-label" x="${box.left-13}" y="${sy+5}" text-anchor="end">${esc(fmt(y))}</text>`;
             }
             if (p.xMin <= 0 && p.xMax >= 0) {
-                const sx = xMap(0, p); out += `<line class="axis" x1="${sx}" y1="${margin-12}" x2="${sx}" y2="${height-margin+12}"/>`;
-                out += `<text class="axis-label" x="${sx+10}" y="${margin-18}">${esc(payloadAxis(p.yLabel, 'y'))}</text>`;
+                const sx = xMap(0, p); out += `<line class="axis" x1="${sx}" y1="${box.top-12}" x2="${sx}" y2="${box.bottom+12}"/>`;
+                out += `<text class="axis-label" x="${sx+10}" y="${box.top-18}">${esc(payloadAxis(p.yLabel, 'y'))}</text>`;
             }
             if (p.yMin <= 0 && p.yMax >= 0) {
-                const sy = yMap(0, p); out += `<line class="axis" x1="${margin-12}" y1="${sy}" x2="${width-margin+12}" y2="${sy}"/>`;
-                out += `<text class="axis-label" x="${width-margin+12}" y="${sy-12}">${esc(payloadAxis(p.xLabel, 'x'))}</text>`;
+                const sy = yMap(0, p); out += `<line class="axis" x1="${box.left-12}" y1="${sy}" x2="${box.right+12}" y2="${sy}"/>`;
+                out += `<text class="axis-label" x="${box.right+12}" y="${sy-12}">${esc(payloadAxis(p.xLabel, 'x'))}</text>`;
             }
             return out;
         }
