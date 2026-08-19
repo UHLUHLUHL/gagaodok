@@ -83,7 +83,7 @@ extension GeminiService {
         rawText: String,
         botName: String,
         roleplay: Bool = false
-    ) -> [GeneratedMessageBubble] {
+    ) async -> [GeneratedMessageBubble] {
         let cleanText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         var paragraphs = cleanText.components(separatedBy: "\n\n")
         if paragraphs.count == 1 {
@@ -107,29 +107,19 @@ extension GeminiService {
             }
             let classified = RoleplayParser.classify(text, roleplayEstablished: isRoleplay)
             text = classified.text
-            let (cleanedText, allSpecs) = MathGraphRenderer.extractGraphSpecs(from: text)
-            if !cleanedText.isEmpty {
-                bubbles.append(GeneratedMessageBubble(text: cleanedText, kind: classified.kind))
+            let extraction = MathVisualTagParser.extract(from: text)
+            if !extraction.cleanedText.isEmpty {
+                bubbles.append(GeneratedMessageBubble(text: extraction.cleanedText, kind: classified.kind))
             }
-            // 해석하지 못하는 식은 그래프를 만들지 않습니다. 틀린 그림을 내보내는 것보다 낫습니다.
-            let specs = allSpecs.filter { MathGraphRenderer.canRender($0) }
-            for spec in specs {
-                let image = MathGraphRenderer.shared.renderGraph(spec: spec)
-                if let tiff = image.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiff),
-                   let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) {
-                    bubbles.append(GeneratedMessageBubble(
-                        text: "",
-                        attachment: ChatAttachment(
-                            type: .image,
-                            fileName: "\(spec.title).jpg",
-                            fileSize: Int64(jpeg.count),
-                            fileExtension: "jpg",
-                            dataBase64: jpeg.base64EncodedString(),
-                            mimeType: "image/jpeg"
-                        )
-                    ))
-                }
+            let rendered = await MathVisualChatPipeline.render(extraction)
+            for attachment in rendered.attachments {
+                bubbles.append(GeneratedMessageBubble(text: "", attachment: attachment))
+            }
+            if rendered.hadFailures {
+                bubbles.append(GeneratedMessageBubble(
+                    text: "그래프 이미지를 만들지 못했습니다.",
+                    kind: classified.kind
+                ))
             }
         }
         if bubbles.isEmpty && !cleanText.isEmpty { bubbles.append(GeneratedMessageBubble(text: cleanText)) }

@@ -69,7 +69,7 @@ public actor GeminiService {
         }
         return GeneratedAIResponse(
             rawText: rawText,
-            bubbles: parseResponseIntoBubbles(
+            bubbles: await parseResponseIntoBubbles(
                 rawText: rawText, botName: botName,
                 roleplay: mode == .companion && roleplayInProgress
             )
