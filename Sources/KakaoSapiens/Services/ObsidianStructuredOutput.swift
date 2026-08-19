@@ -55,7 +55,8 @@ public enum ObsidianStructuredOutput {
                 "concepts": Self.array(Self.string),
                 "unresolved": Self.array(Self.string),
                 "evidenceTurns": Self.array(Self.integer),
-                "coverage": Self.array(Self.coverage)
+                "coverage": Self.array(Self.coverage),
+                "visuals": Self.array(Self.visual)
             ])
         case .batchCandidates:
             return Self.object([
@@ -98,10 +99,40 @@ public enum ObsidianStructuredOutput {
 
     private static let string: [String: Any] = ["type": "string"]
     private static let integer: [String: Any] = ["type": "integer"]
+    private static let number: [String: Any] = ["type": "number"]
     private static let coverage: [String: Any] = object([
         "turn": integer,
         "status": ["type": "string", "enum": ["included", "unrelated", "merged"]],
         "reason": string
+    ])
+
+    private static let point: [String: Any] = object([
+        "x": number,
+        "y": number,
+        "z": number,
+        "label": string
+    ])
+
+    private static let segment: [String: Any] = object([
+        "start": point,
+        "end": point,
+        "label": string
+    ])
+
+    private static let visual: [String: Any] = object([
+        "id": string,
+        "kind": ["type": "string", "enum": ["function2D", "surface3D", "coordinateDiagram"]],
+        "title": string,
+        "caption": string,
+        "expression": string,
+        "xMin": number,
+        "xMax": number,
+        "yMin": number,
+        "yMax": number,
+        "zMin": number,
+        "zMax": number,
+        "points": array(point),
+        "segments": array(segment)
     ])
 
     private static func array(_ items: [String: Any]) -> [String: Any] {

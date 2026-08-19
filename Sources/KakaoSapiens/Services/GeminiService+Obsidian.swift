@@ -151,6 +151,10 @@ extension GeminiService {
     원문에 없는 조건, 계산, 결론을 만들지 않는다. 틀린 아이디어는 최종 풀이에 섞지 말고 confusions에서 왜 틀렸는지 교정한다.
     각 아이디어와 교정에는 근거 턴을 자연어로 남긴다. 결론이 없으면 unresolved에 적는다.
     수식은 Obsidian MathJax와 호환되는 인라인 $...$ 또는 블록 $$...$$ LaTeX로 쓴다.
+    문제를 이해하는 데 함수 그래프, 3차원 표면, 좌표 도식이 실제로 도움이 될 때만 visuals에 시각자료를 넣는다.
+    시각자료의 함수식·좌표·범위는 원문에 있는 내용만 사용하고, 필요하지 않으면 visuals는 빈 배열로 둔다.
+    함수식의 곱셈은 생략하지 말고 반드시 * 기호를 쓴다.
+    function2D는 y=f(x), surface3D는 z=f(x,y), coordinateDiagram은 points와 segments를 사용한다.
     JSON 객체 하나만 출력하고 Markdown 코드 펜스를 쓰지 않는다.
     """
 
@@ -255,7 +259,7 @@ extension GeminiService {
         관련 턴의 추가 질문, 유효한 아이디어, 오답, 혼동과 교정을 빠뜨리지 않는다.
 
         정확히 다음 JSON 키를 사용한다.
-        {"title":"짧은 제목","problem":"자립적인 문제","givens":["조건"],"ideas":["아이디어 — N턴"],"confusions":["오해와 교정 — N턴"],"solution":"완결된 최종 해설","answer":"최종 답","concepts":["개념과 다음 기준"],"unresolved":["미해결"],"evidenceTurns":[정수],"coverage":[{"turn":정수,"status":"included|unrelated|merged","reason":"근거"}]}
+        {"title":"짧은 제목","problem":"자립적인 문제","givens":["조건"],"ideas":["아이디어 — N턴"],"confusions":["오해와 교정 — N턴"],"solution":"완결된 최종 해설","answer":"최종 답","concepts":["개념과 다음 기준"],"unresolved":["미해결"],"evidenceTurns":[정수],"coverage":[{"turn":정수,"status":"included|unrelated|merged","reason":"근거"}],"visuals":[{"id":"graph-1","kind":"function2D","title":"제목","caption":"설명","expression":"함수식 또는 빈 문자열","xMin":-4,"xMax":4,"yMin":-4,"yMax":4,"zMin":-4,"zMax":4,"points":[{"x":0,"y":0,"z":0,"label":""}],"segments":[{"start":{"x":0,"y":0,"z":0,"label":""},"end":{"x":1,"y":1,"z":0,"label":""},"label":""}]}]} (kind는 function2D, surface3D, coordinateDiagram 중 하나)
         coverage에는 범위의 모든 사용자 턴을 정확히 한 번씩 넣는다.
 
         source:
@@ -309,6 +313,7 @@ extension GeminiService {
         }
         note.coverage = byTurn.values.sorted { $0.turn < $1.turn }
         note.evidenceTurns = Array(Set(note.evidenceTurns).intersection(Set(range))).sorted()
+        note.visuals = ObsidianVisualMath.validatedVisuals(note.visuals)
         return note
     }
 

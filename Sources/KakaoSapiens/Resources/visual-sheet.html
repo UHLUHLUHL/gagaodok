@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=1200, initial-scale=1.0">
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; width: 1200px; background: #fff; color: #161616; overflow: hidden; }
+        #paper { width: 1200px; padding: 48px 62px 54px; background: #fff; font-family: -apple-system, BlinkMacSystemFont, "Pretendard", system-ui, sans-serif; }
+        #title { margin: 0; font-size: 27px; font-weight: 750; letter-spacing: -0.4px; }
+        #caption { margin: 9px 0 26px; color: #555; font-size: 16px; line-height: 1.45; }
+        #expression { margin: -9px 0 22px; color: #262626; font: italic 23px Georgia, "Times New Roman", serif; }
+        #chart { display: block; width: 1076px; height: 700px; border: 1px solid #dadde2; background: #fff; }
+        .grid { stroke: #e7e9ed; stroke-width: 1; }
+        .axis { stroke: #262a30; stroke-width: 2; }
+        .tick { stroke: #737982; stroke-width: 1; }
+        .tick-label { fill: #4e555e; font-size: 14px; }
+        .axis-label { fill: #191c21; font-size: 18px; font-weight: 700; }
+        .mesh { stroke: #242936; stroke-width: .65; stroke-opacity: .72; }
+        .curve { fill: none; stroke: #d92f65; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+        .segment { stroke: #2e63d4; stroke-width: 4; stroke-linecap: round; marker-end: url(#arrow); }
+        .point { fill: #e51d35; stroke: #fff; stroke-width: 2; }
+        .point-label { fill: #1b1e24; font-size: 16px; font-weight: 650; }
+    </style>
+</head>
+<body>
+    <main id="paper">
+        <h1 id="title"></h1>
+        <div id="caption"></div>
+        <div id="expression"></div>
+        <svg id="chart" viewBox="0 0 1076 700" aria-label="수학 시각자료"></svg>
+    </main>
+    <script>
+        const title = document.getElementById('title');
+        const caption = document.getElementById('caption');
+        const expression = document.getElementById('expression');
+        const chart = document.getElementById('chart');
+        const width = 1076, height = 700, margin = 72;
+
+        function esc(value) {
+            return String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        function fmt(value) {
+            if (Math.abs(value) < 1e-8) return '0';
+            return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(2).replace(/\.00$/, '');
+        }
+        function xMap(x, p) { return margin + (x - p.xMin) / (p.xMax - p.xMin) * (width - 2 * margin); }
+        function yMap(y, p) { return height - margin - (y - p.yMin) / (p.yMax - p.yMin) * (height - 2 * margin); }
+        function axisMarkup(p) {
+            let out = '';
+            const xStep = (p.xMax - p.xMin) / 8, yStep = (p.yMax - p.yMin) / 8;
+            for (let i = 0; i <= 8; i++) {
+                const x = p.xMin + i * xStep, sx = xMap(x, p);
+                const y = p.yMin + i * yStep, sy = yMap(y, p);
+                out += `<line class="grid" x1="${sx}" y1="${margin}" x2="${sx}" y2="${height-margin}"/>`;
+                out += `<line class="grid" x1="${margin}" y1="${sy}" x2="${width-margin}" y2="${sy}"/>`;
+                out += `<text class="tick-label" x="${sx}" y="${height-margin+27}" text-anchor="middle">${esc(fmt(x))}</text>`;
+                out += `<text class="tick-label" x="${margin-13}" y="${sy+5}" text-anchor="end">${esc(fmt(y))}</text>`;
+            }
+            if (p.xMin <= 0 && p.xMax >= 0) {
+                const sx = xMap(0, p); out += `<line class="axis" x1="${sx}" y1="${margin-12}" x2="${sx}" y2="${height-margin+12}"/>`;
+                out += `<text class="axis-label" x="${sx+10}" y="${margin-18}">y</text>`;
+            }
+            if (p.yMin <= 0 && p.yMax >= 0) {
+                const sy = yMap(0, p); out += `<line class="axis" x1="${margin-12}" y1="${sy}" x2="${width-margin+12}" y2="${sy}"/>`;
+                out += `<text class="axis-label" x="${width-margin+12}" y="${sy-12}">x</text>`;
+            }
+            return out;
+        }
+        function curveMarkup(curves, p) {
+            return (curves || []).map(curve => {
+                const points = curve.map(point => `${xMap(point.x,p).toFixed(2)},${yMap(point.y,p).toFixed(2)}`).join(' ');
+                return points ? `<polyline class="curve" points="${points}"/>` : '';
+            }).join('');
+        }
+        function pointMarkup(points, p) {
+            return (points || []).map(point => {
+                const sx = xMap(point.x,p), sy = yMap(point.y,p);
+                const label = point.label ? `<text class="point-label" x="${sx+10}" y="${sy-10}">${esc(point.label)}</text>` : '';
+                return `<circle class="point" cx="${sx}" cy="${sy}" r="6"/>${label}`;
+            }).join('');
+        }
+        function segmentMarkup(segments, p) {
+            return (segments || []).map(segment => {
+                const x1=xMap(segment.start.x,p), y1=yMap(segment.start.y,p), x2=xMap(segment.end.x,p), y2=yMap(segment.end.y,p);
+                const label = segment.label ? `<text class="point-label" x="${(x1+x2)/2+8}" y="${(y1+y2)/2-8}">${esc(segment.label)}</text>` : '';
+                return `<line class="segment" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>${label}`;
+            }).join('');
+        }
+        function color(norm) {
+            const stops = [[0, [237, 80, 155]], [.5, [143, 127, 210]], [1, [53, 193, 151]]];
+            const n = Math.max(0, Math.min(1, norm));
+            let left=stops[0], right=stops[stops.length-1];
+            for (let i=0; i<stops.length-1; i++) if (n >= stops[i][0] && n <= stops[i+1][0]) { left=stops[i]; right=stops[i+1]; break; }
+            const t=(n-left[0])/(right[0]-left[0] || 1);
+            const rgb=left[1].map((v,i)=>Math.round(v+(right[1][i]-v)*t));
+            return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        }
+        function surfaceMarkup(triangles) {
+            return (triangles || []).map(triangle => {
+                const points = triangle.points.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
+                return `<polygon class="mesh" points="${points}" fill="${color(triangle.level)}"/>`;
+            }).join('');
+        }
+        function surfaceProject(x, y, z, p) {
+            const u = (x - p.xMin) / (p.xMax - p.xMin) - .5;
+            const v = (y - p.yMin) / (p.yMax - p.yMin) - .5;
+            const h = Math.max(-.5, Math.min(.5, (z - p.zMin) / (p.zMax - p.zMin) - .5));
+            return {x: 538 + (u-v)*720, y: 382 + (u+v)*285 - h*420};
+        }
+        function surfaceAxesMarkup(p) {
+            const a = surfaceProject(p.xMin, 0, p.zMin, p), b = surfaceProject(p.xMax, 0, p.zMin, p);
+            const c = surfaceProject(0, p.yMin, p.zMin, p), d = surfaceProject(0, p.yMax, p.zMin, p);
+            const e = surfaceProject(0, 0, p.zMax, p), o = surfaceProject(0, 0, p.zMin, p);
+            return `<line class="axis" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><line class="axis" x1="${c.x}" y1="${c.y}" x2="${d.x}" y2="${d.y}"/><line class="axis" x1="${o.x}" y1="${o.y}" x2="${e.x}" y2="${e.y}"/><text class="axis-label" x="${b.x+10}" y="${b.y}">x</text><text class="axis-label" x="${d.x+10}" y="${d.y}">y</text><text class="axis-label" x="${e.x+10}" y="${e.y}">z</text>`;
+        }
+        window.renderVisual = function (payload) {
+            title.textContent = payload.title || '수학 시각자료';
+            caption.textContent = payload.caption || '';
+            expression.textContent = payload.expression || '';
+            let markup = '';
+            if (payload.kind === 'surface3D') {
+                markup = surfaceMarkup(payload.triangles) + surfaceAxesMarkup(payload);
+            } else {
+                markup = axisMarkup(payload) + curveMarkup(payload.curves, payload) + segmentMarkup(payload.segments, payload) + pointMarkup(payload.points, payload);
+            }
+            chart.innerHTML = markup;
+            return Math.ceil(document.getElementById('paper').scrollHeight);
+        };
+    </script>
+</body>
+</html>

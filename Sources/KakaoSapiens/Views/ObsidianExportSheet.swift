@@ -38,7 +38,7 @@ public struct ObsidianExportSheet: View {
             }
             Spacer()
             if coordinator.isRenderingProblemCard {
-                Label("문제 이미지 만드는 중", systemImage: "photo.badge.arrow.down")
+                Label("문제 이미지와 시각자료 만드는 중", systemImage: "photo.badge.arrow.down")
                     .font(.custom("Pretendard-Medium", size: 10.5))
                     .foregroundColor(KakaoTheme.textSecondary)
             }
@@ -98,6 +98,8 @@ public struct ObsidianExportSheet: View {
                 rangeCard
                 if let warning = coordinator.scopeWarning { warningCard(warning) }
                 if let warning = coordinator.problemCardWarning { warningCard(warning) }
+                if let warning = coordinator.visualWarning { warningCard(warning) }
+                if coordinator.visualsStale { warningCard("문제 본문이 수정되어 시각자료를 다시 확인해주세요.") }
                 if let error = coordinator.errorMessage { warningCard(error, isError: true) }
                 if let duplicate = coordinator.duplicateURL { duplicateCard(duplicate) }
                 Picker("표시 방식", selection: $selectedTab) {
@@ -153,6 +155,9 @@ public struct ObsidianExportSheet: View {
                         previewSection("미해결", markdown: bulletMarkdown(draft.unresolvedText), warning: true)
                     }
                 }
+                if !coordinator.generatedVisuals.isEmpty {
+                    visualSelectionSection
+                }
             }
             .frame(maxWidth: 780).frame(maxWidth: .infinity)
             .padding(.horizontal, 24).padding(.vertical, 22)
@@ -170,6 +175,41 @@ public struct ObsidianExportSheet: View {
         .padding(18).frame(maxWidth: .infinity, alignment: .leading)
         .background(KakaoTheme.surface, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(warning ? Color.orange.opacity(0.35) : KakaoTheme.border))
+    }
+
+    private var visualSelectionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("시각자료").font(.custom("Pretendard-Bold", size: 18))
+                Spacer()
+                Text("필요한 자료만 첨부").font(.custom("Pretendard-Regular", size: 11)).foregroundColor(KakaoTheme.textSecondary)
+            }
+            ForEach(coordinator.generatedVisuals, id: \.id) { visual in
+                HStack(alignment: .top, spacing: 12) {
+                    Button { coordinator.toggleVisual(visual.id) } label: {
+                        Image(systemName: coordinator.selectedVisualIDs.contains(visual.id) ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 20)).foregroundColor(.purple)
+                    }.buttonStyle(.plain)
+                    if let image = NSImage(data: visual.data) {
+                        Image(nsImage: image).resizable().scaledToFit().frame(width: 250, height: 155).background(Color.white)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(visual.title).font(.custom("Pretendard-Bold", size: 13))
+                        Text(visual.caption).font(.custom("Pretendard-Regular", size: 11)).foregroundColor(KakaoTheme.textSecondary)
+                        if coordinator.visualsStale {
+                            Text("본문 수정 후 재검토 필요").font(.custom("Pretendard-Medium", size: 10)).foregroundColor(.orange)
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .background(KakaoTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(KakaoTheme.border))
+            }
+        }
+        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(KakaoTheme.border))
     }
 
     private var editContent: some View {

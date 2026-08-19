@@ -9,6 +9,8 @@ struct ObsidianExportCoreTests {
         try testObsidianMarkdownUsesPropertiesWikiEmbedsAndMathJaxDelimiters()
         try testObsidianV2OnlyExposesTagsAndKeepsEpisodeIDHidden()
         try testObsidianDraftRoundTripsPreparedSections()
+        try testObsidianVisualSpecRoundTripsAndMarkdownEmbedsVisuals()
+        try testObsidianVisualMathEvaluatesSafeExpressions()
         try testLegacyGeneratedNoteCanBeMigratedWithoutTouchingItsSolution()
         testMigratorRejectsUserNotesAndAlreadyMigratedNotes()
         testMathNormalizerDoesNotRewriteCodeFences()
@@ -185,6 +187,65 @@ struct ObsidianExportCoreTests {
         check(rebuilt.problem == "$y$를 구하시오.", "문제 편집이 준비된 노트에 반영되어야 합니다.")
         check(rebuilt.givens == ["$y>0$", "정수"], "줄 단위 조건 편집을 배열로 복원해야 합니다.")
         check(rebuilt.coverage == prepared.coverage, "사용자에게 노출하지 않은 근거 상태는 보존해야 합니다.")
+    }
+
+    static func testObsidianVisualSpecRoundTripsAndMarkdownEmbedsVisuals() throws {
+        let visual = ObsidianVisualSpec(
+            id: "surface-1",
+            kind: .surface3D,
+            title: "분수함수의 표면",
+            caption: "주어진 함수의 3차원 표면 그래프",
+            expression: "-3*y/(x^2+y^2+1)",
+            xMin: -4, xMax: 4, yMin: -4, yMax: 4, zMin: -1.5, zMax: 1.5,
+            points: [], segments: []
+        )
+        let note = PreparedObsidianNote(
+            title: "그래프 문제", problem: "$z=f(x,y)$", givens: [], ideas: [], confusions: [],
+            solution: "그래프를 해석한다.", answer: "표면 그래프", concepts: [], unresolved: [],
+            evidenceTurns: [1], coverage: [], visuals: [visual]
+        )
+        let encoded = try JSONEncoder().encode(note)
+        let decoded = try JSONDecoder().decode(PreparedObsidianNote.self, from: encoded)
+        check(decoded.visuals == [visual], "시각자료 명세는 준비된 노트와 함께 왕복되어야 합니다.")
+
+        let metadata = ObsidianNoteMetadata(
+            roomID: UUID(), roomName: "멘토", modelName: "Gemini", startTurn: 1, endTurn: 1,
+            messageIDs: [], episodeID: "episode-visual"
+        )
+        let markdown = ObsidianMarkdownFormatter.render(
+            note: note,
+            metadata: metadata,
+            attachmentPaths: [],
+            visualAttachments: [ObsidianVisualReference(
+                id: visual.id, title: visual.title, caption: visual.caption,
+                path: "attachments/visual-episode-visual-surface-1.png"
+            )]
+        )
+        check(markdown.contains("## 시각자료"), "시각자료 섹션이 있어야 합니다.")
+        check(markdown.contains("![[attachments/visual-episode-visual-surface-1.png]]"), "시각자료 PNG를 wikilink로 삽입해야 합니다.")
+        check(markdown.contains("> 분수함수의 표면"), "시각자료 제목을 함께 출력해야 합니다.")
+        check(markdown.contains("> 주어진 함수의 3차원 표면 그래프"), "시각자료 설명을 함께 출력해야 합니다.")
+    }
+
+    static func testObsidianVisualMathEvaluatesSafeExpressions() throws {
+        guard let value = try ObsidianVisualMath.evaluate("sin(pi / 2) + x^2", x: 3, y: 0) else {
+            fail("유효한 수식은 값을 반환해야 합니다.")
+        }
+        check(abs(value - 10) < 0.0001, "지원하는 수식과 x 변수를 계산해야 합니다.")
+        guard let signedPower = try ObsidianVisualMath.evaluate("-x^2", x: 3, y: 0) else {
+            fail("부호가 있는 거듭제곱은 값을 반환해야 합니다.")
+        }
+        check(abs(signedPower + 9) < 0.0001, "수학적 거듭제곱 우선순위를 보존해야 합니다.")
+
+        let quotient = try ObsidianVisualMath.evaluate("1 / (x - 1)", x: 1, y: 0)
+        check(quotient == nil, "0으로 나누는 점은 유효한 그래프 값이 아니어야 합니다.")
+
+        do {
+            _ = try ObsidianVisualMath.evaluate("__import__('os')", x: 0, y: 0)
+            fail("지원하지 않는 표현식을 허용하면 안 됩니다.")
+        } catch ObsidianVisualMath.MathError.invalidExpression {
+            // expected
+        }
     }
 
     static func testLegacyGeneratedNoteCanBeMigratedWithoutTouchingItsSolution() throws {

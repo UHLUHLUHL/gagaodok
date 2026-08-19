@@ -12,6 +12,10 @@ public final class ObsidianBatchExportCoordinator: ObservableObject {
         public let candidate: ObsidianBatchCandidate
         public var draft: ObsidianNoteDraft
         public var png: Data?
+        public var visuals: [ObsidianGeneratedVisual]
+        public var selectedVisualIDs: Set<String>
+        public var visualsStale: Bool
+        public var visualWarning: String?
         public var id: String { candidate.id }
     }
 
@@ -62,6 +66,7 @@ public final class ObsidianBatchExportCoordinator: ObservableObject {
         let oldTitle = drafts[index].draft.title, oldProblem = drafts[index].draft.problem
         drafts[index].draft[keyPath: keyPath] = value
         if oldTitle != drafts[index].draft.title || oldProblem != drafts[index].draft.problem {
+            drafts[index].visualsStale = !drafts[index].draft.preparedNote.visuals.isEmpty
             drafts[index].png = nil
             let title = drafts[index].draft.title, problem = drafts[index].draft.problem
             cardTasks[id]?.cancel()
@@ -73,6 +78,15 @@ public final class ObsidianBatchExportCoordinator: ObservableObject {
                       self.drafts[latest].draft.title == title, self.drafts[latest].draft.problem == problem else { return }
                 self.drafts[latest].png = png
             }
+        }
+    }
+
+    public func toggleVisual(draftID: String, visualID: String) {
+        guard let index = drafts.firstIndex(where: { $0.id == draftID }) else { return }
+        if drafts[index].selectedVisualIDs.contains(visualID) {
+            drafts[index].selectedVisualIDs.remove(visualID)
+        } else {
+            drafts[index].selectedVisualIDs.insert(visualID)
         }
     }
 
@@ -92,10 +106,21 @@ public final class ObsidianBatchExportCoordinator: ObservableObject {
                     messageIDs: fullCandidate.messageIDs(in: range, excluding: unrelated), episodeID: episodeID)
                 let attachmentPaths = ObsidianVaultManager.shared.attachmentPaths(for: attachmentItems)
                 let cardPath = item.png == nil ? nil : ObsidianVaultManager.shared.problemCardPath(episodeID: episodeID)
+                let selectedVisuals = item.visuals.filter { item.selectedVisualIDs.contains($0.id) }
+                let visualReferences = selectedVisuals.map { visual in
+                    ObsidianVisualReference(
+                        id: visual.id,
+                        title: visual.title,
+                        caption: visual.caption,
+                        path: ObsidianVaultManager.shared.visualPath(episodeID: episodeID, visualID: visual.id)
+                    )
+                }
                 let markdown = ObsidianMarkdownFormatter.render(note: item.draft.preparedNote, metadata: metadata,
-                    attachmentPaths: attachmentPaths, problemCardPath: cardPath)
+                    attachmentPaths: attachmentPaths, problemCardPath: cardPath,
+                    visualAttachments: visualReferences)
                 switch try ObsidianVaultManager.shared.save(markdown: markdown, title: item.draft.title,
-                    episodeID: episodeID, attachments: attachmentItems, problemCardPNG: item.png, overwriteExisting: false) {
+                    episodeID: episodeID, attachments: attachmentItems, problemCardPNG: item.png,
+                    generatedVisuals: selectedVisuals, overwriteExisting: false) {
                 case .written(let url): savedURLs.append(url)
                 case .duplicate: skippedDuplicates += 1
                 }
@@ -148,7 +173,25 @@ public final class ObsidianBatchExportCoordinator: ObservableObject {
                     unrelatedTurns: Set(candidate.unrelatedTurns), model: model, roomId: roomID)
                 var png: Data?
                 do { png = try await ObsidianProblemCardRenderer.shared.render(title: note.title, problem: note.problem) } catch { png = nil }
-                drafts.append(DraftItem(candidate: candidate, draft: ObsidianNoteDraft(prepared: note), png: png))
+                var visuals: [ObsidianGeneratedVisual] = []
+                var visualErrors: [String] = []
+                for spec in note.visuals {
+                    do {
+                        let data = try await ObsidianVisualRenderer.shared.render(spec: spec)
+                        visuals.append(ObsidianGeneratedVisual(spec: spec, data: data))
+                    } catch {
+                        visualErrors.append("\(spec.title): \(error.localizedDescription)")
+                    }
+                }
+                drafts.append(DraftItem(
+                    candidate: candidate,
+                    draft: ObsidianNoteDraft(prepared: note),
+                    png: png,
+                    visuals: visuals,
+                    selectedVisualIDs: Set(visuals.map(\.id)),
+                    visualsStale: false,
+                    visualWarning: visualErrors.isEmpty ? nil : visualErrors.joined(separator: "\n")
+                ))
             }
             phase = .ready
         } catch is CancellationError { return }

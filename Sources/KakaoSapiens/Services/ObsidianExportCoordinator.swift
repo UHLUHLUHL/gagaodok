@@ -21,8 +21,12 @@ public final class ObsidianExportCoordinator: ObservableObject {
     @Published public var draft: ObsidianNoteDraft?
     @Published public private(set) var preparedNote: PreparedObsidianNote?
     @Published public private(set) var problemCardPNG: Data?
+    @Published public private(set) var generatedVisuals: [ObsidianGeneratedVisual] = []
+    @Published public var selectedVisualIDs: Set<String> = []
+    @Published public private(set) var visualsStale = false
     @Published public private(set) var isRenderingProblemCard = false
     @Published public private(set) var problemCardWarning: String?
+    @Published public private(set) var visualWarning: String?
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var savedURL: URL?
     @Published public private(set) var duplicateURL: URL?
@@ -119,6 +123,9 @@ public final class ObsidianExportCoordinator: ObservableObject {
         duplicateURL = nil
         problemCardTask?.cancel()
         problemCardPNG = nil
+        generatedVisuals = []
+        selectedVisualIDs = []
+        visualsStale = false
         phase = .preparing
         task?.cancel()
         task = Task { @MainActor [weak self] in await self?.prepareCurrentRange() }
@@ -131,8 +138,14 @@ public final class ObsidianExportCoordinator: ObservableObject {
         changed[keyPath: keyPath] = value
         draft = changed
         if changed.title != oldTitle || changed.problem != oldProblem {
-            scheduleProblemCard()
+            visualsStale = !changed.preparedNote.visuals.isEmpty
+            scheduleProblemCard(includeVisuals: false)
         }
+    }
+
+    public func toggleVisual(_ id: String) {
+        if selectedVisualIDs.contains(id) { selectedVisualIDs.remove(id) }
+        else { selectedVisualIDs.insert(id) }
     }
 
     public func save(overwriteExisting: Bool = false) {
@@ -162,11 +175,21 @@ public final class ObsidianExportCoordinator: ObservableObject {
             )
             let attachmentPaths = vault.attachmentPaths(for: items)
             let problemCardPath = problemCardPNG == nil ? nil : vault.problemCardPath(episodeID: episodeID)
+            let selectedVisuals = generatedVisuals.filter { selectedVisualIDs.contains($0.id) }
+            let visualReferences = selectedVisuals.map { visual in
+                ObsidianVisualReference(
+                    id: visual.id,
+                    title: visual.title,
+                    caption: visual.caption,
+                    path: vault.visualPath(episodeID: episodeID, visualID: visual.id)
+                )
+            }
             let markdown = ObsidianMarkdownFormatter.render(
                 note: draft.preparedNote,
                 metadata: metadata,
                 attachmentPaths: attachmentPaths,
-                problemCardPath: problemCardPath
+                problemCardPath: problemCardPath,
+                visualAttachments: visualReferences
             )
             let result = try vault.save(
                 markdown: markdown,
@@ -174,6 +197,7 @@ public final class ObsidianExportCoordinator: ObservableObject {
                 episodeID: episodeID,
                 attachments: items,
                 problemCardPNG: problemCardPNG,
+                generatedVisuals: selectedVisuals,
                 overwriteExisting: overwriteExisting
             )
             switch result {
@@ -240,8 +264,11 @@ public final class ObsidianExportCoordinator: ObservableObject {
             try Task.checkCancellation()
             preparedNote = note
             draft = ObsidianNoteDraft(prepared: note)
+            generatedVisuals = []
+            selectedVisualIDs = []
+            visualsStale = false
             phase = .ready
-            scheduleProblemCard(immediate: true)
+            scheduleProblemCard(immediate: true, includeVisuals: true)
         } catch is CancellationError {
             return
         } catch {
@@ -273,20 +300,30 @@ public final class ObsidianExportCoordinator: ObservableObject {
         problemCardTask?.cancel()
         problemCardTask = nil
         problemCardPNG = nil
+        generatedVisuals = []
+        selectedVisualIDs = []
+        visualsStale = false
         isRenderingProblemCard = false
         problemCardWarning = nil
+        visualWarning = nil
         errorMessage = nil
         savedURL = nil
         duplicateURL = nil
         selectedRangeSuggestion = nil
     }
 
-    private func scheduleProblemCard(immediate: Bool = false) {
+    private func scheduleProblemCard(immediate: Bool = false, includeVisuals: Bool = false) {
         guard let draft else { return }
         let title = draft.title
         let problem = draft.problem
+        let visualSpecs = includeVisuals ? draft.preparedNote.visuals : []
         problemCardTask?.cancel()
         problemCardPNG = nil
+        if includeVisuals {
+            generatedVisuals = []
+            selectedVisualIDs = []
+            visualWarning = nil
+        }
         isRenderingProblemCard = true
         problemCardWarning = nil
         problemCardTask = Task { @MainActor [weak self] in
@@ -303,6 +340,21 @@ public final class ObsidianExportCoordinator: ObservableObject {
                 self.problemCardPNG = nil
                 self.problemCardWarning = "문제 이미지를 만들지 못해 Markdown 원문으로 저장합니다: \(error.localizedDescription)"
             }
+            var visuals: [ObsidianGeneratedVisual] = []
+            var visualErrors: [String] = []
+            for spec in visualSpecs {
+                guard !Task.isCancelled else { return }
+                do {
+                    let data = try await ObsidianVisualRenderer.shared.render(spec: spec)
+                    visuals.append(ObsidianGeneratedVisual(spec: spec, data: data))
+                } catch {
+                    visualErrors.append("\(spec.title): \(error.localizedDescription)")
+                }
+            }
+            guard !Task.isCancelled else { return }
+            self.generatedVisuals = visuals
+            self.selectedVisualIDs = Set(visuals.map(\.id))
+            self.visualWarning = visualErrors.isEmpty ? nil : "일부 시각자료를 만들지 못했습니다. 문제 노트는 계속 저장할 수 있습니다.\n" + visualErrors.joined(separator: "\n")
             self.isRenderingProblemCard = false
         }
     }

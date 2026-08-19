@@ -102,12 +102,17 @@ public final class ObsidianVaultManager: ObservableObject {
         "attachments/\(ObsidianProblemCardRenderer.fileName(episodeID: episodeID))"
     }
 
+    public func visualPath(episodeID: String, visualID: String) -> String {
+        "attachments/\(ObsidianVisualRenderer.fileName(episodeID: episodeID, visualID: visualID))"
+    }
+
     public func save(
         markdown: String,
         title: String,
         episodeID: String,
         attachments: [ObsidianAttachmentItem],
         problemCardPNG: Data? = nil,
+        generatedVisuals: [ObsidianGeneratedVisual] = [],
         overwriteExisting: Bool
     ) throws -> ObsidianNoteWriter.WriteResult {
         guard let folder = targetFolderURL, isConnected else {
@@ -121,6 +126,7 @@ public final class ObsidianVaultManager: ObservableObject {
         if let problemCardPNG {
             try writeProblemCard(problemCardPNG, episodeID: episodeID, targetFolder: folder)
         }
+        try writeGeneratedVisuals(generatedVisuals, episodeID: episodeID, targetFolder: folder)
         return try writer.write(
             markdown: markdown,
             title: title,
@@ -185,6 +191,20 @@ public final class ObsidianVaultManager: ObservableObject {
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent(ObsidianProblemCardRenderer.fileName(episodeID: episodeID))
         try data.write(to: url, options: .atomic)
+    }
+
+    private func writeGeneratedVisuals(
+        _ visuals: [ObsidianGeneratedVisual],
+        episodeID: String,
+        targetFolder: URL
+    ) throws {
+        guard !visuals.isEmpty else { return }
+        let folder = targetFolder.appendingPathComponent("attachments", isDirectory: true)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        for visual in visuals {
+            let url = folder.appendingPathComponent(ObsidianVisualRenderer.fileName(episodeID: episodeID, visualID: visual.id))
+            try visual.data.write(to: url, options: .atomic)
+        }
     }
 
     public func migrateGeneratedNotesIfNeeded(force: Bool = false) async {

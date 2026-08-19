@@ -226,6 +226,129 @@ public struct TurnCoverage: Codable, Equatable, Identifiable {
     }
 }
 
+public enum ObsidianVisualKind: String, Codable, Equatable, CaseIterable {
+    case function2D
+    case surface3D
+    case coordinateDiagram
+}
+
+public struct ObsidianVisualPoint: Codable, Equatable {
+    public var x: Double
+    public var y: Double
+    public var z: Double
+    public var label: String
+
+    public init(x: Double, y: Double, z: Double = 0, label: String = "") {
+        self.x = x
+        self.y = y
+        self.z = z
+        self.label = label
+    }
+}
+
+public struct ObsidianVisualSegment: Codable, Equatable {
+    public var start: ObsidianVisualPoint
+    public var end: ObsidianVisualPoint
+    public var label: String
+
+    public init(start: ObsidianVisualPoint, end: ObsidianVisualPoint, label: String = "") {
+        self.start = start
+        self.end = end
+        self.label = label
+    }
+}
+
+public struct ObsidianVisualSpec: Codable, Equatable, Identifiable {
+    public var id: String
+    public var kind: ObsidianVisualKind
+    public var title: String
+    public var caption: String
+    public var expression: String
+    public var xMin: Double
+    public var xMax: Double
+    public var yMin: Double
+    public var yMax: Double
+    public var zMin: Double
+    public var zMax: Double
+    public var points: [ObsidianVisualPoint]
+    public var segments: [ObsidianVisualSegment]
+
+    public init(
+        id: String,
+        kind: ObsidianVisualKind,
+        title: String,
+        caption: String,
+        expression: String,
+        xMin: Double,
+        xMax: Double,
+        yMin: Double,
+        yMax: Double,
+        zMin: Double,
+        zMax: Double,
+        points: [ObsidianVisualPoint],
+        segments: [ObsidianVisualSegment]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.caption = caption
+        self.expression = expression
+        self.xMin = xMin
+        self.xMax = xMax
+        self.yMin = yMin
+        self.yMax = yMax
+        self.zMin = zMin
+        self.zMax = zMax
+        self.points = points
+        self.segments = segments
+    }
+}
+
+public struct ObsidianVisualReference: Equatable {
+    public let id: String
+    public let title: String
+    public let caption: String
+    public let path: String
+
+    public init(id: String, title: String, caption: String, path: String) {
+        self.id = id
+        self.title = title
+        self.caption = caption
+        self.path = path
+    }
+}
+
+public struct ObsidianGeneratedVisual: Equatable {
+    public let id: String
+    public let title: String
+    public let caption: String
+    public let data: Data
+
+    public init(id: String, title: String, caption: String, data: Data) {
+        self.id = id
+        self.title = title
+        self.caption = caption
+        self.data = data
+    }
+
+    public init(spec: ObsidianVisualSpec, data: Data) {
+        self.init(id: spec.id, title: spec.title, caption: spec.caption, data: data)
+    }
+
+    public func fileName(episodeID: String) -> String {
+        "visual-\(ObsidianNoteWriter.sanitizedFilename(episodeID))-\(ObsidianNoteWriter.sanitizedFilename(id)).png"
+    }
+
+    public func reference(episodeID: String) -> ObsidianVisualReference {
+        ObsidianVisualReference(
+            id: id,
+            title: title,
+            caption: caption,
+            path: "attachments/\(fileName(episodeID: episodeID))"
+        )
+    }
+}
+
 public struct PreparedObsidianNote: Codable, Equatable {
     public var title: String
     public var problem: String
@@ -238,6 +361,12 @@ public struct PreparedObsidianNote: Codable, Equatable {
     public var unresolved: [String]
     public var evidenceTurns: [Int]
     public var coverage: [TurnCoverage]
+    public var visuals: [ObsidianVisualSpec]
+
+    private enum CodingKeys: String, CodingKey {
+        case title, problem, givens, ideas, confusions, solution, answer, concepts
+        case unresolved, evidenceTurns, coverage, visuals
+    }
 
     public init(
         title: String,
@@ -250,7 +379,8 @@ public struct PreparedObsidianNote: Codable, Equatable {
         concepts: [String],
         unresolved: [String],
         evidenceTurns: [Int],
-        coverage: [TurnCoverage]
+        coverage: [TurnCoverage],
+        visuals: [ObsidianVisualSpec] = []
     ) {
         self.title = title
         self.problem = problem
@@ -263,6 +393,23 @@ public struct PreparedObsidianNote: Codable, Equatable {
         self.unresolved = unresolved
         self.evidenceTurns = evidenceTurns
         self.coverage = coverage
+        self.visuals = visuals
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        title = try values.decode(String.self, forKey: .title)
+        problem = try values.decode(String.self, forKey: .problem)
+        givens = try values.decode([String].self, forKey: .givens)
+        ideas = try values.decode([String].self, forKey: .ideas)
+        confusions = try values.decode([String].self, forKey: .confusions)
+        solution = try values.decode(String.self, forKey: .solution)
+        answer = try values.decode(String.self, forKey: .answer)
+        concepts = try values.decode([String].self, forKey: .concepts)
+        unresolved = try values.decode([String].self, forKey: .unresolved)
+        evidenceTurns = try values.decode([Int].self, forKey: .evidenceTurns)
+        coverage = try values.decode([TurnCoverage].self, forKey: .coverage)
+        visuals = try values.decodeIfPresent([ObsidianVisualSpec].self, forKey: .visuals) ?? []
     }
 
     public func missingCoverage(in range: ClosedRange<Int>) -> [Int] {
@@ -286,6 +433,7 @@ public struct ObsidianNoteDraft: Equatable {
 
     private var evidenceTurns: [Int]
     private var coverage: [TurnCoverage]
+    private var visuals: [ObsidianVisualSpec]
 
     public init(prepared: PreparedObsidianNote) {
         title = prepared.title
@@ -299,6 +447,7 @@ public struct ObsidianNoteDraft: Equatable {
         unresolvedText = prepared.unresolved.joined(separator: "\n")
         evidenceTurns = prepared.evidenceTurns
         coverage = prepared.coverage
+        visuals = prepared.visuals
     }
 
     public var preparedNote: PreparedObsidianNote {
@@ -313,7 +462,8 @@ public struct ObsidianNoteDraft: Equatable {
             concepts: Self.list(from: conceptsText),
             unresolved: Self.list(from: unresolvedText),
             evidenceTurns: evidenceTurns,
-            coverage: coverage
+            coverage: coverage,
+            visuals: visuals
         )
     }
 
@@ -394,12 +544,14 @@ public enum ObsidianMarkdownFormatter {
         note: PreparedObsidianNote,
         metadata: ObsidianNoteMetadata,
         attachmentPaths: [String],
-        problemCardPath: String? = nil
+        problemCardPath: String? = nil,
+        visualAttachments: [ObsidianVisualReference] = []
     ) -> String {
         normalizeMath(renderFrontmatter(metadata: metadata) + "\n\n" + renderBody(
             note: note,
             attachmentPaths: attachmentPaths,
-            problemCardPath: problemCardPath
+            problemCardPath: problemCardPath,
+            visualAttachments: visualAttachments
         ))
             .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
@@ -419,7 +571,8 @@ public enum ObsidianMarkdownFormatter {
     public static func renderBody(
         note: PreparedObsidianNote,
         attachmentPaths: [String],
-        problemCardPath: String? = nil
+        problemCardPath: String? = nil,
+        visualAttachments: [ObsidianVisualReference] = []
     ) -> String {
         var lines = ["# \(note.title)", "", "## 문제"]
         if let problemCardPath {
@@ -435,6 +588,17 @@ public enum ObsidianMarkdownFormatter {
             lines.append("")
             lines.append("> [!note]- 원본 첨부")
             lines.append(contentsOf: attachmentPaths.map { "> ![[\(relativeAttachmentPath($0))]]" })
+        }
+        if !visualAttachments.isEmpty {
+            lines.append(contentsOf: ["", "## 시각자료"])
+            for visual in visualAttachments {
+                lines.append("")
+                lines.append("> \(visual.title)")
+                lines.append("![[\(relativeAttachmentPath(visual.path))]]")
+                if !visual.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    lines.append("> \(visual.caption)")
+                }
+            }
         }
         appendList(title: "핵심 조건과 주어진 정보", values: note.givens, to: &lines)
         appendList(title: "시도한 아이디어", values: note.ideas, to: &lines)

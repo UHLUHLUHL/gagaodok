@@ -101,6 +101,9 @@ public struct ObsidianBatchExportSheet: View {
             }
             TextField("제목", text: binding(item.id, \.title)).font(.headline).textFieldStyle(.roundedBorder)
             problemPreview(item)
+            if !item.visuals.isEmpty { visualPreview(item) }
+            if let visualWarningText = item.visualWarning { warning(visualWarningText) }
+            if item.visualsStale { warning("문제 본문이 수정되어 시각자료를 다시 확인해주세요.") }
             DisclosureGroup("문제와 해설 편집") {
                 edit("문제", item.id, \.problem, 110)
                 edit("헷갈린 포인트와 교정", item.id, \.confusionsText, 110)
@@ -124,6 +127,31 @@ public struct ObsidianBatchExportSheet: View {
 
     private func edit(_ title: String, _ id: String, _ keyPath: WritableKeyPath<ObsidianNoteDraft, String>, _ height: CGFloat) -> some View {
         VStack(alignment: .leading) { Text(title).font(.caption.bold()); TextEditor(text: binding(id, keyPath)).frame(height: height).padding(6).background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 8)) }.padding(.top, 8)
+    }
+
+    private func visualPreview(_ item: ObsidianBatchExportCoordinator.DraftItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("시각자료").font(.caption.bold())
+            ForEach(item.visuals, id: \.id) { visual in
+                HStack(alignment: .top, spacing: 9) {
+                    Button { coordinator.toggleVisual(draftID: item.id, visualID: visual.id) } label: {
+                        Image(systemName: item.selectedVisualIDs.contains(visual.id) ? "checkmark.square.fill" : "square")
+                            .foregroundColor(.purple)
+                    }.buttonStyle(.plain)
+                    if let image = NSImage(data: visual.data) {
+                        Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 320, maxHeight: 190).background(Color.white)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(visual.title).font(.caption.bold())
+                        Text(visual.caption).font(.caption).foregroundColor(.secondary)
+                        if item.visualsStale { Text("본문 수정 후 재검토 필요").font(.caption2).foregroundColor(.orange) }
+                    }
+                    Spacer()
+                }
+                .padding(8).background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(.top, 4)
     }
     private func binding(_ id: String, _ keyPath: WritableKeyPath<ObsidianNoteDraft, String>) -> Binding<String> {
         Binding(get: { coordinator.drafts.first(where: { $0.id == id })?.draft[keyPath: keyPath] ?? "" }, set: { coordinator.updateDraft(id: id, keyPath: keyPath, value: $0) })
