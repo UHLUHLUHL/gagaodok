@@ -38,18 +38,39 @@ public struct ConversationDigest: Codable, Equatable {
 
 /// 요청에 실을 이력을 정합니다. API도 화면도 모르는 순수 계산이라 그대로 시험해 볼 수 있습니다.
 public enum ConversationCompactor {
-    /// 이 턴 수를 넘기기 전에는 아무것도 하지 않습니다.
-    /// 손익분기가 60~70턴 언저리인데, 그 근처에서 켜 봐야 아끼는 돈은 없고 기억만 먼저 잃습니다.
-    public static let thresholdTurns = 150
+    private struct CompactionPolicy {
+        let thresholdTurns: Int
+        let verbatimWindowTurns: Int
+        let refreshPeriodTurns: Int
 
-    /// 어떤 경우에도 이만큼은 원문 그대로 보냅니다.
-    public static let verbatimWindowTurns = 20
+        var refreshTriggerTurns: Int { verbatimWindowTurns + refreshPeriodTurns }
+    }
 
-    /// 요약을 다시 만드는 간격입니다. 한 번 만들 때 이만큼씩 흡수합니다.
-    /// 매 턴 만들면 캐시가 매번 깨져 압축을 안 하느니만 못합니다.
-    public static let refreshPeriodTurns = 50
+    /// 멘토는 최근 풀이 20턴을 원문으로 보존하고, 앞의 40턴씩 구간 요약으로 바꿉니다.
+    /// 문턱을 창+주기와 같은 60턴으로 두어 첫 압축 시점을 설정값 그대로 드러냅니다.
+    private static let mentorPolicy = CompactionPolicy(
+        thresholdTurns: 60,
+        verbatimWindowTurns: 20,
+        refreshPeriodTurns: 40
+    )
 
-    /// 구간 하나를 적는 데 쓰는 토큰입니다. 50턴을 한글 1,800자쯤으로 줄이는 분량입니다.
+    /// 챗봇 정책은 멘토 정책과 독립적입니다. 캐릭터 대화의 최근 기억 폭과 요약 주기를
+    /// 바꾸지 않도록 기존 80/30/50 값을 그대로 둡니다.
+    private static let companionPolicy = CompactionPolicy(
+        thresholdTurns: 80,
+        verbatimWindowTurns: 30,
+        refreshPeriodTurns: 50
+    )
+
+    private static func compactionPolicy(for mode: ChatMode) -> CompactionPolicy {
+        switch mode {
+        case .mathMentor: return mentorPolicy
+        case .companion: return companionPolicy
+        }
+    }
+
+    /// 구간 하나를 적는 데 쓰는 토큰입니다. 멘토 40턴 또는 챗봇 50턴을
+    /// 한글 1,800자쯤으로 줄이는 분량입니다.
     ///
     /// 처음에 1,000으로 잡았는데 실제로 돌려보니 모델이 1,470토큰을 썼고, 넘긴 만큼이
     /// 버릴 내용이 아니라 살릴 값어치가 있는 내용이었습니다. 지시로 억누르기보다
@@ -228,9 +249,6 @@ public enum ConversationCompactor {
         return lines.joined(separator: "\n")
     }
 
-    /// 원문 구간은 창과 창+주기 사이를 오갑니다. 이 값을 넘으면 요약을 새로 만듭니다.
-    static var refreshTriggerTurns: Int { verbatimWindowTurns + refreshPeriodTurns }
-
     /// 아직 요약되지 않은, 이번에 요약해야 할 구간입니다.
     public struct PendingSegment {
         public let firstTurn: Int
@@ -275,18 +293,19 @@ public enum ConversationCompactor {
         let total = starts.count
         let digest = digest ?? ConversationDigest()
         let covered = min(digest.coveredTurns, total)
+        let policy = compactionPolicy(for: mode)
 
         // 아직 켤 때가 아니면 지금까지처럼 전부 보냅니다.
-        guard total >= thresholdTurns else {
+        guard total >= policy.thresholdTurns else {
             return Plan(digestText: nil, verbatimTurns: conversation, pending: nil,
                         totalTurns: total, coveredTurns: 0)
         }
 
         let verbatimCount = total - covered
         var pending: PendingSegment?
-        if verbatimCount >= refreshTriggerTurns {
+        if verbatimCount >= policy.refreshTriggerTurns {
             let first = covered + 1
-            let last = covered + refreshPeriodTurns
+            let last = covered + policy.refreshPeriodTurns
             pending = PendingSegment(firstTurn: first, lastTurn: last,
                                      turns: slice(conversation, turns: first...last))
         }

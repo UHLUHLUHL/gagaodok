@@ -40,11 +40,14 @@ data class ConversationDigest(
 /// 요청에 실을 이력을 정합니다. API도 화면도 모르는 순수 계산이라 그대로 시험해 볼 수 있습니다.
 object ConversationCompactor {
     /// 이 턴 수를 넘기기 전에는 아무것도 하지 않습니다.
-    /// 손익분기가 60~70턴 언저리인데, 그 근처에서 켜 봐야 아끼는 돈은 없고 기억만 먼저 잃습니다.
-    const val THRESHOLD_TURNS = 150
+    /// 실사용 캐릭터챗 방에서 83턴에 이미 문맥이 약 20k토큰까지 커진 것을 보고
+    /// 150에서 낮췄습니다. REFRESH_TRIGGER_TURNS(= VERBATIM_WINDOW_TURNS + REFRESH_PERIOD_TURNS)와
+    /// 같은 값으로 맞춰 두면, 문턱을 넘는 순간 바로 첫 구간이 요약 대상으로 잡힙니다.
+    const val THRESHOLD_TURNS = 80
 
     /// 어떤 경우에도 이만큼은 원문 그대로 보냅니다.
-    const val VERBATIM_WINDOW_TURNS = 20
+    /// 압축 시점을 앞당긴 대신 최근 기억의 폭은 20턴에서 30턴으로 늘렸습니다.
+    const val VERBATIM_WINDOW_TURNS = 30
 
     /// 요약을 다시 만드는 간격입니다. 한 번 만들 때 이만큼씩 흡수합니다.
     /// 매 턴 만들면 캐시가 매번 깨져 압축을 안 하느니만 못합니다.
