@@ -22,6 +22,9 @@ struct MathVisualRendererTests {
         let html = try String(contentsOf: shellURL, encoding: .utf8)
         precondition(html.contains("id=\"legend\""), "범례를 표시할 전용 요소가 필요합니다.")
         precondition(html.contains("payload.xLabel"), "축 라벨은 명세 값에서 와야 합니다.")
+        precondition(html.contains("katex/katex.min.css"), "그래프 시트도 번들된 KaTeX 스타일을 로드해야 합니다.")
+        precondition(html.contains("katex.renderToString"), "그래프 수식은 KaTeX로 렌더링해야 합니다.")
+        precondition(html.contains("expression.innerHTML"), "표현식은 일반 텍스트가 아니라 렌더링된 수식 HTML이어야 합니다.")
         precondition(!html.contains("http://") && !html.contains("https://"))
         print("MathVisualRendererTests passed")
     }

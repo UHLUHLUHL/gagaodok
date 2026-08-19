@@ -136,9 +136,9 @@ public final class MathVisualRenderer: NSObject, WKNavigationDelegate {
         case .implicit2D:
             return "\(spec.expression) = \(spec.contourValue)"
         case .integral2D:
-            return "y(x) = ∫[\(spec.parameterMin), \(spec.parameterMax)] \(spec.expression) dt"
+            return "y(x) = \\int_{\(spec.parameterMin)}^{\(spec.parameterMax)} \(spec.expression)\\,dt"
         case .ode2D:
-            return "y′ = \(spec.expression),  y(\(spec.initialX)) = \(spec.initialY)"
+            return "y' = \(spec.expression),  y(\(spec.initialX)) = \(spec.initialY)"
         case .function2D, .surface3D:
             return spec.expression
         case .coordinateDiagram:
