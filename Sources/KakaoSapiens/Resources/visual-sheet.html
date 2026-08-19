@@ -10,6 +10,7 @@
         #title { margin: 0; font-size: 27px; font-weight: 750; letter-spacing: -0.4px; }
         #caption { margin: 9px 0 26px; color: #555; font-size: 16px; line-height: 1.45; }
         #expression { margin: -9px 0 22px; color: #262626; font: italic 23px Georgia, "Times New Roman", serif; }
+        #legend { min-height: 20px; margin: -10px 0 14px; color: #3d4653; font-size: 15px; font-weight: 650; }
         #chart { display: block; width: 1076px; height: 700px; border: 1px solid #dadde2; background: #fff; }
         .grid { stroke: #e7e9ed; stroke-width: 1; }
         .axis { stroke: #262a30; stroke-width: 2; }
@@ -28,12 +29,14 @@
         <h1 id="title"></h1>
         <div id="caption"></div>
         <div id="expression"></div>
+        <div id="legend"></div>
         <svg id="chart" viewBox="0 0 1076 700" aria-label="수학 시각자료"></svg>
     </main>
     <script>
         const title = document.getElementById('title');
         const caption = document.getElementById('caption');
         const expression = document.getElementById('expression');
+        const legend = document.getElementById('legend');
         const chart = document.getElementById('chart');
         const width = 1076, height = 700, margin = 72;
 
@@ -59,14 +62,15 @@
             }
             if (p.xMin <= 0 && p.xMax >= 0) {
                 const sx = xMap(0, p); out += `<line class="axis" x1="${sx}" y1="${margin-12}" x2="${sx}" y2="${height-margin+12}"/>`;
-                out += `<text class="axis-label" x="${sx+10}" y="${margin-18}">y</text>`;
+                out += `<text class="axis-label" x="${sx+10}" y="${margin-18}">${esc(payloadAxis(p.yLabel, 'y'))}</text>`;
             }
             if (p.yMin <= 0 && p.yMax >= 0) {
                 const sy = yMap(0, p); out += `<line class="axis" x1="${margin-12}" y1="${sy}" x2="${width-margin+12}" y2="${sy}"/>`;
-                out += `<text class="axis-label" x="${width-margin+12}" y="${sy-12}">x</text>`;
+                out += `<text class="axis-label" x="${width-margin+12}" y="${sy-12}">${esc(payloadAxis(p.xLabel, 'x'))}</text>`;
             }
             return out;
         }
+        function payloadAxis(value, fallback) { return String(value || fallback); }
         function curveMarkup(curves, p) {
             return (curves || []).map(curve => {
                 const points = curve.map(point => `${xMap(point.x,p).toFixed(2)},${yMap(point.y,p).toFixed(2)}`).join(' ');
@@ -112,12 +116,16 @@
             const a = surfaceProject(p.xMin, 0, p.zMin, p), b = surfaceProject(p.xMax, 0, p.zMin, p);
             const c = surfaceProject(0, p.yMin, p.zMin, p), d = surfaceProject(0, p.yMax, p.zMin, p);
             const e = surfaceProject(0, 0, p.zMax, p), o = surfaceProject(0, 0, p.zMin, p);
-            return `<line class="axis" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><line class="axis" x1="${c.x}" y1="${c.y}" x2="${d.x}" y2="${d.y}"/><line class="axis" x1="${o.x}" y1="${o.y}" x2="${e.x}" y2="${e.y}"/><text class="axis-label" x="${b.x+10}" y="${b.y}">x</text><text class="axis-label" x="${d.x+10}" y="${d.y}">y</text><text class="axis-label" x="${e.x+10}" y="${e.y}">z</text>`;
+            return `<line class="axis" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><line class="axis" x1="${c.x}" y1="${c.y}" x2="${d.x}" y2="${d.y}"/><line class="axis" x1="${o.x}" y1="${o.y}" x2="${e.x}" y2="${e.y}"/><text class="axis-label" x="${b.x+10}" y="${b.y}">${esc(payloadAxis(p.xLabel, 'x'))}</text><text class="axis-label" x="${d.x+10}" y="${d.y}">${esc(payloadAxis(p.yLabel, 'y'))}</text><text class="axis-label" x="${e.x+10}" y="${e.y}">${esc(payloadAxis(p.zLabel, 'z'))}</text>`;
         }
         window.renderVisual = function (payload) {
+            payload.xLabel = payload.xLabel || 'x';
+            payload.yLabel = payload.yLabel || 'y';
+            payload.zLabel = payload.zLabel || 'z';
             title.textContent = payload.title || '수학 시각자료';
             caption.textContent = payload.caption || '';
             expression.textContent = payload.expression || '';
+            legend.textContent = payload.legend || '';
             let markup = '';
             if (payload.kind === 'surface3D') {
                 markup = surfaceMarkup(payload.triangles) + surfaceAxesMarkup(payload);
