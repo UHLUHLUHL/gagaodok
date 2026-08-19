@@ -9,6 +9,7 @@ public struct MessageBubbleView: View {
     let customAvatar: NSImage?
     let isEditingThisMessage: Bool
     let isSelected: Bool
+    let isRichContentActive: Bool
     let onImageTapped: ((ChatAttachment) -> Void)?
     let onEditMessage: ((ChatMessage) -> Void)?
     let onDeleteMessage: ((ChatMessage) -> Void)?
@@ -41,6 +42,7 @@ public struct MessageBubbleView: View {
         customAvatar: NSImage? = nil,
         isEditingThisMessage: Bool = false,
         isSelected: Bool = false,
+        isRichContentActive: Bool = true,
         searchQuery: String = "",
         isCurrentSearchHit: Bool = false,
         onImageTapped: ((ChatAttachment) -> Void)? = nil,
@@ -59,6 +61,7 @@ public struct MessageBubbleView: View {
         self.customAvatar = customAvatar
         self.isEditingThisMessage = isEditingThisMessage
         self.isSelected = isSelected
+        self.isRichContentActive = isRichContentActive
         self.onImageTapped = onImageTapped
         self.onEditMessage = onEditMessage
         self.onDeleteMessage = onDeleteMessage
@@ -161,10 +164,16 @@ public struct MessageBubbleView: View {
                     VStack(alignment: .trailing, spacing: 2) {
                     Group {
                         if message.containsLaTeXOrMarkdown {
-                            LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight,
-                                              searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
-                                .frame(height: webViewHeight)
-                                .frame(minWidth: 36, maxWidth: 300)
+                            if isRichContentActive {
+                                LaTeXMarkdownView(content: message.text, isUser: true, dynamicHeight: $webViewHeight,
+                                                  searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
+                                    .frame(height: webViewHeight)
+                                    .frame(minWidth: 36, maxWidth: 300)
+                            } else {
+                                Color.clear
+                                    .frame(height: webViewHeight)
+                                    .frame(minWidth: 36, maxWidth: 300)
+                            }
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))
@@ -299,10 +308,16 @@ public struct MessageBubbleView: View {
                 if !message.text.isEmpty {
                     Group {
                         if message.containsLaTeXOrMarkdown {
-                            LaTeXMarkdownView(content: message.text, isUser: false, dynamicHeight: $webViewHeight,
-                                              searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
-                                .frame(height: webViewHeight)
-                                .frame(minWidth: 36, maxWidth: 320)
+                            if isRichContentActive {
+                                LaTeXMarkdownView(content: message.text, isUser: false, dynamicHeight: $webViewHeight,
+                                                  searchQuery: searchQuery, isCurrentSearchHit: isCurrentSearchHit)
+                                    .frame(height: webViewHeight)
+                                    .frame(minWidth: 36, maxWidth: 320)
+                            } else {
+                                Color.clear
+                                    .frame(height: webViewHeight)
+                                    .frame(minWidth: 36, maxWidth: 320)
+                            }
                         } else {
                             Text(highlightedText)
                                 .font(.custom("Pretendard-Regular", size: 13.5))

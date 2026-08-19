@@ -2,18 +2,10 @@ import SwiftUI
 import WebKit
 
 public extension Notification.Name {
-    /// 수식 말풍선의 실제 높이는 KaTeX가 그려진 뒤에야 정해집니다.
-    /// 그 사이 채팅이 아래로 밀려나므로, 높이가 확정될 때마다 알려 다시 맨 아래로 내립니다.
     static let bubbleHeightSettled = Notification.Name("KakaoSapiens.bubbleHeightSettled")
 }
 
-/// 말풍선 웹뷰가 공유하는 자원입니다.
-///
-/// 예전에는 말풍선마다 CDN에서 KaTeX·markdown-it·웹폰트를 받아 문서를 통째로 새로 띄웠습니다.
-/// 이제는 번들에 들어 있는 고정 셸(`bubble.html`)을 한 번만 로드하고 내용만 갈아끼웁니다.
-/// 덕분에 오프라인에서도 수식이 그려지고, 스크롤로 말풍선이 재생성될 때 비용이 거의 없습니다.
 enum BubbleWebAssets {
-    /// 번들에서 셸과 자원이 들어 있는 디렉터리를 찾습니다.
     static let shellURL: URL? = {
         for bundle in candidateBundles {
             if let url = bundle.url(forResource: "bubble", withExtension: "html") { return url }
@@ -22,19 +14,14 @@ enum BubbleWebAssets {
         return nil
     }()
 
-    /// 웹뷰가 katex/ 와 markdown-it 을 읽을 수 있어야 하므로 셸이 있는 디렉터리 전체를 허용합니다.
     static var readAccessURL: URL? { shellURL?.deletingLastPathComponent() }
 
     private static var candidateBundles: [Bundle] {
         var bundles: [Bundle] = [.main]
-        // SwiftPM이 만든 리소스 번들은 실행 파일 옆이나 앱의 Resources 안에 놓입니다.
         let names = ["KakaoSapiens_KakaoSapiens", "KakaoSapiens_KakaoSapiens.bundle"]
-        let searchRoots = [
-            Bundle.main.resourceURL,
-            Bundle.main.bundleURL,
-            Bundle.main.bundleURL.deletingLastPathComponent()
-        ].compactMap { $0 }
-        for root in searchRoots {
+        let roots = [Bundle.main.resourceURL, Bundle.main.bundleURL,
+                     Bundle.main.bundleURL.deletingLastPathComponent()].compactMap { $0 }
+        for root in roots {
             for name in names {
                 let candidate = root.appendingPathComponent(name.hasSuffix(".bundle") ? name : name + ".bundle")
                 if let bundle = Bundle(url: candidate) { bundles.append(bundle) }
@@ -44,149 +31,257 @@ enum BubbleWebAssets {
     }
 }
 
+struct BubbleSnapshotKey: Hashable {
+    let content: String
+    let width: Int
+    let query: String
+    let isCurrentHit: Bool
+    let isDark: Bool
+
+    init(content: String, width: CGFloat, query: String, isCurrentHit: Bool, isDark: Bool) {
+        self.content = content
+        self.width = max(36, Int(width.rounded()))
+        self.query = query
+        self.isCurrentHit = isCurrentHit
+        self.isDark = isDark
+    }
+}
+
+private struct BubbleSnapshot {
+    let image: NSImage
+    let height: CGFloat
+    let cost: Int
+}
+
+/// KaTeX/Markdown은 앱 전체의 WKWebView 하나에서 순차 렌더링합니다.
+@MainActor
+private final class BubbleSnapshotRenderer: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    static let shared = BubbleSnapshotRenderer()
+
+    private struct Job { let key: BubbleSnapshotKey; let content: String }
+    typealias Completion = (NSImage, CGFloat) -> Void
+
+    private let webView: WKWebView
+    private var isReady = false
+    private var isRendering = false
+    private var queue: [Job] = []
+    private var callbacks: [BubbleSnapshotKey: [Completion]] = [:]
+    private var cache: [BubbleSnapshotKey: BubbleSnapshot] = [:]
+    private var cacheOrder: [BubbleSnapshotKey] = []
+    private var cacheCost = 0
+    private let cacheCostLimit = 64 * 1024 * 1024
+
+    override init() {
+        let controller = WKUserContentController()
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.suppressesIncrementalRendering = true
+        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 2000), configuration: configuration)
+        super.init()
+        controller.add(self, name: "readyHandler")
+        webView.navigationDelegate = self
+        webView.setValue(false, forKey: "drawsBackground")
+        if let shell = BubbleWebAssets.shellURL, let access = BubbleWebAssets.readAccessURL {
+            webView.loadFileURL(shell, allowingReadAccessTo: access)
+        }
+    }
+
+    func render(key: BubbleSnapshotKey, content: String, completion: @escaping Completion) {
+        if let cached = cache[key] { completion(cached.image, cached.height); return }
+        if callbacks[key] != nil { callbacks[key]?.append(completion); return }
+        callbacks[key] = [completion]
+        // 빠르게 스크롤했을 때 이미 지나간 요청보다 현재 화면 요청을 먼저 그립니다.
+        queue.insert(Job(key: key, content: content), at: 0)
+        pump()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "readyHandler" else { return }
+        isReady = true
+        pump()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        webView.evaluateJavaScript("typeof renderContent === 'function'") { [weak self] result, _ in
+            Task { @MainActor in
+                guard result as? Bool == true else { return }
+                self?.isReady = true
+                self?.pump()
+            }
+        }
+    }
+
+    private func pump() {
+        guard isReady, !isRendering, !queue.isEmpty else { return }
+        isRendering = true
+        let job = queue.removeFirst()
+        webView.frame = NSRect(x: 0, y: 0, width: job.key.width, height: 2000)
+        guard let data = try? JSONEncoder().encode([job.content]),
+              let literal = String(data: data, encoding: .utf8) else {
+            finish(job: job, image: fallbackImage(for: job), height: 30); return
+        }
+        webView.evaluateJavaScript("renderContent(\(literal)[0])") { [weak self] result, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let height = max(18, CGFloat((result as? NSNumber)?.doubleValue ?? 30))
+                self.webView.frame.size.height = height
+                self.applyHighlight(for: job) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { self.capture(job: job, height: height) }
+                }
+            }
+        }
+    }
+
+    private func applyHighlight(for job: Job, completion: @escaping () -> Void) {
+        guard let data = try? JSONEncoder().encode([job.key.query]),
+              let literal = String(data: data, encoding: .utf8) else { completion(); return }
+        webView.evaluateJavaScript("highlightSearch(\(literal)[0], \(job.key.isCurrentHit))") { _, _ in completion() }
+    }
+
+    private func capture(job: Job, height: CGFloat) {
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = NSRect(x: 0, y: 0, width: CGFloat(job.key.width), height: height)
+        webView.takeSnapshot(with: configuration) { [weak self] image, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let result = image ?? self.fallbackImage(for: job)
+                result.size = NSSize(width: CGFloat(job.key.width), height: height)
+                self.finish(job: job, image: result, height: height)
+            }
+        }
+    }
+
+    private func finish(job: Job, image: NSImage, height: CGFloat) {
+        let cost = max(1, job.key.width * Int(height.rounded()) * 8)
+        cache[job.key] = BubbleSnapshot(image: image, height: height, cost: cost)
+        cacheOrder.append(job.key)
+        cacheCost += cost
+        while cacheCost > cacheCostLimit, let oldest = cacheOrder.first {
+            cacheOrder.removeFirst()
+            if let removed = cache.removeValue(forKey: oldest) { cacheCost -= removed.cost }
+        }
+        let waiting = callbacks.removeValue(forKey: job.key) ?? []
+        waiting.forEach { $0(image, height) }
+        isRendering = false
+        pump()
+    }
+
+    private func fallbackImage(for job: Job) -> NSImage {
+        let image = NSImage(size: NSSize(width: job.key.width, height: 30))
+        image.lockFocus()
+        NSAttributedString(string: job.content, attributes: [
+            .font: NSFont.systemFont(ofSize: 13.5),
+            .foregroundColor: job.key.isDark ? NSColor.white : NSColor.labelColor
+        ]).draw(in: NSRect(x: 0, y: 0, width: job.key.width, height: 30))
+        image.unlockFocus()
+        return image
+    }
+}
+
+public final class BubbleSnapshotView: NSView {
+    let imageView = NSImageView()
+    let fallbackLabel = NSTextField(wrappingLabelWithString: "")
+    var widthChanged: ((CGFloat) -> Void)?
+    private var lastWidth: CGFloat = 0
+    private var displayedContent: String?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        imageView.imageScaling = .scaleAxesIndependently
+        fallbackLabel.font = .systemFont(ofSize: 13.5)
+        fallbackLabel.maximumNumberOfLines = 3
+        addSubview(fallbackLabel)
+        addSubview(imageView)
+    }
+    required init?(coder: NSCoder) { nil }
+
+    public override func layout() {
+        super.layout()
+        imageView.frame = bounds
+        fallbackLabel.frame = bounds
+        if bounds.width > 35, abs(bounds.width - lastWidth) > 0.75 {
+            lastWidth = bounds.width
+            widthChanged?(bounds.width)
+        }
+    }
+
+    func showFallback(_ content: String) {
+        guard displayedContent != content else { return }
+        displayedContent = content
+        fallbackLabel.stringValue = content
+        fallbackLabel.isHidden = false
+        imageView.image = nil
+        setAccessibilityLabel(content)
+    }
+
+    func show(image: NSImage) {
+        imageView.image = image
+        fallbackLabel.isHidden = true
+    }
+}
+
 public struct LaTeXMarkdownView: NSViewRepresentable {
     let content: String
     let isUser: Bool
     @Binding var dynamicHeight: CGFloat
-    /// 검색 중일 때만 채워집니다. 웹뷰 안에서 이 글자를 칠합니다.
     var searchQuery: String = ""
     var isCurrentSearchHit: Bool = false
 
-    public init(
-        content: String,
-        isUser: Bool,
-        dynamicHeight: Binding<CGFloat>,
-        searchQuery: String = "",
-        isCurrentSearchHit: Bool = false
-    ) {
-        self.content = content
-        self.isUser = isUser
-        self._dynamicHeight = dynamicHeight
-        self.searchQuery = searchQuery
-        self.isCurrentSearchHit = isCurrentSearchHit
+    public init(content: String, isUser: Bool, dynamicHeight: Binding<CGFloat>,
+                searchQuery: String = "", isCurrentSearchHit: Bool = false) {
+        self.content = content; self.isUser = isUser; self._dynamicHeight = dynamicHeight
+        self.searchQuery = searchQuery; self.isCurrentSearchHit = isCurrentSearchHit
     }
 
-    public func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
+    public func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    public func makeNSView(context: Context) -> WKWebView {
-        let controller = WKUserContentController()
-        controller.add(context.coordinator, name: "heightHandler")
-        controller.add(context.coordinator, name: "readyHandler")
-
-        let config = WKWebViewConfiguration()
-        config.userContentController = controller
-        config.suppressesIncrementalRendering = true
-
-        let webView = PassthroughWKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator
-        webView.setValue(false, forKey: "drawsBackground")
-        webView.enclosingScrollView?.hasVerticalScroller = false
-        webView.enclosingScrollView?.hasHorizontalScroller = false
-
-        context.coordinator.pendingContent = content
-        if let shell = BubbleWebAssets.shellURL, let readAccess = BubbleWebAssets.readAccessURL {
-            webView.loadFileURL(shell, allowingReadAccessTo: readAccess)
-        } else {
-            // 번들에서 셸을 못 찾은 경우에도 글자는 읽을 수 있게 최소한으로 표시합니다.
-            webView.loadHTMLString(Self.fallbackHTML(for: content), baseURL: nil)
+    public func makeNSView(context: Context) -> BubbleSnapshotView {
+        let view = BubbleSnapshotView()
+        view.showFallback(content)
+        view.widthChanged = { [weak coordinator = context.coordinator, weak view] width in
+            guard let coordinator, let view else { return }
+            coordinator.request(width: width, in: view)
         }
-        return webView
+        DispatchQueue.main.async { context.coordinator.request(width: isUser ? 280 : 300, in: view) }
+        return view
     }
 
-    public func updateNSView(_ nsView: WKWebView, context: Context) {
+    public func updateNSView(_ nsView: BubbleSnapshotView, context: Context) {
         context.coordinator.parent = self
-        if context.coordinator.lastContent != content {
-            context.coordinator.lastContent = content
-            context.coordinator.render(content, in: nsView)
-        }
-        // 수식은 KaTeX가 그린 노드라 SwiftUI 쪽에서 칠할 수 없습니다.
-        // 웹뷰 안에서 직접 칠하되 수식 노드는 건드리지 않습니다.
-        context.coordinator.applyHighlight(query: searchQuery, isCurrent: isCurrentSearchHit, in: nsView)
+        nsView.showFallback(content)
+        let width = nsView.bounds.width > 35 ? nsView.bounds.width : (isUser ? 280 : 300)
+        context.coordinator.request(width: width, in: nsView)
     }
 
-    private static func fallbackHTML(for content: String) -> String {
-        let escaped = content
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-        return "<meta charset=\"utf-8\"><div style=\"font:13.5px -apple-system;white-space:pre-wrap\">\(escaped)</div>"
-    }
-
-    public class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    public final class Coordinator {
         var parent: LaTeXMarkdownView
-        var lastContent: String
-        /// 셸이 준비되기 전에 들어온 내용을 담아뒀다가 준비 직후에 그립니다.
-        var pendingContent: String?
-        private var isReady = false
+        private var lastKey: BubbleSnapshotKey?
+        private var pendingKey: BubbleSnapshotKey?
+        private var pendingTask: Task<Void, Never>?
+        init(_ parent: LaTeXMarkdownView) { self.parent = parent }
 
-        init(_ parent: LaTeXMarkdownView) {
-            self.parent = parent
-            self.lastContent = parent.content
-        }
-
-        /// 마지막으로 칠한 상태입니다. 같은 값이면 다시 칠하지 않습니다.
-        private var lastHighlight: String = ""
-
-        func applyHighlight(query: String, isCurrent: Bool, in webView: WKWebView) {
-            let key = "\(query)|\(isCurrent)"
-            guard isReady, lastHighlight != key else { return }
-            lastHighlight = key
-            guard let data = try? JSONEncoder().encode([query]),
-                  let literal = String(data: data, encoding: .utf8) else { return }
-            webView.evaluateJavaScript("highlightSearch(\(literal)[0], \(isCurrent))", completionHandler: nil)
-        }
-
-        func render(_ content: String, in webView: WKWebView) {
-            guard isReady else {
-                pendingContent = content
-                return
-            }
-            // 문자열을 JSON으로 감싸 따옴표·역슬래시·개행을 안전하게 전달합니다.
-            guard let data = try? JSONEncoder().encode([content]),
-                  let literal = String(data: data, encoding: .utf8) else { return }
-            webView.evaluateJavaScript("renderContent(\(literal)[0])") { result, _ in
-                guard let height = result as? CGFloat else { return }
-                DispatchQueue.main.async { self.apply(height: height) }
-            }
-        }
-
-        private func apply(height: CGFloat) {
-            guard abs(parent.dynamicHeight - height) > 0.5 else { return }
-            parent.dynamicHeight = max(height, 18)
-            NotificationCenter.default.post(name: .bubbleHeightSettled, object: nil)
-        }
-
-        public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            switch message.name {
-            case "readyHandler":
-                isReady = true
-                if let webView = message.webView, let pending = pendingContent {
-                    pendingContent = nil
-                    render(pending, in: webView)
+        @MainActor
+        func request(width: CGFloat, in view: BubbleSnapshotView) {
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let key = BubbleSnapshotKey(content: parent.content, width: width, query: parent.searchQuery,
+                                        isCurrentHit: parent.isCurrentSearchHit, isDark: dark)
+            guard key != lastKey, key != pendingKey else { return }
+            pendingKey = key
+            pendingTask?.cancel()
+            pendingTask = Task { @MainActor [weak self, weak view] in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                guard !Task.isCancelled, let self, let view, self.pendingKey == key else { return }
+                self.pendingKey = nil
+                self.lastKey = key
+                BubbleSnapshotRenderer.shared.render(key: key, content: self.parent.content) { [weak self, weak view] image, height in
+                    guard let self, let view, self.lastKey == key else { return }
+                    view.show(image: image)
+                    if abs(self.parent.dynamicHeight - height) > 0.5 {
+                        self.parent.dynamicHeight = height
+                        NotificationCenter.default.post(name: .bubbleHeightSettled, object: nil)
+                    }
                 }
-            case "heightHandler":
-                if let height = message.body as? CGFloat {
-                    DispatchQueue.main.async { self.apply(height: height) }
-                }
-            default:
-                break
             }
         }
-
-        public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // readyHandler가 먼저 오는 게 보통이지만, 순서가 뒤바뀌어도 내용이 비지 않도록 합니다.
-            if isReady, let pending = pendingContent {
-                pendingContent = nil
-                render(pending, in: webView)
-            }
-        }
-    }
-}
-
-/// 수식 웹뷰가 마우스 휠을 내부 스크롤로 소비하지 않고 채팅 ScrollView로 전달합니다.
-final class PassthroughWKWebView: WKWebView {
-    override func scrollWheel(with event: NSEvent) {
-        nextResponder?.scrollWheel(with: event)
     }
 }

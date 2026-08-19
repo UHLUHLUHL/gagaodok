@@ -22,6 +22,8 @@ public struct SingleChatRoomView: View {
     @State private var isSearching = false
     @State private var searchQuery = ""
     @State private var searchHitIndex = 0
+    /// LazyVStack가 현재 실제로 올려 둔 말풍선만 렌더링 스냅샷을 갖습니다.
+    @State private var activeBubbleIDs: Set<UUID> = []
     /// 답변을 받는 중인 작업입니다. 취소를 누르면 이걸 끊습니다.
     @State private var responseTask: Task<Void, Never>?
 
@@ -100,6 +102,7 @@ public struct SingleChatRoomView: View {
                     customAvatar: currentAvatar,
                     isEditingThisMessage: editingMessage?.id == msg.id,
                     isSelected: selection.isSelected(msg.id),
+                    isRichContentActive: activeBubbleIDs.contains(msg.id),
                     searchQuery: isSearching ? searchQuery : "",
                     isCurrentSearchHit: currentSearchHit == msg.id,
                     onImageTapped: { activeImageModal = $0 },
@@ -177,37 +180,48 @@ public struct SingleChatRoomView: View {
                 
                 // 메시지 스크롤뷰
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        messageList
-                            .onPreferenceChange(BubbleFramePreferenceKey.self) { frames in
-                                selection.updateFrames(frames)
-                            }
-                    }
-                    .coordinateSpace(name: Self.chatSpace)
-                    // macOS에서는 스크롤이 휠·트랙패드로 일어나므로 드래그를 가져와도 안 부딪힙니다.
-                    .gesture(
-                        DragGesture(minimumDistance: 5, coordinateSpace: .named(Self.chatSpace))
-                            .onChanged { value in
-                                if selection.marquee == nil {
-                                    selection.beginDrag(at: value.startLocation)
+                    GeometryReader { viewport in
+                        ScrollView {
+                            messageList
+                                .onPreferenceChange(BubbleFramePreferenceKey.self) { frames in
+                                    selection.updateFrames(frames)
+                                    // LazyVStack의 preference에는 한 번 생성된 먼 행도 남습니다.
+                                    // 실제 viewport 주변만 활성화해야 지나간 WebView가 누적되지 않습니다.
+                                    let preload: CGFloat = 600
+                                    let next = Set(frames.compactMap { id, frame in
+                                        frame.maxY > -preload && frame.minY < viewport.size.height + preload
+                                            ? id : nil
+                                    })
+                                    if activeBubbleIDs != next {
+                                        activeBubbleIDs = next
+                                    }
                                 }
-                                selection.extendDrag(to: value.location)
-                            }
-                            .onEnded { _ in selection.endDrag() }
-                    )
-                    // 그냥 한 번 누르면 선택을 놓습니다. 위 DragGesture가 클릭을 삼켜서
-                    // onTapGesture로는 오지 않으므로 나란히 도는 제스처로 답니다.
-                    // 놓을 방법이 없으면 고른 채로 남아 ⌘C를 계속 가로챕니다.
-                    .simultaneousGesture(TapGesture().onEnded { selection.clear() })
-                    // 복사할 글은 선택이 바뀌는 순간 미리 만들어 둡니다.
-                    .onChange(of: selection.selected) {
-                        selection.copyText = selectedTranscript
-                    }
-                    .onChange(of: messages.count) {
-                        lastScrollAnchorAt = Date()
-                        scrollToBottom(proxy: proxy)
-                        roomManager.saveMessagesForRoom(roomId: roomId, messages: messages)
-                    }
+                        }
+                        .coordinateSpace(name: Self.chatSpace)
+                        // macOS에서는 스크롤이 휠·트랙패드로 일어나므로 드래그를 가져와도 안 부딪힙니다.
+                        .gesture(
+                            DragGesture(minimumDistance: 5, coordinateSpace: .named(Self.chatSpace))
+                                .onChanged { value in
+                                    if selection.marquee == nil {
+                                        selection.beginDrag(at: value.startLocation)
+                                    }
+                                    selection.extendDrag(to: value.location)
+                                }
+                                .onEnded { _ in selection.endDrag() }
+                        )
+                        // 그냥 한 번 누르면 선택을 놓습니다. 위 DragGesture가 클릭을 삼켜서
+                        // onTapGesture로는 오지 않으므로 나란히 도는 제스처로 답니다.
+                        // 놓을 방법이 없으면 고른 채로 남아 ⌘C를 계속 가로챕니다.
+                        .simultaneousGesture(TapGesture().onEnded { selection.clear() })
+                        // 복사할 글은 선택이 바뀌는 순간 미리 만들어 둡니다.
+                        .onChange(of: selection.selected) {
+                            selection.copyText = selectedTranscript
+                        }
+                        .onChange(of: messages.count) {
+                            lastScrollAnchorAt = Date()
+                            scrollToBottom(proxy: proxy)
+                            roomManager.saveMessagesForRoom(roomId: roomId, messages: messages)
+                        }
                     // 검색어를 고치면 가장 최근 결과부터 다시 봅니다.
                     .onChange(of: searchQuery) {
                         recomputeSearchHits()
@@ -233,11 +247,12 @@ public struct SingleChatRoomView: View {
                         scrollToBottom(proxy: proxy, animated: false)
                         selection.startMonitoringCopy()
                     }
-                    .onDisappear {
-                        // 창을 닫으면 고른 것도 같이 놓습니다. 창이 여럿일 때
-                        // 안 보이는 창의 선택이 ⌘C를 가로채지 않도록요.
-                        selection.clear()
-                        selection.stopMonitoringCopy()
+                        .onDisappear {
+                            // 창을 닫으면 고른 것도 같이 놓습니다. 창이 여럿일 때
+                            // 안 보이는 창의 선택이 ⌘C를 가로채지 않도록요.
+                            selection.clear()
+                            selection.stopMonitoringCopy()
+                        }
                     }
                 }
                 
