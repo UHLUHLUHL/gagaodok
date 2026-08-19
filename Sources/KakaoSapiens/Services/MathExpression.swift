@@ -9,10 +9,36 @@ import Foundation
 public struct MathExpression {
     private let root: Node
 
+    public enum CompileError: Error, Equatable {
+        case invalidExpression
+        case expressionTooLong
+        case unsupportedVariable(String)
+    }
+
     public init?(_ source: String) {
+        guard source.utf8.count <= 300 else { return nil }
         var parser = Parser(source)
         guard let node = parser.parseExpression(), parser.isAtEnd else { return nil }
         root = node
+    }
+
+    public static func compile(
+        _ source: String,
+        allowedVariables: Set<String>
+    ) throws -> MathExpression {
+        guard source.utf8.count <= 300 else { throw CompileError.expressionTooLong }
+        var parser = Parser(source)
+        guard let node = parser.parseExpression(), parser.isAtEnd else {
+            throw CompileError.invalidExpression
+        }
+        if let unsupported = node.variables.first(where: { !allowedVariables.contains($0) }) {
+            throw CompileError.unsupportedVariable(unsupported)
+        }
+        return MathExpression(root: node)
+    }
+
+    private init(root: Node) {
+        self.root = root
     }
 
     /// 변수 값을 넣어 계산합니다. 정의역을 벗어나면(예: `ln(-1)`) nil입니다.
@@ -30,6 +56,19 @@ public struct MathExpression {
         case unary(String, Node)
         case binary(String, Node, Node)
         case call(String, Node)
+
+        var variables: Set<String> {
+            switch self {
+            case .number:
+                return []
+            case .variable(let name):
+                return [name]
+            case .unary(_, let operand), .call(_, let operand):
+                return operand.variables
+            case .binary(_, let lhs, let rhs):
+                return lhs.variables.union(rhs.variables)
+            }
+        }
 
         func evaluate(_ variables: [String: Double]) -> Double? {
             switch self {
