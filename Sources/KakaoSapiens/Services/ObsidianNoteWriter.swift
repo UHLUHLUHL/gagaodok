@@ -68,7 +68,8 @@ public struct ObsidianNoteWriter {
     }
 
     public func existingNoteURL(episodeID: String, in folder: URL) throws -> URL? {
-        let marker = "episode_id: \"\(episodeID)\""
+        let legacyMarker = "episode_id: \"\(episodeID)\""
+        let hiddenMarker = "\"episode_id\":\"\(episodeID)\""
         let urls = try fileManager.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -77,7 +78,10 @@ public struct ObsidianNoteWriter {
         for url in urls where url.pathExtension.lowercased() == "md" {
             guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { continue }
             let prefix = data.prefix(16 * 1024)
-            if String(data: prefix, encoding: .utf8)?.contains(marker) == true { return url }
+            if let text = String(data: prefix, encoding: .utf8),
+               text.contains(legacyMarker) || text.contains(hiddenMarker) {
+                return url
+            }
         }
         return nil
     }

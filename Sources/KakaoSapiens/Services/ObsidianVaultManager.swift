@@ -19,11 +19,16 @@ public final class ObsidianVaultManager: ObservableObject {
 
     @Published public private(set) var targetFolderURL: URL?
     @Published public private(set) var statusMessage = "연결 확인 전"
+    @Published public private(set) var migrationStatusMessage = "기존 노트 확인 전"
 
     private let fileManager: FileManager
     private let defaults: UserDefaults
     private let writer: ObsidianNoteWriter
+    private var isMigratingGeneratedNotes = false
     private static let pathKey = "obsidianExportFolderPath"
+    private static let migrationVersionKey = "obsidianGeneratedNoteMigrationVersion"
+    private static let migrationFolderPathKey = "obsidianGeneratedNoteMigrationFolderPath"
+    private static let migrationVersion = 2
     public static let defaultFolderName = "가가오독"
 
     public init(fileManager: FileManager = .default, defaults: UserDefaults = .standard) {
@@ -40,6 +45,9 @@ public final class ObsidianVaultManager: ObservableObject {
         }
         if targetFolderURL == nil { targetFolderURL = Self.discover(fileManager: fileManager) }
         statusMessage = connectionMessage()
+        Task { @MainActor [weak self] in
+            await self?.migrateGeneratedNotesIfNeeded()
+        }
     }
 
     public var displayPath: String {
@@ -78,14 +86,20 @@ public final class ObsidianVaultManager: ObservableObject {
 
     public func verifyConnection() {
         statusMessage = connectionMessage()
+        Task { @MainActor [weak self] in
+            await self?.migrateGeneratedNotesIfNeeded()
+        }
     }
 
     public func attachmentPaths(for items: [ObsidianAttachmentItem]) -> [String] {
-        guard let folder = targetFolderURL else { return [] }
         return items.map { item in
             let fileName = attachmentFileName(item)
-            return "\(folder.lastPathComponent)/attachments/\(fileName)"
+            return "attachments/\(fileName)"
         }
+    }
+
+    public func problemCardPath(episodeID: String) -> String {
+        "attachments/\(ObsidianProblemCardRenderer.fileName(episodeID: episodeID))"
     }
 
     public func save(
@@ -93,6 +107,7 @@ public final class ObsidianVaultManager: ObservableObject {
         title: String,
         episodeID: String,
         attachments: [ObsidianAttachmentItem],
+        problemCardPNG: Data? = nil,
         overwriteExisting: Bool
     ) throws -> ObsidianNoteWriter.WriteResult {
         guard let folder = targetFolderURL, isConnected else {
@@ -103,6 +118,9 @@ public final class ObsidianVaultManager: ObservableObject {
         }
 
         try writeAttachments(attachments, targetFolder: folder)
+        if let problemCardPNG {
+            try writeProblemCard(problemCardPNG, episodeID: episodeID, targetFolder: folder)
+        }
         return try writer.write(
             markdown: markdown,
             title: title,
@@ -135,6 +153,9 @@ public final class ObsidianVaultManager: ObservableObject {
         targetFolderURL = normalized
         defaults.set(normalized.path, forKey: Self.pathKey)
         statusMessage = connectionMessage()
+        Task { @MainActor [weak self] in
+            await self?.migrateGeneratedNotesIfNeeded()
+        }
     }
 
     private func connectionMessage() -> String {
@@ -156,6 +177,69 @@ public final class ObsidianVaultManager: ObservableObject {
             let url = folder.appendingPathComponent(attachmentFileName(item))
             if fileManager.fileExists(atPath: url.path) { continue }
             try data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func writeProblemCard(_ data: Data, episodeID: String, targetFolder: URL) throws {
+        let folder = targetFolder.appendingPathComponent("attachments", isDirectory: true)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(ObsidianProblemCardRenderer.fileName(episodeID: episodeID))
+        try data.write(to: url, options: .atomic)
+    }
+
+    public func migrateGeneratedNotesIfNeeded(force: Bool = false) async {
+        guard !isMigratingGeneratedNotes else { return }
+        guard isConnected, let folder = targetFolderURL else {
+            migrationStatusMessage = "Google Drive가 연결되면 기존 노트를 확인합니다."
+            return
+        }
+        isMigratingGeneratedNotes = true
+        defer { isMigratingGeneratedNotes = false }
+        let migrationFolderPath = folder.standardizedFileURL.path
+        if defaults.string(forKey: Self.migrationFolderPathKey) != migrationFolderPath {
+            defaults.set(migrationFolderPath, forKey: Self.migrationFolderPathKey)
+            defaults.set(0, forKey: Self.migrationVersionKey)
+        }
+        if !force, defaults.integer(forKey: Self.migrationVersionKey) >= Self.migrationVersion {
+            migrationStatusMessage = "기존 가가오독 노트 형식이 최신입니다."
+            return
+        }
+
+        var converted = 0
+        var skipped = 0
+        var failed = 0
+        do {
+            let notes = try fileManager.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ).filter { $0.pathExtension.lowercased() == "md" }
+            for noteURL in notes {
+                guard let markdown = try? String(contentsOf: noteURL, encoding: .utf8),
+                      ObsidianGeneratedNoteMigrator.looksLikeLegacyGeneratedNote(markdown) else { continue }
+                guard let candidate = ObsidianGeneratedNoteMigrator.inspect(markdown: markdown) else {
+                    skipped += 1
+                    continue
+                }
+                do {
+                    let png = try await ObsidianProblemCardRenderer.shared.render(
+                        title: candidate.title,
+                        problem: candidate.problem
+                    )
+                    try writeProblemCard(png, episodeID: candidate.episodeID, targetFolder: folder)
+                    let migrated = candidate.renderMigratedMarkdown(
+                        problemCardPath: problemCardPath(episodeID: candidate.episodeID)
+                    )
+                    try Data(migrated.utf8).write(to: noteURL, options: .atomic)
+                    converted += 1
+                } catch {
+                    failed += 1
+                }
+            }
+            if failed == 0 { defaults.set(Self.migrationVersion, forKey: Self.migrationVersionKey) }
+            migrationStatusMessage = "기존 노트 · 변환 \(converted) · 건너뜀 \(skipped) · 실패 \(failed)"
+        } catch {
+            migrationStatusMessage = "기존 노트를 확인하지 못했습니다: \(error.localizedDescription)"
         }
     }
 

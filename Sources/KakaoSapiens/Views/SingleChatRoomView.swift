@@ -16,7 +16,6 @@ public struct SingleChatRoomView: View {
     @State private var isProfileModalPresented: Bool = false
     @State private var editingMessage: ChatMessage? = nil
     @StateObject private var selection = BubbleSelectionModel()
-    @StateObject private var obsidianExport = ObsidianExportCoordinator()
     // 뒤늦게 확정되는 말풍선 높이를 언제까지 따라갈지 정하는 기준 시각입니다.
     @State private var lastScrollAnchorAt = Date.distantPast
     @State private var isFileDropTargeted: Bool = false
@@ -111,7 +110,7 @@ public struct SingleChatRoomView: View {
                     onDeleteMessage: { deleteMessage($0) },
                     allowsObsidianExport: activeMode == .mathMentor,
                     onExportToObsidian: { message in
-                        obsidianExport.begin(
+                        ObsidianExportWindowManager.shared.present(
                             messages: messages,
                             endingAt: message,
                             selectedMessageIDs: selection.selected,
@@ -343,11 +342,6 @@ public struct SingleChatRoomView: View {
                     .zIndex(20)
             }
 
-            if obsidianExport.isPresented {
-                ObsidianExportSheet(coordinator: obsidianExport)
-                    .transition(.opacity)
-                    .zIndex(40)
-            }
         }
         .frame(minWidth: 330, minHeight: 440)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

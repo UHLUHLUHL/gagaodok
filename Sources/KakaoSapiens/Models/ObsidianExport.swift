@@ -263,6 +263,93 @@ public struct PreparedObsidianNote: Codable, Equatable {
     }
 }
 
+/// 화면 편집용 상태입니다. AI가 돌려준 근거/커버리지는 숨겨 둔 채 사용자가 보는
+/// 각 섹션만 문자열로 고칠 수 있게 하며, 미리보기와 저장이 이 값을 함께 사용합니다.
+public struct ObsidianNoteDraft: Equatable {
+    public var title: String
+    public var problem: String
+    public var givensText: String
+    public var ideasText: String
+    public var confusionsText: String
+    public var solution: String
+    public var answer: String
+    public var conceptsText: String
+    public var unresolvedText: String
+
+    private var evidenceTurns: [Int]
+    private var coverage: [TurnCoverage]
+
+    public init(prepared: PreparedObsidianNote) {
+        title = prepared.title
+        problem = prepared.problem
+        givensText = prepared.givens.joined(separator: "\n")
+        ideasText = prepared.ideas.joined(separator: "\n")
+        confusionsText = prepared.confusions.joined(separator: "\n")
+        solution = prepared.solution
+        answer = prepared.answer
+        conceptsText = prepared.concepts.joined(separator: "\n")
+        unresolvedText = prepared.unresolved.joined(separator: "\n")
+        evidenceTurns = prepared.evidenceTurns
+        coverage = prepared.coverage
+    }
+
+    public var preparedNote: PreparedObsidianNote {
+        PreparedObsidianNote(
+            title: title,
+            problem: problem,
+            givens: Self.list(from: givensText),
+            ideas: Self.list(from: ideasText),
+            confusions: Self.list(from: confusionsText),
+            solution: solution,
+            answer: answer,
+            concepts: Self.list(from: conceptsText),
+            unresolved: Self.list(from: unresolvedText),
+            evidenceTurns: evidenceTurns,
+            coverage: coverage
+        )
+    }
+
+    private static func list(from text: String) -> [String] {
+        text.components(separatedBy: .newlines).compactMap { raw in
+            var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasPrefix("- ") { value.removeFirst(2) }
+            return value.isEmpty ? nil : value
+        }
+    }
+}
+
+public struct ObsidianInternalMetadata: Codable, Equatable {
+    public let version: Int
+    public let episodeID: String
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case episodeID = "episode_id"
+    }
+
+    public init(version: Int = 2, episodeID: String) {
+        self.version = version
+        self.episodeID = episodeID
+    }
+
+    public var comment: String {
+        let escaped = episodeID
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "<!-- gagaodok-export: {\"version\":\(version),\"episode_id\":\"\(escaped)\"} -->"
+    }
+
+    public static func parse(from markdown: String) -> ObsidianInternalMetadata? {
+        let pattern = #"<!--\s*gagaodok-export:\s*\{\s*\"version\"\s*:\s*(\d+)\s*,\s*\"episode_id\"\s*:\s*\"([^\"]+)\"\s*\}\s*-->"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: markdown, range: NSRange(markdown.startIndex..., in: markdown)),
+              let versionRange = Range(match.range(at: 1), in: markdown),
+              let episodeRange = Range(match.range(at: 2), in: markdown),
+              let version = Int(markdown[versionRange]) else { return nil }
+        return ObsidianInternalMetadata(version: version, episodeID: String(markdown[episodeRange]))
+    }
+}
+
 public struct ObsidianNoteMetadata {
     public let roomID: UUID
     public let roomName: String
@@ -298,39 +385,49 @@ public enum ObsidianMarkdownFormatter {
     public static func render(
         note: PreparedObsidianNote,
         metadata: ObsidianNoteMetadata,
-        attachmentPaths: [String]
+        attachmentPaths: [String],
+        problemCardPath: String? = nil
     ) -> String {
-        normalizeMath(renderFrontmatter(metadata: metadata) + "\n\n" + renderBody(note: note, attachmentPaths: attachmentPaths))
+        normalizeMath(renderFrontmatter(metadata: metadata) + "\n\n" + renderBody(
+            note: note,
+            attachmentPaths: attachmentPaths,
+            problemCardPath: problemCardPath
+        ))
             .trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
 
     public static func renderFrontmatter(metadata: ObsidianNoteMetadata) -> String {
-        let date = ISO8601DateFormatter().string(from: metadata.createdAt)
-        var lines = [
+        [
             "---",
             "tags:",
             "  - 가가오독",
             "  - 수학문제",
-            "created: \(date)",
-            "room: \(yamlQuoted(metadata.roomName))",
-            "model: \(yamlQuoted(metadata.modelName))",
-            "room_id: \(yamlQuoted(metadata.roomID.uuidString))",
-            "episode_id: \(yamlQuoted(metadata.episodeID))",
-            "source_turns: \(yamlQuoted("\(metadata.startTurn)-\(metadata.endTurn)"))",
-            "source_message_ids:"
+            "---",
+            ObsidianInternalMetadata(episodeID: metadata.episodeID).comment
         ]
-        lines.append(contentsOf: metadata.messageIDs.map { "  - \(yamlQuoted($0.uuidString))" })
-        lines.append("---")
-        return lines.joined(separator: "\n")
+        .joined(separator: "\n")
     }
 
-    public static func renderBody(note: PreparedObsidianNote, attachmentPaths: [String]) -> String {
+    public static func renderBody(
+        note: PreparedObsidianNote,
+        attachmentPaths: [String],
+        problemCardPath: String? = nil
+    ) -> String {
         var lines = ["# \(note.title)", "", "## 문제"]
+        if let problemCardPath {
+            lines.append("")
+            lines.append("![[\(relativeAttachmentPath(problemCardPath))]]")
+            lines.append("")
+            lines.append("> [!abstract]- 문제 원문 보기")
+            lines.append(contentsOf: calloutLines(note.problem))
+        } else {
+            appendText(note.problem, to: &lines)
+        }
         if !attachmentPaths.isEmpty {
             lines.append("")
-            lines.append(contentsOf: attachmentPaths.map { "![[\($0)]]" })
+            lines.append("> [!note]- 원본 첨부")
+            lines.append(contentsOf: attachmentPaths.map { "> ![[\(relativeAttachmentPath($0))]]" })
         }
-        appendText(note.problem, to: &lines)
         appendList(title: "핵심 조건과 주어진 정보", values: note.givens, to: &lines)
         appendList(title: "시도한 아이디어", values: note.ideas, to: &lines)
         appendList(title: "헷갈린 포인트와 교정", values: note.confusions, to: &lines)
@@ -379,9 +476,13 @@ public enum ObsidianMarkdownFormatter {
         return result.joined(separator: "\n")
     }
 
-    private static func yamlQuoted(_ value: String) -> String {
-        "\"" + value.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    private static func relativeAttachmentPath(_ raw: String) -> String {
+        if let range = raw.range(of: "attachments/") { return String(raw[range.lowerBound...]) }
+        return raw
+    }
+
+    private static func calloutLines(_ source: String) -> [String] {
+        source.components(separatedBy: "\n").map { $0.isEmpty ? ">" : "> \($0)" }
     }
 
     private static func appendText(_ value: String, to lines: inout [String]) {

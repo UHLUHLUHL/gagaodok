@@ -18,9 +18,11 @@ public final class ObsidianExportCoordinator: ObservableObject {
     @Published public private(set) var scope: EpisodeScopeResult?
     @Published public var startTurn = 1
     @Published public var endTurn = 1
-    @Published public var draftTitle = ""
-    @Published public var draftBody = ""
+    @Published public var draft: ObsidianNoteDraft?
     @Published public private(set) var preparedNote: PreparedObsidianNote?
+    @Published public private(set) var problemCardPNG: Data?
+    @Published public private(set) var isRenderingProblemCard = false
+    @Published public private(set) var problemCardWarning: String?
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var savedURL: URL?
     @Published public private(set) var duplicateURL: URL?
@@ -30,6 +32,7 @@ public final class ObsidianExportCoordinator: ObservableObject {
     private var roomName = ""
     private var model: AIModel = .gemini37Flash
     private var task: Task<Void, Never>?
+    private var problemCardTask: Task<Void, Never>?
     private let vault = ObsidianVaultManager.shared
 
     public var selectedRange: ClosedRange<Int> { startTurn...max(startTurn, endTurn) }
@@ -38,7 +41,7 @@ public final class ObsidianExportCoordinator: ObservableObject {
         if scope?.needsEarlierContext == true {
             return "자동 탐색 한도보다 앞에서 시작한 문제일 수 있습니다. 시작 턴을 확인해주세요."
         }
-        if let note = preparedNote, !note.unresolved.isEmpty {
+        if let note = draft?.preparedNote, !note.unresolved.isEmpty {
             return "미해결 또는 근거 확인이 필요한 항목이 \(note.unresolved.count)개 있습니다. 저장 전에 본문을 확인해주세요."
         }
         return nil
@@ -79,7 +82,9 @@ public final class ObsidianExportCoordinator: ObservableObject {
 
     public func close() {
         task?.cancel()
+        problemCardTask?.cancel()
         task = nil
+        problemCardTask = nil
         isPresented = false
         phase = .idle
     }
@@ -112,22 +117,30 @@ public final class ObsidianExportCoordinator: ObservableObject {
         guard candidate != nil else { return }
         errorMessage = nil
         duplicateURL = nil
+        problemCardTask?.cancel()
+        problemCardPNG = nil
         phase = .preparing
         task?.cancel()
         task = Task { @MainActor [weak self] in await self?.prepareCurrentRange() }
     }
 
-    public func updateTitle(_ title: String) {
-        let oldTitle = draftTitle
-        draftTitle = title
-        let oldHeading = "# \(oldTitle)"
-        if draftBody.hasPrefix(oldHeading) {
-            draftBody.replaceSubrange(draftBody.startIndex..<draftBody.index(draftBody.startIndex, offsetBy: oldHeading.count), with: "# \(title)")
+    public func updateDraft<Value>(_ keyPath: WritableKeyPath<ObsidianNoteDraft, Value>, _ value: Value) {
+        guard var changed = draft else { return }
+        let oldTitle = changed.title
+        let oldProblem = changed.problem
+        changed[keyPath: keyPath] = value
+        draft = changed
+        if changed.title != oldTitle || changed.problem != oldProblem {
+            scheduleProblemCard()
         }
     }
 
     public func save(overwriteExisting: Bool = false) {
-        guard let candidate, let roomID, preparedNote != nil else { return }
+        guard let candidate, let roomID, let draft else { return }
+        guard !isRenderingProblemCard else {
+            errorMessage = "문제 카드 미리보기를 갱신하는 중입니다. 잠시 후 다시 저장해주세요."
+            return
+        }
         phase = .saving
         errorMessage = nil
         do {
@@ -147,14 +160,20 @@ public final class ObsidianExportCoordinator: ObservableObject {
                 messageIDs: messageIDs,
                 episodeID: episodeID
             )
-            let markdown = ObsidianMarkdownFormatter.normalizeMath(
-                ObsidianMarkdownFormatter.renderFrontmatter(metadata: metadata) + "\n\n" + draftBody
-            ).trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+            let attachmentPaths = vault.attachmentPaths(for: items)
+            let problemCardPath = problemCardPNG == nil ? nil : vault.problemCardPath(episodeID: episodeID)
+            let markdown = ObsidianMarkdownFormatter.render(
+                note: draft.preparedNote,
+                metadata: metadata,
+                attachmentPaths: attachmentPaths,
+                problemCardPath: problemCardPath
+            )
             let result = try vault.save(
                 markdown: markdown,
-                title: draftTitle,
+                title: draft.title,
                 episodeID: episodeID,
                 attachments: items,
+                problemCardPNG: problemCardPNG,
                 overwriteExisting: overwriteExisting
             )
             switch result {
@@ -201,7 +220,8 @@ public final class ObsidianExportCoordinator: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
-            phase = .failed
+            // A failed regeneration must not discard or hide the last editable draft.
+            phase = draft == nil ? .failed : .ready
             errorMessage = error.localizedDescription
         }
     }
@@ -219,19 +239,14 @@ public final class ObsidianExportCoordinator: ObservableObject {
             )
             try Task.checkCancellation()
             preparedNote = note
-            draftTitle = note.title
-            let attachmentItems = candidate.attachments(in: range, excluding: currentUnrelatedTurns()).map {
-                ObsidianAttachmentItem(turn: $0.turn, messageID: $0.messageID, attachment: $0.attachment)
-            }
-            draftBody = ObsidianMarkdownFormatter.renderBody(
-                note: note,
-                attachmentPaths: vault.attachmentPaths(for: attachmentItems)
-            )
+            draft = ObsidianNoteDraft(prepared: note)
             phase = .ready
+            scheduleProblemCard(immediate: true)
         } catch is CancellationError {
             return
         } catch {
-            phase = .failed
+            // Keep the previous range and edits visible when regeneration fails.
+            phase = draft == nil ? .failed : .ready
             errorMessage = error.localizedDescription
         }
     }
@@ -253,12 +268,42 @@ public final class ObsidianExportCoordinator: ObservableObject {
         phase = .idle
         candidate = nil
         scope = nil
-        draftTitle = ""
-        draftBody = ""
+        draft = nil
         preparedNote = nil
+        problemCardTask?.cancel()
+        problemCardTask = nil
+        problemCardPNG = nil
+        isRenderingProblemCard = false
+        problemCardWarning = nil
         errorMessage = nil
         savedURL = nil
         duplicateURL = nil
         selectedRangeSuggestion = nil
+    }
+
+    private func scheduleProblemCard(immediate: Bool = false) {
+        guard let draft else { return }
+        let title = draft.title
+        let problem = draft.problem
+        problemCardTask?.cancel()
+        problemCardPNG = nil
+        isRenderingProblemCard = true
+        problemCardWarning = nil
+        problemCardTask = Task { @MainActor [weak self] in
+            if !immediate { try? await Task.sleep(nanoseconds: 350_000_000) }
+            guard !Task.isCancelled, let self else { return }
+            do {
+                let data = try await ObsidianProblemCardRenderer.shared.render(title: title, problem: problem)
+                try Task.checkCancellation()
+                self.problemCardPNG = data
+                self.problemCardWarning = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                self.problemCardPNG = nil
+                self.problemCardWarning = "문제 이미지를 만들지 못해 Markdown 원문으로 저장합니다: \(error.localizedDescription)"
+            }
+            self.isRenderingProblemCard = false
+        }
     }
 }

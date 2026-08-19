@@ -7,12 +7,18 @@ struct ObsidianExportCoreTests {
         try testCandidateKeepsAtMostSixtyUserTurnsEndingAtSelection()
         try testTranscriptHasTurnNumbersAndAttachmentMetadataWithoutBinaryPayload()
         try testObsidianMarkdownUsesPropertiesWikiEmbedsAndMathJaxDelimiters()
+        try testObsidianV2OnlyExposesTagsAndKeepsEpisodeIDHidden()
+        try testObsidianDraftRoundTripsPreparedSections()
+        try testLegacyGeneratedNoteCanBeMigratedWithoutTouchingItsSolution()
+        testMigratorRejectsUserNotesAndAlreadyMigratedNotes()
         testMathNormalizerDoesNotRewriteCodeFences()
         try testAIResponseParserAcceptsFencedJSON()
         try testEpisodeIDIsStableForSameMessages()
         try testVaultLocatorPrefersOpenVaultWithGagaodokFolder()
         testObsidianOpenURIEncodesAbsolutePath()
         try testWriterFindsSameEpisodeAndOnlyOverwritesWhenRequested()
+        try testWriterFindsV2HiddenEpisodeMarker()
+        try testStructuredOutputConfigsRequireProviderSchemas()
         print("ObsidianExportCoreTests passed")
     }
 
@@ -132,13 +138,101 @@ struct ObsidianExportCoreTests {
 
         check(markdown.hasPrefix("---\n"), "Properties는 파일 첫 줄에서 시작해야 합니다.")
         check(markdown.contains("tags:\n  - 가가오독\n  - 수학문제"), "tags는 Obsidian 리스트 property여야 합니다.")
-        check(markdown.contains("episode_id: \"episode-42-48\""), "중복 검사용 episode ID가 필요합니다.")
-        check(markdown.contains("source_turns: \"42-48\""), "출처 턴 범위를 보존해야 합니다.")
-        check(markdown.contains("![[가가오독/attachments/problem-42.png]]"), "Vault 내부 첨부는 Wikilink embed여야 합니다.")
+        check(markdown.contains("<!-- gagaodok-export: {\"version\":2,\"episode_id\":\"episode-42-48\"} -->"), "중복 검사용 episode ID는 숨은 메타데이터여야 합니다.")
+        check(!markdown.contains("source_turns:"), "턴 범위를 Obsidian Properties에 노출하면 안 됩니다.")
+        check(markdown.contains("![[attachments/problem-42.png]]"), "Vault 내부 첨부는 상대 Wikilink embed여야 합니다.")
         check(markdown.contains("$$\n (f^{-1})''(y) = ? \n$$"), "블록 수식은 MathJax 구분자를 써야 합니다.")
         check(markdown.contains("$g=f^{-1}$"), "인라인 수식은 dollar 구분자를 써야 합니다.")
         check(!markdown.contains("\\["), "Obsidian 출력에 bracket 블록 구분자를 남기면 안 됩니다.")
         check(!markdown.contains("\\("), "Obsidian 출력에 parenthesis 인라인 구분자를 남기면 안 됩니다.")
+    }
+
+    static func testObsidianV2OnlyExposesTagsAndKeepsEpisodeIDHidden() throws {
+        let metadata = ObsidianNoteMetadata(
+            roomID: UUID(), roomName: "수학과외쌤", modelName: "Gemini",
+            startTurn: 3, endTurn: 7, messageIDs: [UUID()], episodeID: "episode-hidden"
+        )
+
+        let header = ObsidianMarkdownFormatter.renderFrontmatter(metadata: metadata)
+
+        check(header == """
+        ---
+        tags:
+          - 가가오독
+          - 수학문제
+        ---
+        <!-- gagaodok-export: {\"version\":2,\"episode_id\":\"episode-hidden\"} -->
+        """, "Properties에는 tags만 있고 내부 식별자는 HTML 주석에 있어야 합니다.")
+        for forbidden in ["created:", "room:", "model:", "room_id:", "source_turns:", "source_message_ids:"] {
+            check(!header.contains(forbidden), "불필요한 property \(forbidden)를 노출하면 안 됩니다.")
+        }
+        check(ObsidianInternalMetadata.parse(from: header)?.episodeID == "episode-hidden", "숨은 episode ID를 다시 읽을 수 있어야 합니다.")
+    }
+
+    static func testObsidianDraftRoundTripsPreparedSections() throws {
+        let prepared = PreparedObsidianNote(
+            title: "제목", problem: "$x$를 구하시오.", givens: ["$x>0$"], ideas: ["치환"],
+            confusions: ["부호 교정"], solution: "계산한다.", answer: "$x=1$", concepts: ["치환"],
+            unresolved: ["추가 확인"], evidenceTurns: [1],
+            coverage: [TurnCoverage(turn: 1, status: .included, reason: "문제")]
+        )
+
+        var draft = ObsidianNoteDraft(prepared: prepared)
+        draft.problem = "$y$를 구하시오."
+        draft.givensText = "$y>0$\n정수"
+        let rebuilt = draft.preparedNote
+
+        check(rebuilt.problem == "$y$를 구하시오.", "문제 편집이 준비된 노트에 반영되어야 합니다.")
+        check(rebuilt.givens == ["$y>0$", "정수"], "줄 단위 조건 편집을 배열로 복원해야 합니다.")
+        check(rebuilt.coverage == prepared.coverage, "사용자에게 노출하지 않은 근거 상태는 보존해야 합니다.")
+    }
+
+    static func testLegacyGeneratedNoteCanBeMigratedWithoutTouchingItsSolution() throws {
+        let legacy = """
+        ---
+        tags:
+          - 가가오독
+          - 수학문제
+        created: 2026-08-19T08:01:55Z
+        room: "수학과외쌤"
+        episode_id: "legacy-episode"
+        source_message_ids:
+          - "message-id"
+        ---
+
+        # 역삼각함수 그래프
+
+        ## 문제
+
+        다음 함수의 그래프를 그리시오.
+        $$y=\\arcsin(\\sin x)$$
+
+        ## 최종 해설
+
+        이 해설은 그대로 보존한다.
+        """
+
+        guard let candidate = ObsidianGeneratedNoteMigrator.inspect(markdown: legacy) else {
+            fail("가가오독 legacy 노트를 인식해야 합니다.")
+        }
+        check(candidate.title == "역삼각함수 그래프", "기존 제목을 추출해야 합니다.")
+        check(candidate.problem.contains("\\arcsin"), "문제 LaTeX를 원형대로 추출해야 합니다.")
+
+        let migrated = candidate.renderMigratedMarkdown(problemCardPath: "attachments/problem-legacy-episode.png")
+        check(migrated.hasPrefix("---\ntags:\n  - 가가오독\n  - 수학문제\n---\n"), "새 Properties는 tags만 남겨야 합니다.")
+        check(migrated.contains("![[attachments/problem-legacy-episode.png]]"), "생성 문제 카드를 임베드해야 합니다.")
+        check(migrated.contains("> [!abstract]- 문제 원문 보기"), "문제 원문은 접힌 callout에 보존해야 합니다.")
+        check(migrated.contains("> $$y=\\arcsin(\\sin x)$$"), "callout 안에서도 LaTeX 원문을 보존해야 합니다.")
+        check(migrated.contains("이 해설은 그대로 보존한다."), "문제 뒤의 사용자 내용은 바꾸면 안 됩니다.")
+        check(!migrated.contains("source_message_ids:"), "legacy 내부 속성은 제거해야 합니다.")
+    }
+
+    static func testMigratorRejectsUserNotesAndAlreadyMigratedNotes() {
+        let userNote = "---\ntags:\n  - 가가오독\n  - 수학문제\n---\n# 내가 쓴 노트\n\n## 문제\n본문"
+        let migrated = "---\ntags:\n  - 가가오독\n  - 수학문제\n---\n<!-- gagaodok-export: {\"version\":2,\"episode_id\":\"done\"} -->\n# 완료"
+
+        check(ObsidianGeneratedNoteMigrator.inspect(markdown: userNote) == nil, "episode ID가 없는 사용자 노트는 건드리면 안 됩니다.")
+        check(ObsidianGeneratedNoteMigrator.inspect(markdown: migrated) == nil, "이미 v2인 노트는 다시 변환하면 안 됩니다.")
     }
 
     static func testMathNormalizerDoesNotRewriteCodeFences() {
@@ -287,5 +381,39 @@ struct ObsidianExportCoreTests {
         check(replacedURL == firstURL, "덮어쓰기는 같은 경로를 유지해야 합니다.")
         let newContents = try String(contentsOf: firstURL, encoding: .utf8)
         check(newContents.contains("new"), "승인 후 새 내용으로 교체해야 합니다.")
+    }
+
+    static func testWriterFindsV2HiddenEpisodeMarker() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ObsidianWriterV2Tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let writer = ObsidianNoteWriter(fileManager: .default)
+        let url = root.appendingPathComponent("v2.md")
+        try "<!-- gagaodok-export: {\"version\":2,\"episode_id\":\"hidden-episode\"} -->\n# 문제"
+            .write(to: url, atomically: true, encoding: .utf8)
+
+        let found = try writer.existingNoteURL(episodeID: "hidden-episode", in: root)
+
+        check(found?.standardizedFileURL == url.standardizedFileURL, "v2 숨은 메타데이터에서도 중복 episode를 찾아야 합니다.")
+    }
+
+    static func testStructuredOutputConfigsRequireProviderSchemas() throws {
+        let output = ObsidianStructuredOutput.preparedNote
+        let gemini = output.geminiGenerationConfig(maxOutputTokens: 5_000)
+        check(gemini["responseMimeType"] as? String == "application/json", "Gemini는 JSON MIME type을 강제해야 합니다.")
+        guard let geminiSchema = gemini["responseSchema"] as? [String: Any],
+              let geminiRequired = geminiSchema["required"] as? [String] else {
+            fail("Gemini generationConfig에 responseSchema가 필요합니다.")
+        }
+        check(geminiRequired.contains("coverage") && geminiRequired.contains("problem"), "노트의 필수 필드를 스키마가 강제해야 합니다.")
+
+        let openAI = output.openAITextConfig
+        check(openAI["verbosity"] as? String == "low", "정리 요청은 낮은 verbosity를 유지해야 합니다.")
+        guard let format = openAI["format"] as? [String: Any] else { fail("OpenAI text.format이 필요합니다.") }
+        check(format["type"] as? String == "json_schema", "OpenAI는 json_schema Structured Outputs를 사용해야 합니다.")
+        check(format["strict"] as? Bool == true, "OpenAI schema는 strict 모드여야 합니다.")
+        check(format["schema"] as? [String: Any] != nil, "OpenAI에도 동일한 JSON Schema를 전달해야 합니다.")
+        check(ObsidianStructuredOutput.maximumAttempts == 2, "최초 요청과 제한 재시도 1회만 허용해야 합니다.")
     }
 }

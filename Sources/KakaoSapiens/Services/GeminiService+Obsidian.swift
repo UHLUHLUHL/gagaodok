@@ -32,15 +32,15 @@ extension GeminiService {
             대화:
             \(candidate.transcript(in: range))
             """
-            let raw = try await requestObsidianJSON(
+            var result: EpisodeScopeResult = try await requestObsidianDecoded(
                 model: model,
                 roomId: roomId,
                 system: Self.episodeScopeInstruction,
                 prompt: prompt,
                 attachments: [],
-                maxOutputTokens: 1200
+                maxOutputTokens: 1200,
+                structuredOutput: .episodeScope
             )
-            var result: EpisodeScopeResult = try ObsidianAIResponseParser.decode(raw)
             result = try validatedScope(
                 result,
                 candidate: candidate,
@@ -135,15 +135,15 @@ extension GeminiService {
             unrelatedTurns: unrelatedTurns
         )
         let attachments = candidate.attachments(in: range, excluding: unrelatedTurns).map(\.attachment)
-        let raw = try await requestObsidianJSON(
+        return try await requestObsidianDecoded(
             model: model,
             roomId: roomId,
             system: Self.preparedNoteInstruction,
             prompt: prompt,
             attachments: attachments,
-            maxOutputTokens: 5000
+            maxOutputTokens: 5000,
+            structuredOutput: .preparedNote
         )
-        return try ObsidianAIResponseParser.decode(raw)
     }
 
     private struct EpisodeChunkSummary: Codable {
@@ -177,15 +177,15 @@ extension GeminiService {
         \(candidate.transcript(in: range))
         """
         let attachments = candidate.attachments(in: range, excluding: unrelatedTurns).map(\.attachment)
-        let raw = try await requestObsidianJSON(
+        return try await requestObsidianDecoded(
             model: model,
             roomId: roomId,
             system: Self.preparedNoteInstruction,
             prompt: prompt,
             attachments: attachments,
-            maxOutputTokens: 3500
+            maxOutputTokens: 3500,
+            structuredOutput: .episodeChunk
         )
-        return try ObsidianAIResponseParser.decode(raw)
     }
 
     private func composePreparedNote(
@@ -201,15 +201,15 @@ extension GeminiService {
         }
         let prompt = preparedNotePrompt(source: source, range: fullRange, unrelatedTurns: unrelatedTurns)
             + "\n위 source는 8턴 단위로 검증된 중간 추출 결과다. 중복을 합치되 근거 턴과 수식을 보존하라."
-        let raw = try await requestObsidianJSON(
+        return try await requestObsidianDecoded(
             model: model,
             roomId: roomId,
             system: Self.preparedNoteInstruction,
             prompt: prompt,
             attachments: [],
-            maxOutputTokens: 5500
+            maxOutputTokens: 5500,
+            structuredOutput: .preparedNote
         )
-        return try ObsidianAIResponseParser.decode(raw)
     }
 
     private func preparedNotePrompt(
@@ -286,7 +286,8 @@ extension GeminiService {
         system: String,
         prompt: String,
         attachments: [ChatAttachment],
-        maxOutputTokens: Int
+        maxOutputTokens: Int,
+        structuredOutput: ObsidianStructuredOutput
     ) async throws -> String {
         switch model {
         case .gemini37Flash:
@@ -300,11 +301,7 @@ extension GeminiService {
             let body: [String: Any] = [
                 "systemInstruction": ["parts": [["text": system]]],
                 "contents": [["role": "user", "parts": parts]],
-                "generationConfig": [
-                    "maxOutputTokens": maxOutputTokens,
-                    "responseMimeType": "application/json",
-                    "thinkingConfig": ["thinkingLevel": "low"]
-                ]
+                "generationConfig": structuredOutput.geminiGenerationConfig(maxOutputTokens: maxOutputTokens)
             ]
             let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
             return try textFromGeminiJSON(json)
@@ -315,9 +312,40 @@ extension GeminiService {
                 prompt: prompt,
                 attachments: attachments,
                 roomId: roomId,
-                maxOutputTokens: maxOutputTokens
+                maxOutputTokens: maxOutputTokens,
+                structuredOutput: structuredOutput
             )
         }
+    }
+
+    private func requestObsidianDecoded<T: Decodable>(
+        model: AIModel,
+        roomId: UUID,
+        system: String,
+        prompt: String,
+        attachments: [ChatAttachment],
+        maxOutputTokens: Int,
+        structuredOutput: ObsidianStructuredOutput
+    ) async throws -> T {
+        var lastParsingError: Error?
+        for attempt in 0..<ObsidianStructuredOutput.maximumAttempts {
+            let retryNote = attempt == 0 ? "" : "\n이전 출력은 로컬 구조 검증을 통과하지 못했다. 지정된 JSON Schema만 정확히 반환하라."
+            let raw = try await requestObsidianJSON(
+                model: model,
+                roomId: roomId,
+                system: system,
+                prompt: prompt + retryNote,
+                attachments: attachments,
+                maxOutputTokens: maxOutputTokens,
+                structuredOutput: structuredOutput
+            )
+            do {
+                return try ObsidianAIResponseParser.decode(raw)
+            } catch {
+                lastParsingError = error
+            }
+        }
+        throw lastParsingError ?? serviceError("AI 정리 응답의 구조를 확인할 수 없습니다.")
     }
 
     private func textFromGeminiJSON(_ json: [String: Any]) throws -> String {
@@ -335,7 +363,8 @@ extension GeminiService {
         prompt: String,
         attachments: [ChatAttachment],
         roomId: UUID,
-        maxOutputTokens: Int
+        maxOutputTokens: Int,
+        structuredOutput: ObsidianStructuredOutput
     ) async throws -> String {
         guard let apiKey = KeychainStore.openAIAPIKey else {
             throw serviceError("설정에서 OpenAI API 키를 먼저 등록해주세요.")
@@ -354,7 +383,7 @@ extension GeminiService {
             "instructions": system,
             "input": [["role": "user", "content": content]],
             "reasoning": ["effort": "low", "context": "all_turns"],
-            "text": ["verbosity": "low"],
+            "text": structuredOutput.openAITextConfig,
             "max_output_tokens": maxOutputTokens,
             "background": true,
             "store": true,

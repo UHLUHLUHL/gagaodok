@@ -154,7 +154,7 @@ public struct KakaoUsageSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("문제 노트 저장 위치")
                         .font(.custom("Pretendard-Bold", size: 12.5))
-                    Text("멘토 모드에서 정리한 문제와 해설을 Markdown으로 저장합니다.")
+                    Text("멘토 모드의 문제 카드와 렌더링 가능한 해설을 저장합니다.")
                         .font(.custom("Pretendard-Regular", size: 10))
                         .foregroundColor(KakaoTheme.textSecondary)
                 }
@@ -175,6 +175,10 @@ public struct KakaoUsageSettingsView: View {
             .font(.custom("Pretendard-Medium", size: 10.5))
             .foregroundColor(obsidian.isConnected ? .green : .orange)
 
+            Label(obsidian.migrationStatusMessage, systemImage: "arrow.triangle.2.circlepath.doc.on.clipboard")
+                .font(.custom("Pretendard-Regular", size: 10))
+                .foregroundColor(KakaoTheme.textSecondary)
+
             HStack {
                 Button("자동으로 다시 찾기") { obsidian.refreshDiscovery() }
                     .buttonStyle(.bordered)
@@ -186,12 +190,17 @@ public struct KakaoUsageSettingsView: View {
                 Button("연결 확인") { obsidian.verifyConnection() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                Button("기존 노트 다시 확인") {
+                    Task { await obsidian.migrateGeneratedNotesIfNeeded(force: true) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Obsidian 호환 형식")
                     .font(.custom("Pretendard-Bold", size: 11.5))
-                Text("Properties는 YAML 리스트로, 수식은 MathJax의 $…$·$$…$$로, 문제 이미지는 Vault 내부 ![[…]] 임베드로 저장합니다.")
+                Text("Properties에는 가가오독·수학문제 태그만 표시합니다. 문제는 흰 PNG와 접힌 원문을 함께 저장하고, 수식은 MathJax의 $…$·$$…$$를 사용합니다.")
                     .font(.custom("Pretendard-Regular", size: 10.5))
                     .foregroundColor(KakaoTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

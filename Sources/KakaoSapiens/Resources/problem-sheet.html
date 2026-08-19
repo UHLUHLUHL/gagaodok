@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=900, initial-scale=1.0">
+    <link rel="stylesheet" href="katex/katex.min.css">
+    <script src="katex/katex.min.js"></script>
+    <script src="katex/auto-render.min.js"></script>
+    <script src="markdown-it.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0;
+            width: 900px;
+            min-height: 220px;
+            background: #ffffff;
+            color: #151515;
+            overflow: hidden;
+        }
+        #paper {
+            width: 900px;
+            min-height: 220px;
+            padding: 58px 72px 64px;
+            background: #ffffff;
+            font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        }
+        #topic {
+            margin: 0 0 18px;
+            font-size: 21px;
+            line-height: 1.35;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            color: #202020;
+        }
+        #rule { height: 1px; background: #262626; opacity: 0.72; margin-bottom: 31px; }
+        #content {
+            font-size: 22px;
+            line-height: 1.75;
+            letter-spacing: -0.25px;
+            overflow-wrap: anywhere;
+            word-break: keep-all;
+        }
+        #content p { margin: 0 0 16px; }
+        #content p:last-child { margin-bottom: 0; }
+        #content ul, #content ol { margin: 12px 0 16px 30px; padding: 0; }
+        #content li { margin: 7px 0; padding-left: 5px; }
+        #content blockquote {
+            margin: 18px 0;
+            padding: 17px 20px;
+            background: #f7f7f7;
+            border-left: 3px solid #555;
+        }
+        #content .katex { color: #111; }
+        #content .katex-display {
+            margin: 24px 0 !important;
+            padding: 5px 0;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        #content .katex-display > .katex { font-size: 1.25em; }
+        #content table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+        #content th, #content td { border: 1px solid #777; padding: 10px 12px; }
+        #content code { font-family: Menlo, monospace; font-size: 0.86em; }
+    </style>
+</head>
+<body>
+    <main id="paper">
+        <h1 id="topic"></h1>
+        <div id="rule"></div>
+        <section id="content"></section>
+    </main>
+    <script>
+        const topic = document.getElementById('topic');
+        const content = document.getElementById('content');
+        const paper = document.getElementById('paper');
+        const md = window.markdownit({ html: false, breaks: true, linkify: false });
+
+        function protectDisplayMath(source, left, right, sink) {
+            let output = '', cursor = 0;
+            while (cursor < source.length) {
+                const start = source.indexOf(left, cursor);
+                if (start < 0) { output += source.slice(cursor); break; }
+                const end = source.indexOf(right, start + left.length);
+                if (end < 0) { output += source.slice(cursor); break; }
+                const token = `PROBLEMDISPLAYTOKEN${sink.length}END`;
+                sink.push(source.slice(start + left.length, end));
+                output += source.slice(cursor, start) + '\n\n' + token + '\n\n';
+                cursor = end + right.length;
+            }
+            return output;
+        }
+
+        window.fitDisplayMath = function () {
+            for (const block of content.querySelectorAll('.katex-display')) {
+                const formula = block.querySelector('.katex');
+                if (!formula) continue;
+                formula.style.removeProperty('font-size');
+                formula.style.removeProperty('transform');
+                formula.style.removeProperty('transform-origin');
+                formula.style.removeProperty('display');
+                const available = block.clientWidth;
+                if (available <= 0 || formula.scrollWidth <= available) continue;
+                const current = parseFloat(getComputedStyle(formula).fontSize);
+                const target = Math.max(current * (available / formula.scrollWidth) * 0.98, 14);
+                formula.style.setProperty('font-size', target + 'px', 'important');
+                if (formula.scrollWidth > available + 1) {
+                    const scale = Math.max((available / formula.scrollWidth) * 0.98, 0.2);
+                    formula.style.setProperty('display', 'inline-block');
+                    formula.style.setProperty('transform', `scale(${scale})`);
+                    formula.style.setProperty('transform-origin', 'left top');
+                }
+            }
+        };
+
+        window.renderProblem = function (title, rawMarkdown) {
+            topic.textContent = title || '수학 문제';
+            const blocks = [];
+            let source = protectDisplayMath(rawMarkdown || '', '$$', '$$', blocks);
+            source = protectDisplayMath(source, '\\[', '\\]', blocks);
+            let html = md.render(source);
+            blocks.forEach((formula, index) => {
+                const token = `PROBLEMDISPLAYTOKEN${index}END`;
+                const math = katex.renderToString(formula.trim(), {
+                    displayMode: true, throwOnError: false, strict: false
+                });
+                html = html.split(token).join(math);
+            });
+            content.innerHTML = html;
+            renderMathInElement(content, {
+                delimiters: [
+                    { left: '$$', right: '$$', display: true },
+                    { left: '$', right: '$', display: false },
+                    { left: '\\(', right: '\\)', display: false },
+                    { left: '\\[', right: '\\]', display: true }
+                ],
+                throwOnError: false,
+                strict: false
+            });
+            fitDisplayMath();
+            return Math.ceil(paper.scrollHeight);
+        };
+    </script>
+</body>
+</html>
