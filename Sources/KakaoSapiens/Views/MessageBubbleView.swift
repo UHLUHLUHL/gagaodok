@@ -13,6 +13,8 @@ public struct MessageBubbleView: View {
     let onImageTapped: ((ChatAttachment) -> Void)?
     let onEditMessage: ((ChatMessage) -> Void)?
     let onDeleteMessage: ((ChatMessage) -> Void)?
+    let allowsObsidianExport: Bool
+    let onExportToObsidian: ((ChatMessage) -> Void)?
     var onAvatarTapped: (() -> Void)? = nil
     var onResendMessage: ((ChatMessage) -> Void)? = nil
     /// 검색 중일 때만 채워집니다. 찾은 글자를 노랗게 칠하는 데 씁니다.
@@ -48,6 +50,8 @@ public struct MessageBubbleView: View {
         onImageTapped: ((ChatAttachment) -> Void)? = nil,
         onEditMessage: ((ChatMessage) -> Void)? = nil,
         onDeleteMessage: ((ChatMessage) -> Void)? = nil,
+        allowsObsidianExport: Bool = false,
+        onExportToObsidian: ((ChatMessage) -> Void)? = nil,
         onAvatarTapped: (() -> Void)? = nil,
         onResendMessage: ((ChatMessage) -> Void)? = nil
     ) {
@@ -66,6 +70,8 @@ public struct MessageBubbleView: View {
         self.onImageTapped = onImageTapped
         self.onEditMessage = onEditMessage
         self.onDeleteMessage = onDeleteMessage
+        self.allowsObsidianExport = allowsObsidianExport
+        self.onExportToObsidian = onExportToObsidian
         self.onAvatarTapped = onAvatarTapped
     }
     
@@ -330,6 +336,12 @@ public struct MessageBubbleView: View {
                             .fill(selectionTint)
                     )
                     .contextMenu {
+                        if allowsObsidianExport {
+                            Button("Obsidian에 정리") {
+                                onExportToObsidian?(message)
+                            }
+                            Divider()
+                        }
                         Button("복사") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(message.text, forType: .string)

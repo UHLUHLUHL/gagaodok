@@ -5,6 +5,7 @@ public struct KakaoUsageSettingsView: View {
     @ObservedObject private var usage = TokenUsageManager.shared
     @ObservedObject private var models = ModelSelectionManager.shared
     @ObservedObject private var rooms = ChatRoomManager.shared
+    @ObservedObject private var obsidian = ObsidianVaultManager.shared
 
     @State private var section: Section = .usage
     @ObservedObject private var appearance = AppearanceManager.shared
@@ -15,6 +16,7 @@ public struct KakaoUsageSettingsView: View {
         case usage = "사용량"
         case model = "AI 모델"
         case display = "화면"
+        case obsidian = "Obsidian"
     }
 
     public init(onClose: @escaping () -> Void) { self.onClose = onClose }
@@ -34,6 +36,7 @@ public struct KakaoUsageSettingsView: View {
                     case .usage: usageSection
                     case .model: modelSection
                     case .display: displaySection
+                    case .obsidian: obsidianSection
                     }
                 }
             }
@@ -61,7 +64,7 @@ public struct KakaoUsageSettingsView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("가가오독 설정")
                     .font(.custom("Pretendard-Bold", size: 15))
-                Text("모델과 API 사용량을 관리합니다")
+                Text("모델, API 사용량과 내보내기를 관리합니다")
                     .font(.custom("Pretendard-Regular", size: 10.5))
                     .foregroundColor(KakaoTheme.textSecondary)
             }
@@ -133,6 +136,68 @@ public struct KakaoUsageSettingsView: View {
             Text("시스템 설정을 고르면 맥의 화면 모드를 따라갑니다.")
                 .font(.custom("Pretendard-Regular", size: 10.5))
                 .foregroundColor(KakaoTheme.textTertiary)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+    }
+
+    private var obsidianSection: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 9) {
+                Image(systemName: "square.and.arrow.up.on.square.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.purple)
+                    .frame(width: 36, height: 36)
+                    .background(Color.purple.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("문제 노트 저장 위치")
+                        .font(.custom("Pretendard-Bold", size: 12.5))
+                    Text("멘토 모드에서 정리한 문제와 해설을 Markdown으로 저장합니다.")
+                        .font(.custom("Pretendard-Regular", size: 10))
+                        .foregroundColor(KakaoTheme.textSecondary)
+                }
+            }
+
+            Text(obsidian.displayPath)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(KakaoTheme.textSecondary)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
+
+            Label(
+                obsidian.statusMessage,
+                systemImage: obsidian.isConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            )
+            .font(.custom("Pretendard-Medium", size: 10.5))
+            .foregroundColor(obsidian.isConnected ? .green : .orange)
+
+            HStack {
+                Button("자동으로 다시 찾기") { obsidian.refreshDiscovery() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Button("폴더 변경") { obsidian.chooseFolder() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                Spacer()
+                Button("연결 확인") { obsidian.verifyConnection() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Obsidian 호환 형식")
+                    .font(.custom("Pretendard-Bold", size: 11.5))
+                Text("Properties는 YAML 리스트로, 수식은 MathJax의 $…$·$$…$$로, 문제 이미지는 Vault 내부 ![[…]] 임베드로 저장합니다.")
+                    .font(.custom("Pretendard-Regular", size: 10.5))
+                    .foregroundColor(KakaoTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(11)
+            .background(Color.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
 
             Spacer(minLength: 0)
         }
