@@ -115,6 +115,16 @@ enum BubbleSnapshotReusePolicy {
     }
 }
 
+/// LazyVStack가 생성한 행의 rich/plain 상태는 화면 경계에 따라 바꾸지 않습니다.
+/// 행 높이가 바뀌면 Geometry preference가 다시 바뀌고, 그 결과 활성 상태가 뒤집히는
+/// AttributeGraph 피드백 루프가 생길 수 있습니다. 실제 메모리 제한은 LazyVStack의
+/// 행 생명주기와 BubbleSnapshotRenderer의 제한 캐시가 담당합니다.
+enum BubbleViewportRenderingPolicy {
+    static func shouldRenderRichContent(isInstantiated: Bool, isInsidePreloadRegion: Bool) -> Bool {
+        isInstantiated
+    }
+}
+
 struct BubbleHeightStabilityTracker {
     private var lastHeight: CGFloat?
 

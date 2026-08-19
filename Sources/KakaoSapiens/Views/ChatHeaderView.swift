@@ -11,6 +11,7 @@ public struct ChatHeaderView: View {
     var onCallTapped: (() -> Void)?
     var onVideoTapped: (() -> Void)?
     var onMenuTapped: (() -> Void)?
+    var onBatchObsidianExport: (() -> Void)?
     /// 이 방이 쓰는 모델입니다. 모델은 방마다 따로 기억합니다.
     var activeModel: AIModel = .gemini37Flash
     var onModelSelected: ((AIModel) -> Void)? = nil
@@ -28,6 +29,7 @@ public struct ChatHeaderView: View {
         onCallTapped: (() -> Void)? = nil,
         onVideoTapped: (() -> Void)? = nil,
         onMenuTapped: (() -> Void)? = nil,
+        onBatchObsidianExport: (() -> Void)? = nil,
         activeModel: AIModel = .gemini37Flash,
         onModelSelected: ((AIModel) -> Void)? = nil,
         activeMode: ChatMode = .mathMentor,
@@ -46,6 +48,7 @@ public struct ChatHeaderView: View {
         self.onCallTapped = onCallTapped
         self.onVideoTapped = onVideoTapped
         self.onMenuTapped = onMenuTapped
+        self.onBatchObsidianExport = onBatchObsidianExport
     }
     
     public var body: some View {
@@ -168,7 +171,20 @@ public struct ChatHeaderView: View {
                         .focusable(false)
                         HeaderIconButton(systemName: "phone", size: 15.5) { onCallTapped?() }
                         HeaderIconButton(systemName: "video", size: 15.5) { onVideoTapped?() }
-                        HeaderIconButton(systemName: "line.3.horizontal", size: 16.5) { onMenuTapped?() }
+                        Menu {
+                            Button("대화방 정보", systemImage: "person.crop.circle") { onMenuTapped?() }
+                            if activeMode == .mathMentor {
+                                Divider()
+                                Button("헷갈린 문제 여러 개 정리", systemImage: "square.stack.3d.up") {
+                                    onBatchObsidianExport?()
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 16.5)).foregroundColor(KakaoTheme.onChatHeader)
+                                .frame(width: 22, height: 22).contentShape(Rectangle())
+                        }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().focusable(false)
                     }
                     .padding(.trailing, 1)
                 }

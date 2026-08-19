@@ -22,8 +22,6 @@ public struct SingleChatRoomView: View {
     @State private var isSearching = false
     @State private var searchQuery = ""
     @State private var searchHitIndex = 0
-    /// LazyVStack가 현재 실제로 올려 둔 말풍선만 렌더링 스냅샷을 갖습니다.
-    @State private var activeBubbleIDs: Set<UUID> = []
     /// 답변을 받는 중인 작업입니다. 취소를 누르면 이걸 끊습니다.
     @State private var responseTask: Task<Void, Never>?
 
@@ -102,7 +100,10 @@ public struct SingleChatRoomView: View {
                     customAvatar: currentAvatar,
                     isEditingThisMessage: editingMessage?.id == msg.id,
                     isSelected: selection.isSelected(msg.id),
-                    isRichContentActive: activeBubbleIDs.contains(msg.id),
+                    isRichContentActive: BubbleViewportRenderingPolicy.shouldRenderRichContent(
+                        isInstantiated: true,
+                        isInsidePreloadRegion: true
+                    ),
                     searchQuery: isSearching ? searchQuery : "",
                     isCurrentSearchHit: currentSearchHit == msg.id,
                     onImageTapped: { activeImageModal = $0 },
@@ -168,6 +169,9 @@ public struct SingleChatRoomView: View {
                     onMenuTapped: {
                         isProfileModalPresented = true
                     },
+                    onBatchObsidianExport: {
+                        presentBatchObsidianExport(criterion: "내가 헷갈리거나 틀렸거나 어려워했던 문제들 모두")
+                    },
                     activeModel: activeModel,
                     onModelSelected: { roomManager.updateRoomModel(roomId: roomId, model: $0) },
                     activeMode: activeMode,
@@ -191,21 +195,11 @@ public struct SingleChatRoomView: View {
                 
                 // 메시지 스크롤뷰
                 ScrollViewReader { proxy in
-                    GeometryReader { viewport in
+                    GeometryReader { _ in
                         ScrollView {
                             messageList
                                 .onPreferenceChange(BubbleFramePreferenceKey.self) { frames in
                                     selection.updateFrames(frames)
-                                    // LazyVStack의 preference에는 한 번 생성된 먼 행도 남습니다.
-                                    // 실제 viewport 주변만 활성화해야 지나간 WebView가 누적되지 않습니다.
-                                    let preload: CGFloat = 600
-                                    let next = Set(frames.compactMap { id, frame in
-                                        frame.maxY > -preload && frame.minY < viewport.size.height + preload
-                                            ? id : nil
-                                    })
-                                    if activeBubbleIDs != next {
-                                        activeBubbleIDs = next
-                                    }
                                 }
                         }
                         .coordinateSpace(name: Self.chatSpace)
@@ -481,6 +475,28 @@ public struct SingleChatRoomView: View {
         } else {
             let trimmedText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty || selectedAttachment != nil else { return }
+
+            // 멘토 모드의 명시적 Obsidian 명령은 대화 메시지/API 컨텍스트에 넣지 않습니다.
+            // 일반 답변으로 보내면 내보내기는 실행되지 않고 대화만 불필요하게 늘어납니다.
+            if activeMode == .mathMentor {
+                switch ObsidianCommandIntent.classify(trimmedText) {
+                case .batch:
+                    let attachment = selectedAttachment
+                    inputText = ""; selectedAttachment = nil
+                    presentBatchObsidianExport(criterion: trimmedText, commandAttachment: attachment)
+                    return
+                case .single:
+                    if let endpoint = messages.last(where: { $0.sender == .sapiens }) {
+                        inputText = ""; selectedAttachment = nil
+                        ObsidianExportWindowManager.shared.present(
+                            messages: messages, endingAt: endpoint, selectedMessageIDs: [],
+                            roomID: roomId, roomName: room.profile.name, model: activeModel
+                        )
+                        return
+                    }
+                case .none: break
+                }
+            }
             
             let userMessage = ChatMessage(
                 sender: .user,
@@ -501,6 +517,13 @@ public struct SingleChatRoomView: View {
             
             triggerAIResponse(history: messages)
         }
+    }
+
+    private func presentBatchObsidianExport(criterion: String, commandAttachment: ChatAttachment? = nil) {
+        ObsidianBatchExportWindowManager.shared.present(
+            messages: messages, roomID: roomId, roomName: room.profile.name,
+            model: activeModel, criterion: criterion, commandAttachment: commandAttachment
+        )
     }
     
     /// 실패해도 사용자에게 알리기 전에 조용히 다시 시도하는 횟수입니다.

@@ -1,6 +1,38 @@
 import Foundation
 
 extension GeminiService {
+    public func scanObsidianProblemEpisodes(
+        candidate: ProblemEpisodeCandidate,
+        criterion: String,
+        model: AIModel,
+        roomId: UUID
+    ) async throws -> [ObsidianBatchCandidate] {
+        var collected: [ObsidianBatchCandidate] = []
+        for window in ObsidianBatchCorpus.windows(turns: candidate.turns) {
+            guard let first = window.first?.number, let last = window.last?.number else { continue }
+            let prompt = """
+            다음 수학 멘토 대화에서 사용자가 실제로 헷갈렸거나, 틀렸거나, 반복 질문하며 어려워한 독립 문제만 찾는다.
+            단순 잡담, 일반 기능 질문, 충분히 이해한 문제는 제외한다. 하나의 문제를 여러 턴에서 다시 다뤘으면 한 후보로 묶는다.
+            사용자의 요청 기준: \(criterion)
+            각 후보의 startTurn/endTurn/relatedTurns/unrelatedTurns는 반드시 \(first)...\(last) 안에 있어야 한다.
+            score는 복습 필요도, confidence는 경계 판정 확신도다. 후보가 없으면 빈 배열을 반환한다.
+
+            대화:
+            \(ObsidianBatchCorpus.classificationTranscript(window))
+            """
+            let response: ObsidianBatchCandidateResponse = try await requestObsidianDecoded(
+                model: model, roomId: roomId,
+                system: "수학 학습 대화에서 복습할 문제 에피소드만 엄격히 선별한다. JSON만 반환한다.",
+                prompt: prompt, attachments: [], maxOutputTokens: 2_400,
+                structuredOutput: .batchCandidates
+            )
+            collected.append(contentsOf: response.candidates.filter {
+                first...last ~= $0.startTurn && first...last ~= $0.endTurn && $0.startTurn <= $0.endTurn
+            })
+        }
+        return ObsidianBatchCandidateMerger.merge(collected)
+    }
+
     public func detectProblemEpisode(
         candidate: ProblemEpisodeCandidate,
         model: AIModel,

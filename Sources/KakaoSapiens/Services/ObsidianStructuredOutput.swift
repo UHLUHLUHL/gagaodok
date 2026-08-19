@@ -4,6 +4,7 @@ public enum ObsidianStructuredOutput {
     case episodeScope
     case episodeChunk
     case preparedNote
+    case batchCandidates
 
     public static let maximumAttempts = 2
 
@@ -12,6 +13,7 @@ public enum ObsidianStructuredOutput {
         case .episodeScope: return "obsidian_episode_scope"
         case .episodeChunk: return "obsidian_episode_chunk"
         case .preparedNote: return "obsidian_prepared_note"
+        case .batchCandidates: return "obsidian_batch_candidates"
         }
     }
 
@@ -55,6 +57,19 @@ public enum ObsidianStructuredOutput {
                 "evidenceTurns": Self.array(Self.integer),
                 "coverage": Self.array(Self.coverage)
             ])
+        case .batchCandidates:
+            return Self.object([
+                "candidates": Self.array(Self.object([
+                    "startTurn": Self.integer,
+                    "endTurn": Self.integer,
+                    "relatedTurns": Self.array(Self.integer),
+                    "unrelatedTurns": Self.array(Self.integer),
+                    "title": Self.string,
+                    "score": ["type": "number", "minimum": 0, "maximum": 1],
+                    "confidence": ["type": "number", "minimum": 0, "maximum": 1],
+                    "reason": Self.string
+                ]))
+            ])
         }
     }
 
@@ -62,7 +77,9 @@ public enum ObsidianStructuredOutput {
         [
             "maxOutputTokens": maxOutputTokens,
             "responseMimeType": "application/json",
-            "responseSchema": schema,
+            // Gemini responseSchema는 JSON Schema 전체가 아니라 제한된 subset입니다.
+            // 특히 additionalProperties를 전송하면 요청 자체가 400으로 거절됩니다.
+            "responseSchema": Self.removingAdditionalProperties(from: schema),
             "thinkingConfig": ["thinkingLevel": "low"]
         ]
     }
@@ -98,5 +115,18 @@ public enum ObsidianStructuredOutput {
             "required": properties.keys.sorted(),
             "additionalProperties": false
         ]
+    }
+
+    private static func removingAdditionalProperties(from value: Any) -> Any {
+        if let dictionary = value as? [String: Any] {
+            return dictionary.reduce(into: [String: Any]()) { result, pair in
+                guard pair.key != "additionalProperties" else { return }
+                result[pair.key] = removingAdditionalProperties(from: pair.value)
+            }
+        }
+        if let array = value as? [Any] {
+            return array.map(removingAdditionalProperties(from:))
+        }
+        return value
     }
 }

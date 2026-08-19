@@ -93,6 +93,14 @@ public struct ProblemEpisodeCandidate {
         )
     }
 
+    /// 자연어/메뉴 배치 선별은 특정 말풍선이 아니라 현재 방의 마지막 완료 답변까지 사용합니다.
+    public static func buildEntireRoom(roomID: UUID, messages: [ChatMessage]) throws -> ProblemEpisodeCandidate {
+        guard let endpoint = messages.last(where: { $0.sender == .sapiens }) else {
+            throw BuildError.assistantResponseRequired
+        }
+        return try build(roomID: roomID, messages: messages, endingAt: endpoint.id)
+    }
+
     public func turns(in range: ClosedRange<Int>) -> [ProblemEpisodeTurn] {
         turns.filter { range.contains($0.number) }
     }

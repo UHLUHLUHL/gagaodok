@@ -407,13 +407,30 @@ struct ObsidianExportCoreTests {
             fail("Gemini generationConfig에 responseSchema가 필요합니다.")
         }
         check(geminiRequired.contains("coverage") && geminiRequired.contains("problem"), "노트의 필수 필드를 스키마가 강제해야 합니다.")
+        check(!containsKey("additionalProperties", in: geminiSchema),
+              "Gemini responseSchema는 지원하지 않는 additionalProperties를 중첩 객체에서도 제거해야 합니다.")
 
         let openAI = output.openAITextConfig
         check(openAI["verbosity"] as? String == "low", "정리 요청은 낮은 verbosity를 유지해야 합니다.")
         guard let format = openAI["format"] as? [String: Any] else { fail("OpenAI text.format이 필요합니다.") }
         check(format["type"] as? String == "json_schema", "OpenAI는 json_schema Structured Outputs를 사용해야 합니다.")
         check(format["strict"] as? Bool == true, "OpenAI schema는 strict 모드여야 합니다.")
-        check(format["schema"] as? [String: Any] != nil, "OpenAI에도 동일한 JSON Schema를 전달해야 합니다.")
+        guard let openAISchema = format["schema"] as? [String: Any] else {
+            fail("OpenAI에도 JSON Schema를 전달해야 합니다.")
+        }
+        check(containsKey("additionalProperties", in: openAISchema),
+              "OpenAI strict 스키마에는 additionalProperties: false를 유지해야 합니다.")
         check(ObsidianStructuredOutput.maximumAttempts == 2, "최초 요청과 제한 재시도 1회만 허용해야 합니다.")
+    }
+
+    static func containsKey(_ key: String, in value: Any) -> Bool {
+        if let dictionary = value as? [String: Any] {
+            if dictionary[key] != nil { return true }
+            return dictionary.values.contains { containsKey(key, in: $0) }
+        }
+        if let array = value as? [Any] {
+            return array.contains { containsKey(key, in: $0) }
+        }
+        return false
     }
 }

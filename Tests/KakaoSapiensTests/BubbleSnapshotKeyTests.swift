@@ -33,6 +33,13 @@ struct BubbleSnapshotKeyTests {
         precondition(BubbleSnapshotReusePolicy.shouldApply(key: first, lastAppliedKey: nil),
                      "A recreated row still needs to restore its cached image once")
 
+        precondition(BubbleViewportRenderingPolicy.shouldRenderRichContent(isInstantiated: true,
+                                                                           isInsidePreloadRegion: false),
+                     "An instantiated lazy row must keep rich rendering stable outside the preload region")
+        precondition(!BubbleViewportRenderingPolicy.shouldRenderRichContent(isInstantiated: false,
+                                                                            isInsidePreloadRegion: true),
+                     "Rows that LazyVStack has not instantiated must not create rendering work")
+
         var stability = BubbleHeightStabilityTracker()
         precondition(!stability.observe(72), "The first height sample is not settled yet")
         precondition(!stability.observe(96), "A late font or wrapped row must restart height settling")

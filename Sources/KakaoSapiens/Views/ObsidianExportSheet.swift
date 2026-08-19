@@ -343,7 +343,7 @@ public struct ObsidianExportSheet: View {
     }
 }
 
-private struct RenderedMarkdownBlock: View {
+struct RenderedMarkdownBlock: View {
     let content: String
     @State private var height: CGFloat = 32
     @State private var messageID = UUID()
