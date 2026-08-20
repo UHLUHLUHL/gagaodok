@@ -211,7 +211,7 @@ fun ChatRoomScreen(
     }
 
     fun openNewInk() {
-        InkDocument(roomId = room.id.toString()).also {
+        InkDocument(roomId = room.id.toString(), coordinateSpaceVersion = 1).also {
             app.inkStore.save(it)
             activeInkDocument = it
         }

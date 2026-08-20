@@ -55,7 +55,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,7 +70,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -87,9 +88,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.sapiens.gagaodok.model.InkDocument
 import com.sapiens.gagaodok.model.InkPoint
-import com.sapiens.gagaodok.model.InkStroke
+import com.sapiens.gagaodok.service.InkGestureIntent
+import com.sapiens.gagaodok.service.InkGestureRouter
 import com.sapiens.gagaodok.service.InkInputMode
-import com.sapiens.gagaodok.service.InkStrokeMath
+import com.sapiens.gagaodok.service.InkPoint2D
+import com.sapiens.gagaodok.service.InkViewportTransform
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -97,130 +100,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
-import kotlin.math.max
-
-/**
- * 필기 중에는 원본 벡터만 메모리에 두는 세션입니다. 화면 갱신은 move 이벤트당 한 번이고,
- * 파일 저장은 스트로크가 끝날 때만 호출자가 실행합니다.
- */
-private class InkSession(initial: InkDocument) {
-    var document by mutableStateOf(initial)
-        private set
-
-    private val activePoints = ArrayList<InkPoint>(256)
-    private val redoStrokes = ArrayDeque<InkStroke>()
-    private var activePointerId = MotionEvent.INVALID_POINTER_ID
-    var activeStyle = InkInputMode.StrokeStyle(Color.Black.value.toLong(), 4.5f, false)
-        private set
-    var activeRevision by mutableIntStateOf(0)
-        private set
-
-    val active: List<InkPoint> get() = activePoints
-    val canUndo: Boolean get() = document.strokes.isNotEmpty()
-    val canRedo: Boolean get() = redoStrokes.isNotEmpty()
-
-    fun onMotionEvent(
-        event: MotionEvent,
-        surfaceSize: IntSize,
-        colorArgb: Long,
-        penWidth: Float,
-        eraserWidth: Float,
-        eraser: Boolean
-    ): Boolean {
-        if (surfaceSize == IntSize.Zero) return false
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                activePointerId = event.getPointerId(0)
-                activeStyle = InkInputMode.resolveStrokeStyle(
-                    event.getToolType(0),
-                    event.buttonState,
-                    eraser,
-                    colorArgb,
-                    penWidth,
-                    eraserWidth
-                )
-                activePoints.clear()
-                add(event.getX(0), event.getY(0), event.getPressure(0), surfaceSize, event.eventTime)
-                return false
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                val index = event.findPointerIndex(activePointerId)
-                if (index < 0) return false
-                for (historyIndex in 0 until event.historySize) {
-                    add(
-                        event.getHistoricalX(index, historyIndex),
-                        event.getHistoricalY(index, historyIndex),
-                        event.getHistoricalPressure(index, historyIndex),
-                        surfaceSize,
-                        event.getHistoricalEventTime(historyIndex)
-                    )
-                }
-                add(event.getX(index), event.getY(index), event.getPressure(index), surfaceSize, event.eventTime)
-                return false
-            }
-
-            MotionEvent.ACTION_UP -> {
-                val index = event.findPointerIndex(activePointerId)
-                if (index >= 0) add(event.getX(index), event.getY(index), event.getPressure(index), surfaceSize, event.eventTime)
-                return finish()
-            }
-
-            MotionEvent.ACTION_CANCEL -> {
-                activePoints.clear()
-                activePointerId = MotionEvent.INVALID_POINTER_ID
-                activeRevision++
-            }
-        }
-        return false
-    }
-
-    fun undo(): Boolean {
-        val last = document.strokes.lastOrNull() ?: return false
-        redoStrokes.addLast(last)
-        document = document.copy(strokes = document.strokes.dropLast(1))
-        return true
-    }
-
-    fun redo(): Boolean {
-        val stroke = redoStrokes.removeLastOrNull() ?: return false
-        document = document.copy(strokes = document.strokes + stroke)
-        return true
-    }
-
-    fun clear(): Boolean {
-        if (document.strokes.isEmpty()) return false
-        redoStrokes.clear()
-        document = document.copy(strokes = emptyList())
-        return true
-    }
-
-    private fun add(x: Float, y: Float, pressure: Float, size: IntSize, timeMillis: Long) {
-        val point = InkStrokeMath.normalized(x, y, size.width.toFloat(), size.height.toFloat(), pressure, timeMillis)
-        if (activePoints.lastOrNull()?.let { InkStrokeMath.shouldKeep(it, point) } != false) {
-            activePoints += point
-            // Snapshot 상태를 크게 복사하지 않고 숫자만 바꿉니다. Canvas는 다음 프레임에서
-            // 같은 ArrayList를 읽습니다.
-            activeRevision++
-        }
-    }
-
-    private fun finish(): Boolean {
-        activePointerId = MotionEvent.INVALID_POINTER_ID
-        if (activePoints.isEmpty()) return false
-        val stroke = InkStroke(
-            colorArgb = activeStyle.colorArgb,
-            baseWidth = activeStyle.width,
-            eraser = activeStyle.eraser,
-            points = activePoints.toList()
-        )
-        document = document.copy(strokes = document.strokes + stroke)
-        redoStrokes.clear()
-        activePoints.clear()
-        activeRevision++
-        return true
-    }
-}
+import kotlin.math.hypot
 
 @Composable
 internal fun InkFloatingPanel(
@@ -230,7 +110,7 @@ internal fun InkFloatingPanel(
     onClose: () -> Unit
 ) {
     val density = LocalDensity.current.density
-    val session = remember(document.id) { InkSession(document) }
+    val session = remember(document.id) { InkCanvasState(document) }
     val minWidth = 300.dp
     val minHeight = 250.dp
 
@@ -900,7 +780,7 @@ private val InkSelected = Color(0xFFFFF4A8)
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun InkWritingSurface(
-    session: InkSession,
+    session: InkCanvasState,
     color: Color,
     penWidth: Float,
     eraserWidth: Float,
@@ -910,66 +790,211 @@ private fun InkWritingSurface(
     onStrokeFinished: () -> Unit
 ) {
     var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
+    var activeStylusPointerId by remember { mutableStateOf(MotionEvent.INVALID_POINTER_ID) }
+    var lastTouchCentroid by remember { mutableStateOf<InkPoint2D?>(null) }
+    var lastTouchSpan by remember { mutableFloatStateOf(0f) }
     // revision을 읽어야 ArrayList의 새 포인트가 한 프레임 안에 Canvas에 반영됩니다.
     val revision = session.activeRevision
+    val sizePoint = InkPoint2D(surfaceSize.width.toFloat(), surfaceSize.height.toFloat())
     Canvas(
         modifier
             .fillMaxWidth()
             .background(InkPaper)
-            .onSizeChanged { surfaceSize = it }
+            .onSizeChanged {
+                surfaceSize = it
+                session.onViewportSizeChanged(it.width.toFloat(), it.height.toFloat())
+            }
             .pointerInteropFilter { event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) onInteractionStarted()
-                val completed = session.onMotionEvent(
-                    event,
-                    surfaceSize,
-                    color.value.toLong(),
-                    penWidth,
-                    eraserWidth,
-                    eraser
-                )
-                if (completed) onStrokeFinished()
+                if (surfaceSize == IntSize.Zero) return@pointerInteropFilter true
+                val tools = IntArray(event.pointerCount) { event.getToolType(it) }
+                when (InkGestureRouter.classify(event.actionMasked, tools, event.pointerCount)) {
+                    InkGestureIntent.HOVER -> {
+                        val index = event.actionIndex.coerceIn(0, event.pointerCount - 1)
+                        val hoveringEraser = InkInputMode.shouldErase(
+                            event.getToolType(index),
+                            event.buttonState,
+                            eraser
+                        )
+                        if (event.actionMasked == MotionEvent.ACTION_HOVER_EXIT || !hoveringEraser) {
+                            session.clearHover()
+                        } else {
+                            session.updateHover(event.getX(index), event.getY(index), eraserWidth, sizePoint)
+                        }
+                    }
+                    InkGestureIntent.STROKE -> when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            onInteractionStarted()
+                            activeStylusPointerId = event.getPointerId(0)
+                            val style = InkInputMode.resolveStrokeStyle(
+                                event.getToolType(0), event.buttonState, eraser,
+                                color.value.toLong(), penWidth, eraserWidth
+                            )
+                            session.updateToolbarStyle(style)
+                            session.beginStroke(style)
+                            session.appendScreenPoint(event.x, event.y, event.pressure, sizePoint, event.eventTime)
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            val index = event.findPointerIndex(activeStylusPointerId)
+                            if (index >= 0) {
+                                for (historyIndex in 0 until event.historySize) {
+                                    session.appendScreenPoint(
+                                        event.getHistoricalX(index, historyIndex),
+                                        event.getHistoricalY(index, historyIndex),
+                                        event.getHistoricalPressure(index, historyIndex),
+                                        sizePoint,
+                                        event.getHistoricalEventTime(historyIndex)
+                                    )
+                                }
+                                session.appendScreenPoint(
+                                    event.getX(index), event.getY(index), event.getPressure(index),
+                                    sizePoint, event.eventTime
+                                )
+                            }
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            val index = event.findPointerIndex(activeStylusPointerId)
+                            if (index >= 0) {
+                                session.appendScreenPoint(
+                                    event.getX(index), event.getY(index), event.getPressure(index),
+                                    sizePoint, event.eventTime
+                                )
+                            }
+                            activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
+                            if (session.finishStroke()) onStrokeFinished()
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
+                            session.cancelInteraction()
+                        }
+                    }
+                    InkGestureIntent.PAN,
+                    InkGestureIntent.PAN_ZOOM -> {
+                        session.clearHover()
+                        val centroid = event.touchCentroid()
+                        val span = event.touchSpan(centroid)
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN,
+                            MotionEvent.ACTION_POINTER_DOWN -> {
+                                onInteractionStarted()
+                                lastTouchCentroid = centroid
+                                lastTouchSpan = span
+                            }
+                            MotionEvent.ACTION_MOVE -> {
+                                lastTouchCentroid?.let { previous ->
+                                    session.panBy(centroid.x - previous.x, centroid.y - previous.y)
+                                }
+                                if (event.pointerCount >= 2 && lastTouchSpan > 0f && span > 0f) {
+                                    session.zoomAt(span / lastTouchSpan, centroid, sizePoint)
+                                }
+                                lastTouchCentroid = centroid
+                                lastTouchSpan = span
+                            }
+                            MotionEvent.ACTION_UP,
+                            MotionEvent.ACTION_POINTER_UP -> {
+                                lastTouchCentroid = null
+                                lastTouchSpan = 0f
+                                onStrokeFinished()
+                            }
+                            MotionEvent.ACTION_CANCEL -> {
+                                lastTouchCentroid = null
+                                lastTouchSpan = 0f
+                                session.cancelInteraction()
+                            }
+                        }
+                    }
+                    InkGestureIntent.IGNORE -> if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                        session.cancelInteraction()
+                    }
+                }
                 true
             }
     ) {
         revision
-        session.document.strokes.forEach { drawStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, InkPaper) }
+        val viewport = session.document.viewport
+        session.document.strokes.forEach {
+            drawWorldStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, InkPaper, viewport)
+        }
         if (session.active.isNotEmpty()) {
             val style = session.activeStyle
-            drawStroke(session.active, style.colorArgb, style.width, style.eraser, InkPaper)
+            drawWorldStroke(session.active, style.colorArgb, style.width, style.eraser, InkPaper, viewport)
+        }
+        session.hover?.let { hover ->
+            val center = InkViewportTransform.worldToScreen(
+                InkPoint2D(hover.worldX, hover.worldY),
+                viewport,
+                InkPoint2D(size.width, size.height)
+            )
+            val radius = session.hoverScreenDiameter / 2f
+            drawCircle(Color(0x1A31343A), radius, Offset(center.x, center.y))
+            drawCircle(
+                color = Color(0x9931343A),
+                radius = radius,
+                center = Offset(center.x, center.y),
+                style = Stroke(width = 1.2.dp.toPx())
+            )
         }
     }
 }
 
-private fun DrawScope.drawStroke(
+private fun MotionEvent.touchCentroid(): InkPoint2D {
+    var x = 0f
+    var y = 0f
+    for (index in 0 until pointerCount) {
+        x += getX(index)
+        y += getY(index)
+    }
+    return InkPoint2D(x / pointerCount.coerceAtLeast(1), y / pointerCount.coerceAtLeast(1))
+}
+
+private fun MotionEvent.touchSpan(centroid: InkPoint2D): Float {
+    if (pointerCount < 2) return 0f
+    var distance = 0f
+    for (index in 0 until pointerCount) {
+        distance += hypot((getX(index) - centroid.x).toDouble(), (getY(index) - centroid.y).toDouble()).toFloat()
+    }
+    return distance / pointerCount
+}
+
+private fun DrawScope.drawWorldStroke(
     points: List<InkPoint>,
     colorArgb: Long,
-    baseWidthDp: Float,
+    baseWidth: Float,
     eraser: Boolean,
-    background: Color
+    background: Color,
+    viewport: com.sapiens.gagaodok.model.InkViewport
 ) {
     if (points.isEmpty()) return
     val color = if (eraser) background else Color(colorArgb.toULong())
-    val baseWidth = baseWidthDp * density
-    fun widthAt(index: Int): Float {
-        val pressure = points[index].pressure.coerceIn(0.15f, 1f)
-        return max(1.2f * density, baseWidth * (0.38f + pressure * 0.62f))
+    val strokeWidth = (baseWidth * viewport.zoom).coerceAtLeast(0.5f)
+    fun screen(point: InkPoint): Offset {
+        val transformed = InkViewportTransform.worldToScreen(
+            InkPoint2D(point.x, point.y),
+            viewport,
+            InkPoint2D(size.width, size.height)
+        )
+        return Offset(transformed.x, transformed.y)
     }
     if (points.size == 1) {
-        val point = points.single()
-        drawCircle(color, radius = widthAt(0) / 2f, center = Offset(point.x * size.width, point.y * size.height))
+        drawCircle(color, radius = strokeWidth / 2f, center = screen(points.single()))
         return
     }
-    for (index in 1 until points.size) {
-        val from = points[index - 1]
-        val to = points[index]
-        drawLine(
-            color = color,
-            start = Offset(from.x * size.width, from.y * size.height),
-            end = Offset(to.x * size.width, to.y * size.height),
-            strokeWidth = (widthAt(index - 1) + widthAt(index)) / 2f,
-            cap = StrokeCap.Round
-        )
+    val path = Path().apply {
+        val first = screen(points.first())
+        moveTo(first.x, first.y)
+        if (points.size == 2) {
+            val last = screen(points.last())
+            lineTo(last.x, last.y)
+        } else {
+            for (index in 1 until points.lastIndex) {
+                val current = screen(points[index])
+                val next = screen(points[index + 1])
+                quadraticTo(current.x, current.y, (current.x + next.x) / 2f, (current.y + next.y) / 2f)
+            }
+            val last = screen(points.last())
+            lineTo(last.x, last.y)
+        }
     }
+    drawPath(path, color, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
 }
 
 @Composable
@@ -1037,6 +1062,8 @@ internal fun InkHistoryDialog(
 @Composable
 private fun InkPreview(document: InkDocument, modifier: Modifier = Modifier) {
     Canvas(modifier.background(Color.White)) {
-        document.strokes.forEach { drawStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, Color.White) }
+        document.strokes.forEach {
+            drawWorldStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, Color.White, document.viewport)
+        }
     }
 }
