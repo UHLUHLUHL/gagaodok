@@ -17,7 +17,7 @@ class InkToolbarControlTest {
     }
 
     @Test
-    fun `지우개를 길게 누르면 펜 설정 대신 지우개 버튼이 확장된다`() {
+    fun `지우개를 한 번 누르면 펜 설정 대신 지우개 버튼이 확장된다`() {
         val expanded = InkToolbarControl.reduce(InkToolbarControl.PEN, InkToolbarEvent.OPEN_ERASER)
 
         assertEquals(InkToolbarControl.ERASER, expanded)

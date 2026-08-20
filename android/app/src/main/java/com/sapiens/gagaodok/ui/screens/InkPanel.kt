@@ -371,8 +371,10 @@ private fun InkToolbar(
                 selected = eraser,
                 expanded = expandedControl == InkToolbarControl.ERASER,
                 eraserWidth = eraserWidth,
-                onClick = { onControlEvent(InkToolbarEvent.CLOSE); onToggleEraser() },
-                onLongClick = { onControlEvent(InkToolbarEvent.OPEN_ERASER) },
+                onClick = {
+                    if (!eraser) onToggleEraser()
+                    onControlEvent(InkToolbarEvent.OPEN_ERASER)
+                },
                 onWidthChange = onEraserWidthChange,
                 onAdjustmentFinished = { onControlEvent(InkToolbarEvent.ADJUSTMENT_FINISHED) },
                 onClear = { onControlEvent(InkToolbarEvent.CLOSE); onClear() }
@@ -449,7 +451,6 @@ private fun EraserMorphControl(
     expanded: Boolean,
     eraserWidth: Float,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
     onWidthChange: (Float) -> Unit,
     onAdjustmentFinished: () -> Unit,
     onClear: () -> Unit
@@ -479,12 +480,7 @@ private fun EraserMorphControl(
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .combinedClickable(
-                            onClickLabel = "지우개",
-                            onLongClickLabel = "지우개 굵기 설정",
-                            onLongClick = onLongClick,
-                            onClick = onClick
-                        ),
+                        .clickable(onClickLabel = "지우개 및 굵기 설정", onClick = onClick),
                     contentAlignment = Alignment.Center
                 ) {
                     EraserGlyph(if (selected) InkText else InkSecondary)
@@ -534,10 +530,12 @@ private fun ElasticThicknessSlider(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val dragged by interactionSource.collectIsDraggedAsState()
-    val morphProgress by animateFloatAsState(
-        targetValue = if (dragged) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.42f, stiffness = 560f),
-        label = "굵기 슬라이더 탄성 변형"
+    var previousValue by remember { mutableFloatStateOf(value) }
+    var dragDirection by remember { mutableFloatStateOf(0f) }
+    val elasticDirection by animateFloatAsState(
+        targetValue = if (dragged) dragDirection else 0f,
+        animationSpec = spring(dampingRatio = 0.46f, stiffness = 520f),
+        label = "굵기 슬라이더 방향 탄성"
     )
     val valueScale by animateFloatAsState(
         targetValue = if (dragged) 1.1f else 1f,
@@ -547,34 +545,57 @@ private fun ElasticThicknessSlider(
 
     Row(modifier.height(38.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f).fillMaxHeight()) {
+            Canvas(Modifier.fillMaxSize()) {
+                val span = valueRange.endInclusive - valueRange.start
+                val progress = if (span == 0f) 0f else ((value - valueRange.start) / span).coerceIn(0f, 1f)
+                val geometry = ElasticTrackGeometry.calculate(
+                    width = size.width,
+                    height = size.height,
+                    progress = progress,
+                    directionalStretch = elasticDirection
+                )
+                val y = size.height / 2f
+                drawLine(
+                    color = InkDivider,
+                    start = Offset(geometry.startX, y),
+                    end = Offset(geometry.endX, y),
+                    strokeWidth = geometry.trackHeight,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = InkText,
+                    start = Offset(geometry.startX, y),
+                    end = Offset(geometry.activeTrackRight, y),
+                    strokeWidth = geometry.trackHeight,
+                    cap = StrokeCap.Round
+                )
+                drawRoundRect(
+                    color = InkText,
+                    topLeft = Offset(geometry.blobLeft, y - geometry.blobHeight / 2f),
+                    size = androidx.compose.ui.geometry.Size(geometry.blobWidth, geometry.blobHeight),
+                    cornerRadius = CornerRadius(geometry.blobHeight / 2f, geometry.blobHeight / 2f)
+                )
+            }
             Slider(
                 value = value,
-                onValueChange = onValueChange,
+                onValueChange = { next ->
+                    val delta = next - previousValue
+                    if (kotlin.math.abs(delta) > 0.0001f) dragDirection = if (delta > 0f) 1f else -1f
+                    previousValue = next
+                    onValueChange(next)
+                },
                 onValueChangeFinished = onValueChangeFinished,
                 valueRange = valueRange,
                 interactionSource = interactionSource,
                 colors = SliderDefaults.colors(
                     thumbColor = Color.Transparent,
-                    activeTrackColor = InkText,
-                    inactiveTrackColor = InkDivider
+                    activeTrackColor = Color.Transparent,
+                    inactiveTrackColor = Color.Transparent,
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent
                 ),
                 modifier = Modifier.fillMaxSize()
             )
-            Canvas(Modifier.fillMaxSize()) {
-                val span = valueRange.endInclusive - valueRange.start
-                val progress = if (span == 0f) 0f else ((value - valueRange.start) / span).coerceIn(0f, 1f)
-                val edgeInset = 10.dp.toPx()
-                val center = Offset(edgeInset + (size.width - edgeInset * 2f) * progress, size.height / 2f)
-                val morph = morphProgress.coerceIn(-0.25f, 1.15f)
-                val thumbWidth = (20f + morph * 12f).dp.toPx()
-                val thumbHeight = (20f - morph * 4f).dp.toPx()
-                drawRoundRect(
-                    color = InkText,
-                    topLeft = Offset(center.x - thumbWidth / 2f, center.y - thumbHeight / 2f),
-                    size = androidx.compose.ui.geometry.Size(thumbWidth, thumbHeight),
-                    cornerRadius = CornerRadius(thumbHeight / 2f, thumbHeight / 2f)
-                )
-            }
         }
         Text(
             String.format(Locale.US, "%.1f", value),
