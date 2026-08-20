@@ -335,7 +335,6 @@ fun ChatRoomScreen(
 
     }
     viewingImage?.let { ImageViewerDialog(it) { viewingImage = null } }
-    }
 }
 
 // MARK: - 목록에 놓을 줄
