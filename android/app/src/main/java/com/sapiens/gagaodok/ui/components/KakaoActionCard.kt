@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -38,6 +39,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import com.sapiens.gagaodok.ui.Metrics
@@ -49,6 +51,8 @@ data class KakaoMenuItem(
     val title: String,
     /// 지금 고른 것이면 오른쪽에 체크가 붙습니다. 모델·모드처럼 하나만 고르는 목록에 씁니다.
     val checked: Boolean = false,
+    val icon: ImageVector? = null,
+    val destructive: Boolean = false,
     val onClick: () -> Unit
 )
 
@@ -153,6 +157,7 @@ fun KakaoActionCard(
             Column(
                 Modifier
                     .padding(horizontal = Metrics.sheetSideMargin)
+                    .widthIn(max = 520.dp)
                     .fillMaxWidth()
                     .heightIn(max = maxCardHeight)
                     .background(colors.surface, RoundedCornerShape(Metrics.sheetCorner))
@@ -192,10 +197,19 @@ private fun MenuRow(item: KakaoMenuItem) {
             .padding(horizontal = Metrics.sheetRowInset),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        item.icon?.let {
+            Icon(
+                it,
+                contentDescription = null,
+                tint = if (item.destructive) Color(0xFFE54848) else colors.textSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+            androidx.compose.foundation.layout.Spacer(Modifier.size(14.dp))
+        }
         Text(
             item.title,
             style = KakaoText.sheetItem,
-            color = colors.textPrimary,
+            color = if (item.destructive) Color(0xFFE54848) else colors.textPrimary,
             modifier = Modifier.weight(1f)
         )
         if (item.checked) {

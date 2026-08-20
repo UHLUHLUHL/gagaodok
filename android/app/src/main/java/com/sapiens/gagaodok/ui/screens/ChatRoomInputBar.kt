@@ -2,9 +2,15 @@ package com.sapiens.gagaodok.ui.screens
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,8 +39,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -52,6 +56,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
@@ -61,6 +68,13 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.sapiens.gagaodok.model.AttachmentType
 import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.service.ImageBudget
@@ -138,31 +152,24 @@ internal fun ChatInputBar(
         ) {
             if (enhancedAttachments) {
                 Box {
-                    RoundInputButton(onClick = { attachmentMenuExpanded = true }, contentDescription = "첨부 메뉴") {
+                    RoundInputButton(
+                        onClick = { attachmentMenuExpanded = true },
+                        contentDescription = "첨부 메뉴"
+                    ) {
                         Icon(
                             Icons.Filled.Add, "첨부 메뉴",
                             tint = colors.textPrimary,
                             modifier = Modifier.size(Metrics.inputButtonGlyph + 2.dp)
                         )
                     }
-                    DropdownMenu(
-                        expanded = attachmentMenuExpanded,
-                        onDismissRequest = { attachmentMenuExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("사진", style = KakaoText.body) },
-                            leadingIcon = { Icon(Icons.Filled.Image, null, modifier = Modifier.size(20.dp)) },
-                            onClick = { attachmentMenuExpanded = false; onPickImage() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("파일", style = KakaoText.body) },
-                            leadingIcon = { Icon(Icons.Filled.Description, null, modifier = Modifier.size(20.dp)) },
-                            onClick = { attachmentMenuExpanded = false; onPickPdf() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("필기", style = KakaoText.body) },
-                            leadingIcon = { Icon(Icons.Outlined.Edit, null, modifier = Modifier.size(20.dp)) },
-                            onClick = { attachmentMenuExpanded = false; onOpenInk() }
+                    if (attachmentMenuExpanded) {
+                        AttachmentPopover(
+                            items = listOf(
+                                AttachmentPopoverItem("사진", Icons.Filled.Image, onPickImage),
+                                AttachmentPopoverItem("파일", Icons.Filled.Description, onPickPdf),
+                                AttachmentPopoverItem("필기", Icons.Outlined.Edit, onOpenInk)
+                            ),
+                            onDismiss = { attachmentMenuExpanded = false }
                         )
                     }
                 }
@@ -216,6 +223,87 @@ internal fun ChatInputBar(
                     // 꽉 찬 삼각형이라 같은 숫자면 더 커 보입니다. 한 단 줄여 눈으로 맞춥니다.
                     modifier = Modifier.size(Metrics.inputButtonGlyph - 2.dp)
                 )
+            }
+        }
+    }
+}
+
+private data class AttachmentPopoverItem(
+    val title: String,
+    val icon: ImageVector,
+    val action: () -> Unit
+)
+
+private class AboveAnchorPositionProvider(private val gapPx: Int) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val x = anchorBounds.left.coerceIn(gapPx, (windowSize.width - popupContentSize.width - gapPx).coerceAtLeast(gapPx))
+        val y = (anchorBounds.top - popupContentSize.height - gapPx).coerceAtLeast(gapPx)
+        return IntOffset(x, y)
+    }
+}
+
+@Composable
+private fun AttachmentPopover(items: List<AttachmentPopoverItem>, onDismiss: () -> Unit) {
+    val density = LocalDensity.current
+    val positionProvider = remember(density) {
+        AboveAnchorPositionProvider(with(density) { 8.dp.roundToPx() })
+    }
+    val visible = remember { MutableTransitionState(false).apply { targetState = true } }
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    LaunchedEffect(visible.currentState, visible.targetState) {
+        if (visible.isIdle && !visible.currentState) {
+            val action = pendingAction
+            pendingAction = null
+            onDismiss()
+            action?.invoke()
+        }
+    }
+    val close = { visible.targetState = false }
+
+    Popup(
+        popupPositionProvider = positionProvider,
+        onDismissRequest = close,
+        properties = PopupProperties(focusable = true)
+    ) {
+        AnimatedVisibility(
+            visibleState = visible,
+            enter = fadeIn(tween(120)) + scaleIn(tween(180), initialScale = 0.88f, transformOrigin = TransformOrigin(0f, 1f)),
+            exit = fadeOut(tween(100)) + scaleOut(tween(130), targetScale = 0.92f, transformOrigin = TransformOrigin(0f, 1f))
+        ) {
+            Column(
+                Modifier
+                    .width(168.dp)
+                    .shadow(9.dp, RoundedCornerShape(14.dp), clip = false)
+                    .background(Color.White, RoundedCornerShape(14.dp))
+                    .border(1.dp, Color(0xFFE0E3E7), RoundedCornerShape(14.dp))
+                    .padding(vertical = 6.dp)
+            ) {
+                items.forEach { item ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .clickable {
+                                pendingAction = item.action
+                                close()
+                            }
+                            .padding(horizontal = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(item.icon, null, tint = Color(0xFF66707A), modifier = Modifier.size(19.dp))
+                        Text(
+                            item.title,
+                            style = KakaoText.body,
+                            color = Color(0xFF191919),
+                            modifier = Modifier.padding(start = 12.dp)
+                        )
+                    }
+                }
             }
         }
     }

@@ -28,13 +28,13 @@ object InkAttachmentFactory {
             }
             document.strokes.forEach { stroke ->
                 if (stroke.points.isEmpty()) return@forEach
-                paint.color = if (stroke.eraser) Color.WHITE else stroke.colorArgb.toInt()
+                paint.color = if (stroke.eraser) Color.WHITE else InkColorCodec.toArgb(stroke.colorArgb)
                 val points = stroke.points
                 if (points.size == 1) {
                     val point = points.single()
                     paint.style = Paint.Style.FILL
                     paint.strokeWidth = 1f
-                    paint.color = if (stroke.eraser) Color.WHITE else stroke.colorArgb.toInt()
+                    paint.color = if (stroke.eraser) Color.WHITE else InkColorCodec.toArgb(stroke.colorArgb)
                     canvas.drawCircle(point.x * exportWidth, point.y * exportHeight, stroke.baseWidth, paint)
                     paint.style = Paint.Style.STROKE
                 } else {

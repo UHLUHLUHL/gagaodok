@@ -1,21 +1,30 @@
 package com.sapiens.gagaodok.ui.screens
 
+import android.graphics.Color as AndroidColor
 import android.view.MotionEvent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,16 +41,21 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -49,26 +63,31 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.window.Dialog
 import com.sapiens.gagaodok.model.InkDocument
 import com.sapiens.gagaodok.model.InkPoint
 import com.sapiens.gagaodok.model.InkStroke
+import com.sapiens.gagaodok.service.InkInputMode
 import com.sapiens.gagaodok.service.InkStrokeMath
 import com.sapiens.gagaodok.ui.components.Hairline
+import com.sapiens.gagaodok.ui.components.KakaoMenuItem
+import com.sapiens.gagaodok.ui.components.KakaoMenuSection
+import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.text.SimpleDateFormat
@@ -111,7 +130,7 @@ private class InkSession(initial: InkDocument) {
                 activePointerId = event.getPointerId(0)
                 activeColorArgb = colorArgb
                 activeWidth = width
-                activeEraser = eraser
+                activeEraser = InkInputMode.shouldErase(event.getToolType(0), event.buttonState, eraser)
                 activePoints.clear()
                 add(event.getX(0), event.getY(0), event.getPressure(0), surfaceSize, event.eventTime)
                 return false
@@ -202,8 +221,8 @@ internal fun InkFloatingPanel(
     onAttachToChat: (InkDocument) -> Unit,
     onClose: () -> Unit
 ) {
-    val colors = KakaoTheme.colors
-    val localDensity = LocalDensity.current
+    val density = LocalDensity.current.density
+    val menu = LocalKakaoMenu.current
     val session = remember(document.id) { InkSession(document) }
     val minWidth = 300.dp
     val minHeight = 250.dp
@@ -219,87 +238,132 @@ internal fun InkFloatingPanel(
         var panelHeight by rememberSaveable(document.id) { mutableFloatStateOf(defaultHeight.value) }
         var offsetX by rememberSaveable(document.id) { mutableFloatStateOf(8f) }
         var offsetY by rememberSaveable(document.id) { mutableFloatStateOf(72f) }
-        // Color는 Bundle 저장 대상이 아니므로 도구 선택만 composition 동안 유지합니다.
-        // 문서 원본은 InkStore가 저장하고 있어 회전/재시작 때도 필기 자체는 안전합니다.
         var color by remember(document.id) { mutableStateOf(Color(0xFF191919)) }
+        var customColorValue by rememberSaveable(document.id) {
+            mutableLongStateOf(Color(0xFF7757D6).value.toLong())
+        }
         var eraser by rememberSaveable(document.id) { mutableStateOf(false) }
         var penWidth by rememberSaveable(document.id) { mutableFloatStateOf(4.5f) }
+        var colorPickerVisible by remember(document.id) { mutableStateOf(false) }
 
-        LaunchedEffect(maximumWidth, maximumHeight) {
-            panelWidth = panelWidth.coerceIn(minOf(minWidth.value, maximumWidth.value), maximumWidth.value)
-            panelHeight = panelHeight.coerceIn(minOf(minHeight.value, maximumHeight.value), maximumHeight.value)
-            offsetX = offsetX.coerceIn(0f, max(0f, availableWidth - panelWidth))
-            offsetY = offsetY.coerceIn(0f, max(0f, availableHeight - panelHeight))
+        fun currentBounds() = InkPanelBounds(offsetX, offsetY, panelWidth, panelHeight)
+        fun applyBounds(next: InkPanelBounds) {
+            offsetX = next.x
+            offsetY = next.y
+            panelWidth = next.width
+            panelHeight = next.height
         }
 
-        val panelShape = RoundedCornerShape(14.dp)
+        LaunchedEffect(maximumWidth, maximumHeight) {
+            applyBounds(
+                currentBounds().constrained(
+                    availableWidth,
+                    availableHeight,
+                    minOf(minWidth.value, maximumWidth.value),
+                    minOf(minHeight.value, maximumHeight.value)
+                )
+            )
+        }
+
+        val panelShape = RoundedCornerShape(16.dp)
         Box(
             Modifier
                 .offset(x = offsetX.dp, y = offsetY.dp)
                 .width(panelWidth.dp)
                 .height(panelHeight.dp)
-                .padding(0.dp)
+                .background(InkPaper, panelShape)
+                .border(1.dp, InkBorder, panelShape)
                 .clip(panelShape)
-                .background(colors.surface)
-                .border(1.dp, colors.border, panelShape)
                 .align(Alignment.TopStart)
-                .padding(0.dp)
         ) {
-            // 위치 드래그는 헤더의 빈 영역에서만 받습니다. 도구 버튼과 충돌하지 않습니다.
             Column(Modifier.fillMaxSize()) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
-                        .background(colors.chatHeader),
+                        .height(52.dp)
+                        .background(InkPaper),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         Modifier
                             .weight(1f)
                             .fillMaxSize()
-                            .pointerInput(panelWidth, panelHeight) {
+                            .pointerInput(density, availableWidth, availableHeight) {
                                 detectDragGestures { change, drag ->
                                     change.consume()
-                                    offsetX = (offsetX + drag.x / localDensity.density).coerceIn(0f, max(0f, availableWidth - panelWidth))
-                                    offsetY = (offsetY + drag.y / localDensity.density).coerceIn(0f, max(0f, availableHeight - panelHeight))
+                                    applyBounds(currentBounds().movedBy(
+                                        drag.x / density,
+                                        drag.y / density,
+                                        availableWidth,
+                                        availableHeight
+                                    ))
                                 }
                             }
-                            .padding(start = 16.dp),
+                            .padding(start = 18.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        Column {
-                            Text(document.title, style = KakaoText.body, color = colors.onChatHeader, fontWeight = FontWeight.Bold)
-                            Text("필기", style = KakaoText.caption, color = colors.onChatHeaderDim)
-                        }
+                        Text(
+                            document.title,
+                            style = KakaoText.body,
+                            color = InkText,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     InkIconButton(
                         label = "채팅에 첨부",
                         enabled = session.document.strokes.isNotEmpty(),
                         onClick = { onAttachToChat(session.document) }
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, "채팅에 첨부", tint = colors.onChatHeader, modifier = Modifier.size(20.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            "채팅에 첨부",
+                            tint = if (session.document.strokes.isNotEmpty()) InkText else InkMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
-                    Box(Modifier.size(40.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Filled.Close, "필기 닫기", tint = colors.onChatHeader, modifier = Modifier.size(20.dp))
+                    Box(Modifier.size(42.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Close, "필기 닫기", tint = InkText, modifier = Modifier.size(20.dp))
                     }
+                    // 오른쪽 위 모서리의 넓은 리사이즈 영역과 닫기 버튼이 겹치지 않게 둡니다.
+                    Spacer(Modifier.width(44.dp))
                 }
+                Hairline(color = InkDivider)
 
                 InkToolbar(
                     penColor = color,
+                    customColor = Color(customColorValue.toULong()),
                     eraser = eraser,
                     penWidth = penWidth,
                     canUndo = session.canUndo,
                     canRedo = session.canRedo,
                     onChooseColor = { color = it; eraser = false },
-                    onUsePen = { eraser = false },
+                    onOpenColorPicker = { colorPickerVisible = true },
                     onToggleEraser = { eraser = !eraser },
                     onWidthChange = { penWidth = it },
                     onUndo = { if (session.undo()) onDocumentChanged(session.document) },
                     onRedo = { if (session.redo()) onDocumentChanged(session.document) },
-                    onClear = { if (session.clear()) onDocumentChanged(session.document) }
+                    onRequestClear = {
+                        menu.show(
+                            listOf(KakaoMenuSection(
+                                title = "현재 필기의 모든 선을 지울까요?",
+                                items = listOf(
+                                    KakaoMenuItem(
+                                        title = "전체 지우기",
+                                        icon = Icons.Filled.DeleteSweep,
+                                        destructive = true
+                                    ) {
+                                        menu.dismiss()
+                                        if (session.clear()) onDocumentChanged(session.document)
+                                    },
+                                    KakaoMenuItem("취소") { menu.dismiss() }
+                                )
+                            ))
+                        )
+                    }
                 )
-                Hairline()
+                Hairline(color = InkDivider)
                 InkWritingSurface(
                     session = session,
                     color = color,
@@ -308,119 +372,349 @@ internal fun InkFloatingPanel(
                     modifier = Modifier.weight(1f),
                     onStrokeFinished = { onDocumentChanged(session.document) }
                 )
-                Hairline()
-                Row(
-                    Modifier.fillMaxWidth().height(30.dp).background(colors.surface).padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("벡터 원본 · 자동 저장", style = KakaoText.caption, color = colors.textTertiary)
-                    Spacer(Modifier.weight(1f))
-                    Text("모서리를 끌어 크기 조절", style = KakaoText.caption, color = colors.textTertiary)
+            }
+
+            InkResizeCorner.entries.forEach { corner ->
+                InkResizeHandle(corner, density) { dx, dy ->
+                    applyBounds(
+                        currentBounds().resized(
+                            corner,
+                            dx,
+                            dy,
+                            availableWidth,
+                            availableHeight,
+                            minOf(minWidth.value, maximumWidth.value),
+                            minOf(minHeight.value, maximumHeight.value)
+                        )
+                    )
                 }
             }
-
-            // 모서리만 32dp 손잡이로 잡습니다. 패널 전체의 펜 입력과 절대 겹치지 않습니다.
-            Box(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(32.dp)
-                    .pointerInput(maximumWidth, maximumHeight, panelWidth, panelHeight) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            panelWidth = (panelWidth + drag.x / localDensity.density)
-                                .coerceIn(minOf(minWidth.value, maximumWidth.value), maximumWidth.value)
-                            panelHeight = (panelHeight + drag.y / localDensity.density)
-                                .coerceIn(minOf(minHeight.value, maximumHeight.value), maximumHeight.value)
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                ResizeGrip(colors.textTertiary)
-            }
         }
-    }
-}
 
-@Composable
-private fun ResizeGrip(color: Color) {
-    Canvas(Modifier.size(18.dp)) {
-        val spacing = size.width / 4f
-        repeat(3) { index ->
-            val inset = spacing * (index + 1)
-            drawLine(
-                color = color,
-                start = Offset(size.width - inset, size.height),
-                end = Offset(size.width, size.height - inset),
-                strokeWidth = 1.35f * density,
-                cap = StrokeCap.Round
+        if (colorPickerVisible) {
+            InkColorPicker(
+                initial = Color(customColorValue.toULong()),
+                onDismiss = { colorPickerVisible = false },
+                onRegister = {
+                    customColorValue = it.value.toLong()
+                    color = it
+                    eraser = false
+                    colorPickerVisible = false
+                }
             )
         }
     }
 }
 
 @Composable
+private fun BoxScope.InkResizeHandle(
+    corner: InkResizeCorner,
+    density: Float,
+    onResize: (Float, Float) -> Unit
+) {
+    val currentResize by rememberUpdatedState(onResize)
+    val alignment = when (corner) {
+        InkResizeCorner.TOP_LEFT -> Alignment.TopStart
+        InkResizeCorner.TOP_RIGHT -> Alignment.TopEnd
+        InkResizeCorner.BOTTOM_LEFT -> Alignment.BottomStart
+        InkResizeCorner.BOTTOM_RIGHT -> Alignment.BottomEnd
+    }
+    Box(
+        Modifier
+            .align(alignment)
+            .size(44.dp)
+            .pointerInput(corner, density) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    currentResize(drag.x / density, drag.y / density)
+                }
+            }
+    )
+}
+
+@Composable
 private fun InkToolbar(
     penColor: Color,
+    customColor: Color,
     eraser: Boolean,
     penWidth: Float,
     canUndo: Boolean,
     canRedo: Boolean,
     onChooseColor: (Color) -> Unit,
-    onUsePen: () -> Unit,
+    onOpenColorPicker: () -> Unit,
     onToggleEraser: () -> Unit,
     onWidthChange: (Float) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onClear: () -> Unit
+    onRequestClear: () -> Unit
 ) {
-    val colors = KakaoTheme.colors
-    val palette = listOf(Color(0xFF191919), Color(0xFF2E6BF6), Color(0xFFE54343))
-    Row(
-        Modifier.fillMaxWidth().height(44.dp).background(colors.surface).padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    val palette = listOf(Color(0xFF191919), Color(0xFF2E6BF6), Color(0xFFE54343), customColor)
+    Column(Modifier.fillMaxWidth().background(InkPaper)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            palette.forEach { swatch ->
+                InkColorSwatch(
+                    color = swatch,
+                    selected = !eraser && swatch.value == penColor.value,
+                    onClick = { onChooseColor(swatch) }
+                )
+            }
+            InkIconButton("사용자 색상 등록", onClick = onOpenColorPicker) {
+                Icon(Icons.Filled.Palette, "사용자 색상 등록", tint = InkSecondary, modifier = Modifier.size(20.dp))
+            }
+            InkThicknessControl(
+                penColor = penColor,
+                eraser = eraser,
+                penWidth = penWidth,
+                onWidthChange = onWidthChange
+            )
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.width(1.dp).height(22.dp).background(InkDivider))
+            Spacer(Modifier.width(4.dp))
+            InkIconButton(
+                label = "지우개",
+                selected = eraser,
+                onClick = onToggleEraser,
+                onLongClick = onRequestClear
+            ) {
+                EraserGlyph(if (eraser) InkText else InkSecondary)
+            }
+            InkIconButton("되돌리기", enabled = canUndo, onClick = onUndo) {
+                Icon(Icons.AutoMirrored.Filled.Undo, "되돌리기", tint = if (canUndo) InkText else InkMuted, modifier = Modifier.size(20.dp))
+            }
+            InkIconButton("다시 실행", enabled = canRedo, onClick = onRedo) {
+                Icon(Icons.AutoMirrored.Filled.Redo, "다시 실행", tint = if (canRedo) InkText else InkMuted, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun InkThicknessControl(
+    penColor: Color,
+    eraser: Boolean,
+    penWidth: Float,
+    onWidthChange: (Float) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val animatedWidth by animateDpAsState(
+        targetValue = if (expanded) 224.dp else 38.dp,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 520f),
+        label = "필기 굵기 조절 너비"
+    )
+    Box(
+        Modifier
+            .width(animatedWidth)
+            .height(38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (expanded) Color(0xFFF3F4F6) else Color.Transparent)
+            .border(if (expanded) 1.dp else 0.dp, InkBorder, RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.CenterStart
     ) {
-        palette.forEach { swatch ->
-            Box(
-                Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .clickable { onChooseColor(swatch) },
-                contentAlignment = Alignment.Center
-            ) {
+        Crossfade(targetState = expanded, animationSpec = tween(120), label = "필기 굵기 조절 내용") { isExpanded ->
+            if (!isExpanded) {
                 Box(
-                    Modifier.size(16.dp).background(swatch, CircleShape)
-                        .then(if (!eraser && swatch == penColor) Modifier.border(2.dp, colors.bubbleMine, CircleShape) else Modifier)
+                    Modifier.fillMaxSize().clickable { expanded = true },
+                    contentAlignment = Alignment.Center
+                ) {
+                    ThicknessGlyph(penWidth, if (eraser) InkSecondary else penColor)
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxSize().padding(start = 5.dp, end = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(30.dp).clip(CircleShape).clickable { expanded = false },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ThicknessGlyph(penWidth, if (eraser) InkSecondary else penColor)
+                    }
+                    Slider(
+                        value = penWidth,
+                        onValueChange = onWidthChange,
+                        valueRange = 1.5f..14f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = InkText,
+                            activeTrackColor = InkText,
+                            inactiveTrackColor = InkDivider
+                        ),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        String.format(Locale.US, "%.1f", penWidth),
+                        style = KakaoText.caption,
+                        color = InkSecondary,
+                        modifier = Modifier.width(29.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThicknessGlyph(width: Float, color: Color) {
+    Canvas(Modifier.size(21.dp)) {
+        drawLine(
+            color = color,
+            start = Offset(2.dp.toPx(), center.y),
+            end = Offset(size.width - 2.dp.toPx(), center.y),
+            strokeWidth = width.coerceIn(1.5f, 7f) * density * 0.58f,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+@Composable
+private fun InkColorSwatch(color: Color, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.size(34.dp).clip(CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .size(19.dp)
+                .background(color, CircleShape)
+                .border(if (selected) 3.dp else 1.dp, if (selected) InkAccent else InkBorder, CircleShape)
+        )
+    }
+}
+
+@Composable
+private fun EraserGlyph(color: Color) {
+    Canvas(Modifier.size(21.dp)) {
+        rotate(-38f, pivot = center) {
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(size.width * 0.27f, size.height * 0.10f),
+                size = androidx.compose.ui.geometry.Size(size.width * 0.46f, size.height * 0.80f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
+                style = Stroke(width = 2.dp.toPx())
+            )
+            drawLine(
+                color,
+                Offset(size.width * 0.27f, size.height * 0.59f),
+                Offset(size.width * 0.73f, size.height * 0.59f),
+                2.dp.toPx()
+            )
+        }
+    }
+}
+
+@Composable
+private fun InkColorPicker(initial: Color, onDismiss: () -> Unit, onRegister: (Color) -> Unit) {
+    val initialHsv = remember(initial.value) {
+        FloatArray(3).also { AndroidColor.colorToHSV(initial.toArgb(), it) }
+    }
+    var hue by remember(initial.value) { mutableFloatStateOf(initialHsv[0]) }
+    var saturation by remember(initial.value) { mutableFloatStateOf(initialHsv[1]) }
+    var brightness by remember(initial.value) { mutableFloatStateOf(initialHsv[2]) }
+    val selected = Color(AndroidColor.HSVToColor(floatArrayOf(hue, saturation, brightness)))
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .widthIn(max = 410.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .background(InkPaper)
+                .padding(20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("사용자 색상", style = KakaoText.roomTitle, color = InkText, modifier = Modifier.weight(1f))
+                Box(Modifier.size(34.dp).background(selected, CircleShape).border(1.dp, InkBorder, CircleShape))
+            }
+            Spacer(Modifier.height(18.dp))
+            ColorPickerSlider(
+                label = "색상",
+                value = hue,
+                range = 0f..360f,
+                brush = Brush.horizontalGradient(
+                    listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)
+                ),
+                thumbColor = selected,
+                onValueChange = { hue = it }
+            )
+            ColorPickerSlider(
+                label = "채도",
+                value = saturation,
+                range = 0f..1f,
+                brush = Brush.horizontalGradient(
+                    listOf(
+                        Color(AndroidColor.HSVToColor(floatArrayOf(hue, 0f, brightness))),
+                        Color(AndroidColor.HSVToColor(floatArrayOf(hue, 1f, brightness)))
+                    )
+                ),
+                thumbColor = selected,
+                onValueChange = { saturation = it }
+            )
+            ColorPickerSlider(
+                label = "밝기",
+                value = brightness,
+                range = 0f..1f,
+                brush = Brush.horizontalGradient(
+                    listOf(Color.Black, Color(AndroidColor.HSVToColor(floatArrayOf(hue, saturation, 1f))))
+                ),
+                thumbColor = selected,
+                onValueChange = { brightness = it }
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Text(
+                    "취소",
+                    style = KakaoText.body,
+                    color = InkSecondary,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onDismiss).padding(horizontal = 18.dp, vertical = 10.dp)
+                )
+                Text(
+                    "등록",
+                    style = KakaoText.body,
+                    color = InkText,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .padding(start = 6.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(InkAccent)
+                        .clickable { onRegister(selected) }
+                        .padding(horizontal = 18.dp, vertical = 10.dp)
                 )
             }
         }
-        InkIconButton("펜", selected = !eraser, onClick = onUsePen) {
-            Icon(Icons.Filled.Edit, "펜", tint = colors.textPrimary, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun ColorPickerSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    brush: Brush,
+    thumbColor: Color,
+    onValueChange: (Float) -> Unit
+) {
+    Text(label, style = KakaoText.caption, color = InkSecondary)
+    Box(Modifier.fillMaxWidth().height(42.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 17.dp)) {
+            drawRoundRect(brush = brush, cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2f))
         }
-        InkIconButton("지우개", selected = eraser, onClick = onToggleEraser) {
-            Icon(Icons.Filled.DeleteSweep, "지우개", tint = colors.textPrimary, modifier = Modifier.size(20.dp))
-        }
-        InkIconButton("되돌리기", enabled = canUndo, onClick = onUndo) {
-            Icon(Icons.AutoMirrored.Filled.Undo, "되돌리기", tint = if (canUndo) colors.textPrimary else colors.textTertiary, modifier = Modifier.size(20.dp))
-        }
-        InkIconButton("다시 실행", enabled = canRedo, onClick = onRedo) {
-            Icon(Icons.AutoMirrored.Filled.Redo, "다시 실행", tint = if (canRedo) colors.textPrimary else colors.textTertiary, modifier = Modifier.size(20.dp))
-        }
-        InkIconButton("전체 지우기", onClick = onClear) {
-            Icon(Icons.Filled.DeleteSweep, "전체 지우기", tint = colors.textPrimary, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.weight(1f))
-        listOf(3.2f, 4.5f, 6.5f).forEach { width ->
-            Box(
-                Modifier.size(28.dp).clip(CircleShape).clickable { onWidthChange(width) },
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    Modifier.size((width * 2.2f).dp).background(colors.textPrimary, CircleShape)
-                        .then(if (width == penWidth) Modifier.border(1.dp, colors.bubbleMine, CircleShape) else Modifier)
-                )
-            }
-        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = thumbColor,
+                activeTrackColor = Color.Transparent,
+                inactiveTrackColor = Color.Transparent
+            )
+        )
     }
 }
 
@@ -430,18 +724,33 @@ private fun InkIconButton(
     enabled: Boolean = true,
     selected: Boolean = false,
     onClick: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
-    val colors = KakaoTheme.colors
     Box(
         Modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (selected) colors.bubbleMine.copy(alpha = 0.6f) else Color.Transparent)
-            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick),
+            .size(38.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) InkSelected else Color.Transparent)
+            .combinedClickable(
+                enabled = enabled,
+                onClickLabel = label,
+                onLongClickLabel = if (onLongClick != null) "전체 지우기" else null,
+                onLongClick = onLongClick,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) { content() }
 }
+
+private val InkPaper = Color.White
+private val InkText = Color(0xFF191919)
+private val InkSecondary = Color(0xFF69707A)
+private val InkMuted = Color(0xFFB7BBC1)
+private val InkBorder = Color(0xFFD9DDE3)
+private val InkDivider = Color(0xFFE9EBEF)
+private val InkAccent = Color(0xFFFEE500)
+private val InkSelected = Color(0xFFFFF4A8)
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -453,14 +762,13 @@ private fun InkWritingSurface(
     modifier: Modifier = Modifier,
     onStrokeFinished: () -> Unit
 ) {
-    val colors = KakaoTheme.colors
     var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
     // revision을 읽어야 ArrayList의 새 포인트가 한 프레임 안에 Canvas에 반영됩니다.
     val revision = session.activeRevision
     Canvas(
         modifier
             .fillMaxWidth()
-            .background(colors.surface)
+            .background(InkPaper)
             .onSizeChanged { surfaceSize = it }
             .pointerInteropFilter { event ->
                 val completed = session.onMotionEvent(event, surfaceSize, color.value.toLong(), penWidth, eraser)
@@ -469,8 +777,8 @@ private fun InkWritingSurface(
             }
     ) {
         revision
-        session.document.strokes.forEach { drawStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, colors.surface) }
-        if (session.active.isNotEmpty()) drawStroke(session.active, color.value.toLong(), penWidth, eraser, colors.surface)
+        session.document.strokes.forEach { drawStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, InkPaper) }
+        if (session.active.isNotEmpty()) drawStroke(session.active, color.value.toLong(), penWidth, eraser, InkPaper)
     }
 }
 
