@@ -9,6 +9,12 @@ internal enum class InkResizeCorner {
     BOTTOM_RIGHT
 }
 
+internal enum class InkResizeEdge {
+    LEFT,
+    RIGHT,
+    BOTTOM
+}
+
 internal data class InkPanelBounds(
     val x: Float,
     val y: Float,
@@ -68,5 +74,33 @@ internal data class InkPanelBounds(
         }
         return InkPanelBounds(nextLeft, nextTop, nextRight - nextLeft, nextBottom - nextTop)
             .constrained(maxWidth, maxHeight, minWidth, minHeight)
+    }
+
+    fun resized(
+        edge: InkResizeEdge,
+        dx: Float,
+        dy: Float,
+        maxWidth: Float,
+        maxHeight: Float,
+        minWidth: Float,
+        minHeight: Float
+    ): InkPanelBounds {
+        val right = x + width
+        val bottom = y + height
+        val next = when (edge) {
+            InkResizeEdge.LEFT -> {
+                val left = (x + dx).coerceIn(0f, right - minWidth.coerceAtMost(right))
+                InkPanelBounds(left, y, right - left, height)
+            }
+            InkResizeEdge.RIGHT -> {
+                val nextRight = (right + dx).coerceIn(x + minWidth.coerceAtMost(maxWidth - x), maxWidth)
+                InkPanelBounds(x, y, nextRight - x, height)
+            }
+            InkResizeEdge.BOTTOM -> {
+                val nextBottom = (bottom + dy).coerceIn(y + minHeight.coerceAtMost(maxHeight - y), maxHeight)
+                InkPanelBounds(x, y, width, nextBottom - y)
+            }
+        }
+        return next.constrained(maxWidth, maxHeight, minWidth, minHeight)
     }
 }

@@ -72,6 +72,16 @@ class InkCanvasStateTest {
         assertEquals(36f, state.hoverScreenDiameter, 0.001f)
     }
 
+    @Test
+    fun `지우개가 화면에 닿아 스트로크를 시작해도 크기 커서를 유지한다`() {
+        val state = InkCanvasState(emptyDocument())
+        state.updateHover(300f, 200f, 18f, InkPoint2D(600f, 400f))
+
+        state.beginStroke(InkInputMode.StrokeStyle(0xFF191919, 18f, true))
+
+        assertEquals(18f, state.hover!!.worldDiameter, 0.001f)
+    }
+
     private fun emptyDocument() = InkDocument(roomId = "room", coordinateSpaceVersion = 1)
 
     private fun documentWithStroke() = emptyDocument().copy(

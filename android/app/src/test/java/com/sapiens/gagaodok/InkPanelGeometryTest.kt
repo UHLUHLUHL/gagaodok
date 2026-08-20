@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import com.sapiens.gagaodok.service.InkColorCodec
 import com.sapiens.gagaodok.ui.screens.InkPanelBounds
 import com.sapiens.gagaodok.ui.screens.InkResizeCorner
+import com.sapiens.gagaodok.ui.screens.InkResizeEdge
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -49,6 +50,24 @@ class InkPanelGeometryTest {
         assertEquals(
             InkPanelBounds(300f, 190f, 300f, 250f),
             initial.resized(InkResizeCorner.TOP_LEFT, 500f, 500f, 800f, 700f, 300f, 250f)
+        )
+    }
+
+    @Test
+    fun `좌우와 아래 변만 잡아도 해당 방향으로 크기를 바꾼다`() {
+        val initial = InkPanelBounds(x = 100f, y = 80f, width = 500f, height = 360f)
+
+        assertEquals(
+            InkPanelBounds(70f, 80f, 530f, 360f),
+            initial.resized(InkResizeEdge.LEFT, -30f, 0f, 800f, 700f, 300f, 250f)
+        )
+        assertEquals(
+            InkPanelBounds(100f, 80f, 540f, 360f),
+            initial.resized(InkResizeEdge.RIGHT, 40f, 0f, 800f, 700f, 300f, 250f)
+        )
+        assertEquals(
+            InkPanelBounds(100f, 80f, 500f, 410f),
+            initial.resized(InkResizeEdge.BOTTOM, 0f, 50f, 800f, 700f, 300f, 250f)
         )
     }
 }

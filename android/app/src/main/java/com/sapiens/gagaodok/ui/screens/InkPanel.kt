@@ -68,13 +68,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -88,10 +92,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.sapiens.gagaodok.model.InkDocument
 import com.sapiens.gagaodok.model.InkPoint
+import com.sapiens.gagaodok.service.InkDefaults
 import com.sapiens.gagaodok.service.InkGestureIntent
 import com.sapiens.gagaodok.service.InkGestureRouter
 import com.sapiens.gagaodok.service.InkInputMode
 import com.sapiens.gagaodok.service.InkPoint2D
+import com.sapiens.gagaodok.service.InkRenderMode
+import com.sapiens.gagaodok.service.InkRenderPolicy
 import com.sapiens.gagaodok.service.InkViewportTransform
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -130,8 +137,8 @@ internal fun InkFloatingPanel(
             mutableLongStateOf(Color(0xFF7757D6).value.toLong())
         }
         var eraser by rememberSaveable(document.id) { mutableStateOf(false) }
-        var penWidth by rememberSaveable(document.id) { mutableFloatStateOf(4.5f) }
-        var eraserWidth by rememberSaveable(document.id) { mutableFloatStateOf(18f) }
+        var penWidth by rememberSaveable(document.id) { mutableFloatStateOf(InkDefaults.DEFAULT_PEN_WIDTH_DP) }
+        var eraserWidth by rememberSaveable(document.id) { mutableFloatStateOf(InkDefaults.DEFAULT_ERASER_WIDTH_DP) }
         var toolbarControl by rememberSaveable(document.id) { mutableStateOf(InkToolbarControl.NONE) }
         var colorPickerVisible by remember(document.id) { mutableStateOf(false) }
 
@@ -271,6 +278,21 @@ internal fun InkFloatingPanel(
                     )
                 }
             }
+            InkResizeEdge.entries.forEach { edge ->
+                InkEdgeResizeHandle(edge, density) { dx, dy ->
+                    applyBounds(
+                        currentBounds().resized(
+                            edge,
+                            dx,
+                            dy,
+                            availableWidth,
+                            availableHeight,
+                            minOf(minWidth.value, maximumWidth.value),
+                            minOf(minHeight.value, maximumHeight.value)
+                        )
+                    )
+                }
+            }
         }
 
         if (colorPickerVisible) {
@@ -286,6 +308,40 @@ internal fun InkFloatingPanel(
             )
         }
     }
+}
+
+@Composable
+private fun BoxScope.InkEdgeResizeHandle(
+    edge: InkResizeEdge,
+    density: Float,
+    onResize: (Float, Float) -> Unit
+) {
+    val currentResize by rememberUpdatedState(onResize)
+    val modifier = when (edge) {
+        InkResizeEdge.LEFT -> Modifier
+            .align(Alignment.CenterStart)
+            .width(24.dp)
+            .fillMaxHeight()
+            .padding(vertical = 44.dp)
+        InkResizeEdge.RIGHT -> Modifier
+            .align(Alignment.CenterEnd)
+            .width(24.dp)
+            .fillMaxHeight()
+            .padding(vertical = 44.dp)
+        InkResizeEdge.BOTTOM -> Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .height(24.dp)
+            .padding(horizontal = 44.dp)
+    }
+    Box(
+        modifier.pointerInput(edge, density) {
+            detectDragGestures { change, drag ->
+                change.consume()
+                currentResize(drag.x / density, drag.y / density)
+            }
+        }
+    )
 }
 
 @Composable
@@ -840,7 +896,10 @@ private fun InkWritingSurface(
                         if (event.actionMasked == MotionEvent.ACTION_HOVER_EXIT || !hoveringEraser) {
                             session.clearHover()
                         } else {
-                            session.updateHover(event.getX(index), event.getY(index), eraserWidth * density, sizePoint)
+                            session.updateHover(
+                                event.getX(index), event.getY(index),
+                                InkDefaults.widthInWorldPixels(eraserWidth, density), sizePoint
+                            )
                         }
                     }
                     InkGestureIntent.STROKE -> when (event.actionMasked) {
@@ -849,11 +908,18 @@ private fun InkWritingSurface(
                             activeStylusPointerId = event.getPointerId(0)
                             val style = InkInputMode.resolveStrokeStyle(
                                 event.getToolType(0), event.buttonState, eraser,
-                                color.value.toLong(), penWidth * density, eraserWidth * density
+                                color.value.toLong(),
+                                InkDefaults.widthInWorldPixels(penWidth, density),
+                                InkDefaults.widthInWorldPixels(eraserWidth, density)
                             )
                             session.updateToolbarStyle(style)
                             session.beginStroke(style)
                             session.appendScreenPoint(event.x, event.y, event.pressure, sizePoint, event.eventTime)
+                            if (style.eraser) {
+                                session.updateHover(event.x, event.y, style.width, sizePoint)
+                            } else {
+                                session.clearHover()
+                            }
                         }
                         MotionEvent.ACTION_MOVE -> {
                             val index = event.findPointerIndex(activeStylusPointerId)
@@ -871,6 +937,11 @@ private fun InkWritingSurface(
                                     event.getX(index), event.getY(index), event.getPressure(index),
                                     sizePoint, event.eventTime
                                 )
+                                if (session.activeStyle.eraser) {
+                                    session.updateHover(
+                                        event.getX(index), event.getY(index), session.activeStyle.width, sizePoint
+                                    )
+                                }
                             }
                         }
                         MotionEvent.ACTION_UP -> {
@@ -880,6 +951,11 @@ private fun InkWritingSurface(
                                     event.getX(index), event.getY(index), event.getPressure(index),
                                     sizePoint, event.eventTime
                                 )
+                                if (session.activeStyle.eraser) {
+                                    session.updateHover(
+                                        event.getX(index), event.getY(index), session.activeStyle.width, sizePoint
+                                    )
+                                }
                             }
                             activeStylusPointerId = MotionEvent.INVALID_POINTER_ID
                             if (session.finishStroke()) onStrokeFinished()
@@ -933,12 +1009,16 @@ private fun InkWritingSurface(
     ) {
         revision
         val viewport = session.document.viewport
-        session.document.strokes.forEach {
-            drawWorldStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, InkPaper, viewport)
-        }
-        if (session.active.isNotEmpty()) {
-            val style = session.activeStyle
-            drawWorldStroke(session.active, style.colorArgb, style.width, style.eraser, InkPaper, viewport)
+        clipRect {
+            drawContext.canvas.saveLayer(Rect(0f, 0f, size.width, size.height), Paint())
+            session.document.strokes.forEach {
+                drawWorldStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, viewport)
+            }
+            if (session.active.isNotEmpty()) {
+                val style = session.activeStyle
+                drawWorldStroke(session.active, style.colorArgb, style.width, style.eraser, viewport)
+            }
+            drawContext.canvas.restore()
         }
         session.hover?.let { hover ->
             val center = InkViewportTransform.worldToScreen(
@@ -982,11 +1062,12 @@ private fun DrawScope.drawWorldStroke(
     colorArgb: Long,
     baseWidth: Float,
     eraser: Boolean,
-    background: Color,
     viewport: com.sapiens.gagaodok.model.InkViewport
 ) {
     if (points.isEmpty()) return
-    val color = if (eraser) background else Color(colorArgb.toULong())
+    val renderMode = InkRenderPolicy.mode(eraser)
+    val color = if (renderMode == InkRenderMode.CLEAR) Color.Transparent else Color(colorArgb.toULong())
+    val blendMode = if (renderMode == InkRenderMode.CLEAR) BlendMode.Clear else BlendMode.SrcOver
     val strokeWidth = (baseWidth * viewport.zoom).coerceAtLeast(0.5f)
     fun screen(point: InkPoint): Offset {
         val transformed = InkViewportTransform.worldToScreen(
@@ -997,7 +1078,12 @@ private fun DrawScope.drawWorldStroke(
         return Offset(transformed.x, transformed.y)
     }
     if (points.size == 1) {
-        drawCircle(color, radius = strokeWidth / 2f, center = screen(points.single()))
+        drawCircle(
+            color,
+            radius = strokeWidth / 2f,
+            center = screen(points.single()),
+            blendMode = blendMode
+        )
         return
     }
     val path = Path().apply {
@@ -1016,7 +1102,12 @@ private fun DrawScope.drawWorldStroke(
             lineTo(last.x, last.y)
         }
     }
-    drawPath(path, color, style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    drawPath(
+        path,
+        color,
+        style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        blendMode = blendMode
+    )
 }
 
 @Composable
@@ -1084,8 +1175,12 @@ internal fun InkHistoryDialog(
 @Composable
 private fun InkPreview(document: InkDocument, modifier: Modifier = Modifier) {
     Canvas(modifier.background(Color.White)) {
-        document.strokes.forEach {
-            drawWorldStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, Color.White, document.viewport)
+        clipRect {
+            drawContext.canvas.saveLayer(Rect(0f, 0f, size.width, size.height), Paint())
+            document.strokes.forEach {
+                drawWorldStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, document.viewport)
+            }
+            drawContext.canvas.restore()
         }
     }
 }

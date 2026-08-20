@@ -24,7 +24,7 @@ internal class InkCanvasState(initial: InkDocument) {
         private set
     private val activePoints = ArrayList<InkPoint>(256)
     private val redoStrokes = ArrayDeque<InkStroke>()
-    private var toolbarStyle = InkInputMode.StrokeStyle(0xFF191919, 4.5f, false)
+    private var toolbarStyle = InkInputMode.StrokeStyle(0xFF191919, 3f, false)
     var activeStyle: InkInputMode.StrokeStyle = toolbarStyle
         private set
     var activeRevision by mutableIntStateOf(0)
@@ -45,7 +45,6 @@ internal class InkCanvasState(initial: InkDocument) {
     fun beginStroke(style: InkInputMode.StrokeStyle) {
         activeStyle = style
         activePoints.clear()
-        hover = null
         activeRevision++
     }
 
