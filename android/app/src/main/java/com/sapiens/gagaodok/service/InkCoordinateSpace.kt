@@ -10,13 +10,17 @@ object InkCoordinateSpace {
     const val LEGACY_HEIGHT = 1200f
     private val defaultViewport = InkViewport()
 
-    fun toCurrent(document: InkDocument): InkDocument {
+    fun toCurrent(document: InkDocument, legacyDensity: Float = 1f): InkDocument {
+        val safeDensity = legacyDensity.takeIf { it.isFinite() && it > 0f } ?: 1f
         val migrated = if (document.coordinateSpaceVersion < CURRENT_VERSION) {
             document.copy(
                 coordinateSpaceVersion = CURRENT_VERSION,
                 viewport = defaultViewport,
                 strokes = document.strokes.map { stroke ->
-                    stroke.copy(points = stroke.points.map(::legacyPointToWorld))
+                    stroke.copy(
+                        baseWidth = stroke.baseWidth * safeDensity,
+                        points = stroke.points.map(::legacyPointToWorld)
+                    )
                 }
             )
         } else {

@@ -37,6 +37,18 @@ class InkCoordinateSpaceTest {
     }
 
     @Test
+    fun `레거시 dp 굵기는 기기 밀도를 적용해 월드 픽셀 굵기로 변환한다`() {
+        val old = document(
+            version = 0,
+            points = listOf(InkPoint(0.5f, 0.25f, 0.5f, 1L))
+        )
+
+        val migrated = InkCoordinateSpace.toCurrent(old, legacyDensity = 2f)
+
+        assertEquals(9f, migrated.strokes.single().baseWidth, 0.001f)
+    }
+
+    @Test
     fun `비정상 뷰포트와 좌표는 유한한 기본값으로 복구한다`() {
         val broken = document(
             version = 1,

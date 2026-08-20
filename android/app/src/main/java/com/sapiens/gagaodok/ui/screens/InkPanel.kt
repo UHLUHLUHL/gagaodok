@@ -810,6 +810,7 @@ private fun InkWritingSurface(
     onInteractionStarted: () -> Unit,
     onStrokeFinished: () -> Unit
 ) {
+    val density = LocalDensity.current.density
     var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
     var activeStylusPointerId by remember { mutableStateOf(MotionEvent.INVALID_POINTER_ID) }
     var lastTouchCentroid by remember { mutableStateOf<InkPoint2D?>(null) }
@@ -839,7 +840,7 @@ private fun InkWritingSurface(
                         if (event.actionMasked == MotionEvent.ACTION_HOVER_EXIT || !hoveringEraser) {
                             session.clearHover()
                         } else {
-                            session.updateHover(event.getX(index), event.getY(index), eraserWidth, sizePoint)
+                            session.updateHover(event.getX(index), event.getY(index), eraserWidth * density, sizePoint)
                         }
                     }
                     InkGestureIntent.STROKE -> when (event.actionMasked) {
@@ -848,7 +849,7 @@ private fun InkWritingSurface(
                             activeStylusPointerId = event.getPointerId(0)
                             val style = InkInputMode.resolveStrokeStyle(
                                 event.getToolType(0), event.buttonState, eraser,
-                                color.value.toLong(), penWidth, eraserWidth
+                                color.value.toLong(), penWidth * density, eraserWidth * density
                             )
                             session.updateToolbarStyle(style)
                             session.beginStroke(style)

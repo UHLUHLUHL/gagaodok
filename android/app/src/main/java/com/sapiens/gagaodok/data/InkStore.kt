@@ -26,6 +26,7 @@ import kotlinx.coroutines.runBlocking
 class InkStore private constructor(context: Context) {
     private val directory = File(context.applicationContext.filesDir, "KakaoSapiens").apply { mkdirs() }
     private val file = File(directory, "ink_documents.json")
+    private val legacyDensity = context.resources.displayMetrics.density
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
 
@@ -72,7 +73,7 @@ class InkStore private constructor(context: Context) {
             emptyList()
         } else {
             Codec.json.decodeFromString<List<InkDocument>>(file.readText()).map { document ->
-                InkCoordinateSpace.toCurrent(document).also { migrated ->
+                InkCoordinateSpace.toCurrent(document, legacyDensity).also { migrated ->
                     if (migrated != document) migrationNeeded = true
                 }
             }
