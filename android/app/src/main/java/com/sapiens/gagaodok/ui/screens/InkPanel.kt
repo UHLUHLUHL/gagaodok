@@ -107,9 +107,8 @@ private class InkSession(initial: InkDocument) {
     private val activePoints = ArrayList<InkPoint>(256)
     private val redoStrokes = ArrayDeque<InkStroke>()
     private var activePointerId = MotionEvent.INVALID_POINTER_ID
-    private var activeColorArgb = Color.Black.value.toLong()
-    private var activeWidth = 4.5f
-    private var activeEraser = false
+    var activeStyle = InkInputMode.StrokeStyle(Color.Black.value.toLong(), 4.5f, false)
+        private set
     var activeRevision by mutableIntStateOf(0)
         private set
 
@@ -128,9 +127,13 @@ private class InkSession(initial: InkDocument) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 activePointerId = event.getPointerId(0)
-                activeColorArgb = colorArgb
-                activeWidth = width
-                activeEraser = InkInputMode.shouldErase(event.getToolType(0), event.buttonState, eraser)
+                activeStyle = InkInputMode.resolveStrokeStyle(
+                    event.getToolType(0),
+                    event.buttonState,
+                    eraser,
+                    colorArgb,
+                    width
+                )
                 activePoints.clear()
                 add(event.getX(0), event.getY(0), event.getPressure(0), surfaceSize, event.eventTime)
                 return false
@@ -201,9 +204,9 @@ private class InkSession(initial: InkDocument) {
         activePointerId = MotionEvent.INVALID_POINTER_ID
         if (activePoints.isEmpty()) return false
         val stroke = InkStroke(
-            colorArgb = activeColorArgb,
-            baseWidth = activeWidth,
-            eraser = activeEraser,
+            colorArgb = activeStyle.colorArgb,
+            baseWidth = activeStyle.width,
+            eraser = activeStyle.eraser,
             points = activePoints.toList()
         )
         document = document.copy(strokes = document.strokes + stroke)
@@ -778,7 +781,10 @@ private fun InkWritingSurface(
     ) {
         revision
         session.document.strokes.forEach { drawStroke(it.points, it.colorArgb, it.baseWidth, it.eraser, InkPaper) }
-        if (session.active.isNotEmpty()) drawStroke(session.active, color.value.toLong(), penWidth, eraser, InkPaper)
+        if (session.active.isNotEmpty()) {
+            val style = session.activeStyle
+            drawStroke(session.active, style.colorArgb, style.width, style.eraser, InkPaper)
+        }
     }
 }
 
