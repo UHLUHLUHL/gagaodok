@@ -88,7 +88,8 @@ class MainActivity : ComponentActivity() {
                         RootScreen(
                             onOpenRoom = { navController.navigate("room/$it") },
                             onOpenProfile = { navController.navigate("profile/$it") },
-                            onEditPersona = { navController.navigate("persona/$it") }
+                            onEditPersona = { navController.navigate("persona/$it") },
+                            tabletLayout = BuildConfig.TABLET_MENTOR
                         )
                     }
                     composable(
@@ -100,7 +101,8 @@ class MainActivity : ComponentActivity() {
                             roomId = roomId,
                             onBack = { navController.popBackStack() },
                             onEditPersona = { navController.navigate("persona/$roomId") },
-                            onOpenProfile = { navController.navigate("profile/$roomId") }
+                            onOpenProfile = { navController.navigate("profile/$roomId") },
+                            tabletLayout = BuildConfig.TABLET_MENTOR
                         )
                     }
                     // 프로필은 옆이 아니라 **아래에서 올라옵니다.** 옆에서 밀려 들어오면

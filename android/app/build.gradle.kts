@@ -9,8 +9,25 @@ android {
     namespace = "com.sapiens.gagaodok"
     compileSdk = 35
 
+    flavorDimensions += "device"
+    productFlavors {
+        create("phone") {
+            dimension = "device"
+            applicationId = "com.sapiens.gagaodok"
+            versionCode = 7
+            versionName = "1.6-phone"
+            buildConfigField("boolean", "TABLET_MENTOR", "false")
+        }
+        create("tabletMentor") {
+            dimension = "device"
+            applicationId = "com.sapiens.gagaodok.tabletmentor"
+            versionCode = 1
+            versionName = "2.0-tablet-mentor"
+            buildConfigField("boolean", "TABLET_MENTOR", "true")
+        }
+    }
+
     defaultConfig {
-        applicationId = "com.sapiens.gagaodok"
         // 적응형 아이콘이 26부터입니다. 실사용 기기 대부분을 덮습니다.
         minSdk = 26
         targetSdk = 35
@@ -20,8 +37,6 @@ android {
         // 1.4: 입력창 곡률, 프로필 화면, 메뉴 카드 통일, 말투 편집 손질, 요금 장부의 빈 곳을 메웠습니다.
         // 1.5: 챗봇 모드 사고량을 낮추고, 사진을 타일 기준으로 줄여 보냅니다.
         // 1.6: 안 쓸 캐시를 안 만들고, 키 저장소가 안 죽고, 요약 지침이 모드를 따릅니다.
-        versionCode = 7
-        versionName = "1.6"
     }
 
     buildTypes {
@@ -53,6 +68,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

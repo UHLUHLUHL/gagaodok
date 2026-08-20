@@ -20,12 +20,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,7 +78,8 @@ fun ChatRoomScreen(
     roomId: UUID,
     onBack: () -> Unit,
     onEditPersona: () -> Unit,
-    onOpenProfile: () -> Unit
+    onOpenProfile: () -> Unit,
+    tabletLayout: Boolean = false
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as GagaodokApp
@@ -203,9 +206,15 @@ fun ChatRoomScreen(
         ).toTypedArray()
     )
 
+    Box(
+        Modifier.fillMaxSize().background(colors.chatBackground),
+        contentAlignment = Alignment.Center
+    ) {
     Column(
         Modifier
-            .fillMaxSize()
+            .fillMaxHeight()
+            .fillMaxWidth()
+            .then(if (tabletLayout) Modifier.widthIn(max = 1_080.dp) else Modifier)
             .background(colors.chatBackground)
             // 키보드가 올라온 만큼 화면 전체를 밀어 올립니다. 이게 없으면 입력창이
             // 키보드 아래에 깔립니다. 안드로이드 채팅 앱에서 가장 흔한 실패 지점입니다.
@@ -324,7 +333,9 @@ fun ChatRoomScreen(
         }
     }
 
+    }
     viewingImage?.let { ImageViewerDialog(it) { viewingImage = null } }
+    }
 }
 
 // MARK: - 목록에 놓을 줄

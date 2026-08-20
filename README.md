@@ -9,7 +9,8 @@
 | | 파일 | 요구 사항 |
 |---|---|---|
 | 🖥️ Mac | [KakaoSapiens.zip](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/KakaoSapiens.zip) | macOS 14(Sonoma)+, 인텔·애플실리콘 모두 |
-| 📱 Android | [gagaodok.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/gagaodok.apk) | Android 8.0+ |
+| 📱 Android 폰 | [gagaodok-phone.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/gagaodok-phone.apk) | Android 8.0+ |
+| 📱 Android 태블릿 멘토 | [gagaodok-tablet-mentor.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/gagaodok-tablet-mentor.apk) | Android 8.0+ |
 
 설치·초기 설정은 [설치방법.txt](설치방법.txt)를 보십시오. 둘 다 API 키(Gemini)를
 직접 발급받아 등록해야 동작합니다 — 앱에 내장된 키는 없습니다.
@@ -25,6 +26,11 @@
 두 플랫폼이 같은 기능을 유지해야 하는 구조입니다. 어디에 무엇이 있는지는
 [ARCHITECTURE.md](ARCHITECTURE.md)를, 왜 지금 구조로 나눴는지는
 [REFACTOR.md](REFACTOR.md)를 보십시오.
+
+Android는 `phone`과 `tabletMentor` product flavor로 배포합니다. 폰판은 기존
+`com.sapiens.gagaodok` 패키지와 모바일 하단 탭 UI를 유지하고, 태블릿 멘토판은
+`com.sapiens.gagaodok.tabletmentor`로 별도 설치되며 좌측 내비게이션과 중앙 대화
+폭을 사용합니다. 두 판은 같은 멘토 프롬프트·대화 저장 형식·그래프 계산기를 공유합니다.
 
 ## 같이 볼 문서
 

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,17 +59,15 @@ enum class RootTab(val label: String) {
 fun RootScreen(
     onOpenRoom: (java.util.UUID) -> Unit,
     onOpenProfile: (java.util.UUID) -> Unit,
-    onEditPersona: (java.util.UUID) -> Unit
+    onEditPersona: (java.util.UUID) -> Unit,
+    tabletLayout: Boolean = false
 ) {
     var tab by rememberSaveable { mutableStateOf(RootTab.CHATS) }
     val colors = KakaoTheme.colors
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(colors.surface)
-    ) {
-        Box(Modifier.weight(1f)) {
+    @Composable
+    fun content() {
+        Box(Modifier.fillMaxSize()) {
             // 탭을 바꿀 때 옆으로 미는 대신 부드럽게 겹칩니다.
             // 옆으로 밀면 뒤로가기로 돌아가는 화면처럼 읽혀서, 나란한 탭에는 맞지 않습니다.
             AnimatedContent(
@@ -94,8 +93,34 @@ fun RootScreen(
             }
         }
 
-        Hairline()
-        BottomTabBar(selected = tab, onSelect = { tab = it })
+    }
+
+    if (tabletLayout) {
+        Row(Modifier.fillMaxSize().background(colors.surface)) {
+            TabletSideBar(selected = tab, onSelect = { tab = it })
+            Hairline(Modifier.width(1.dp))
+            Box(Modifier.weight(1f)) { content() }
+        }
+    } else {
+        Column(Modifier.fillMaxSize().background(colors.surface)) {
+            Box(Modifier.weight(1f)) { content() }
+            Hairline()
+            BottomTabBar(selected = tab, onSelect = { tab = it })
+        }
+    }
+}
+
+@Composable
+private fun TabletSideBar(selected: RootTab, onSelect: (RootTab) -> Unit) {
+    val colors = KakaoTheme.colors
+    Column(
+        Modifier.width(88.dp).fillMaxSize().background(colors.tabBar),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
+    ) {
+        RootTab.entries.forEach { entry ->
+            TabItem(tab = entry, selected = selected == entry, onSelect = { onSelect(entry) })
+        }
     }
 }
 
