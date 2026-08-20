@@ -91,9 +91,6 @@ import com.sapiens.gagaodok.model.InkStroke
 import com.sapiens.gagaodok.service.InkInputMode
 import com.sapiens.gagaodok.service.InkStrokeMath
 import com.sapiens.gagaodok.ui.components.Hairline
-import com.sapiens.gagaodok.ui.components.KakaoMenuItem
-import com.sapiens.gagaodok.ui.components.KakaoMenuSection
-import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.text.SimpleDateFormat
@@ -233,7 +230,6 @@ internal fun InkFloatingPanel(
     onClose: () -> Unit
 ) {
     val density = LocalDensity.current.density
-    val menu = LocalKakaoMenu.current
     val session = remember(document.id) { InkSession(document) }
     val minWidth = 300.dp
     val minHeight = 250.dp
@@ -256,7 +252,12 @@ internal fun InkFloatingPanel(
         var eraser by rememberSaveable(document.id) { mutableStateOf(false) }
         var penWidth by rememberSaveable(document.id) { mutableFloatStateOf(4.5f) }
         var eraserWidth by rememberSaveable(document.id) { mutableFloatStateOf(18f) }
+        var toolbarControl by rememberSaveable(document.id) { mutableStateOf(InkToolbarControl.NONE) }
         var colorPickerVisible by remember(document.id) { mutableStateOf(false) }
+
+        fun dispatchToolbar(event: InkToolbarEvent) {
+            toolbarControl = InkToolbarControl.reduce(toolbarControl, event)
+        }
 
         fun currentBounds() = InkPanelBounds(offsetX, offsetY, panelWidth, panelHeight)
         fun applyBounds(next: InkPanelBounds) {
@@ -348,42 +349,19 @@ internal fun InkFloatingPanel(
                     customColor = Color(customColorValue.toULong()),
                     eraser = eraser,
                     penWidth = penWidth,
+                    eraserWidth = eraserWidth,
+                    expandedControl = toolbarControl,
+                    onControlEvent = ::dispatchToolbar,
                     canUndo = session.canUndo,
                     canRedo = session.canRedo,
                     onChooseColor = { color = it; eraser = false },
                     onOpenColorPicker = { colorPickerVisible = true },
                     onToggleEraser = { eraser = !eraser },
                     onWidthChange = { penWidth = it },
+                    onEraserWidthChange = { eraserWidth = it },
                     onUndo = { if (session.undo()) onDocumentChanged(session.document) },
                     onRedo = { if (session.redo()) onDocumentChanged(session.document) },
-                    onRequestClear = {
-                        menu.show(
-                            listOf(
-                                KakaoMenuSection(
-                                    title = "지우개 굵기",
-                                    content = {
-                                        EraserWidthMenuControl(
-                                            width = eraserWidth,
-                                            onWidthChange = { eraserWidth = it }
-                                        )
-                                    }
-                                ),
-                                KakaoMenuSection(
-                                    items = listOf(
-                                        KakaoMenuItem(
-                                            title = "전체 지우기",
-                                            icon = Icons.Filled.DeleteSweep,
-                                            destructive = true
-                                        ) {
-                                            menu.dismiss()
-                                            if (session.clear()) onDocumentChanged(session.document)
-                                        },
-                                        KakaoMenuItem("닫기") { menu.dismiss() }
-                                    )
-                                )
-                            )
-                        )
-                    }
+                    onClear = { if (session.clear()) onDocumentChanged(session.document) }
                 )
                 Hairline(color = InkDivider)
                 InkWritingSurface(
@@ -393,6 +371,7 @@ internal fun InkFloatingPanel(
                     eraserWidth = eraserWidth,
                     eraser = eraser,
                     modifier = Modifier.weight(1f),
+                    onInteractionStarted = { dispatchToolbar(InkToolbarEvent.CLOSE) },
                     onStrokeFinished = { onDocumentChanged(session.document) }
                 )
             }
@@ -461,15 +440,19 @@ private fun InkToolbar(
     customColor: Color,
     eraser: Boolean,
     penWidth: Float,
+    eraserWidth: Float,
+    expandedControl: InkToolbarControl,
+    onControlEvent: (InkToolbarEvent) -> Unit,
     canUndo: Boolean,
     canRedo: Boolean,
     onChooseColor: (Color) -> Unit,
     onOpenColorPicker: () -> Unit,
     onToggleEraser: () -> Unit,
     onWidthChange: (Float) -> Unit,
+    onEraserWidthChange: (Float) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onRequestClear: () -> Unit
+    onClear: () -> Unit
 ) {
     val palette = listOf(Color(0xFF191919), Color(0xFF2E6BF6), Color(0xFFE54343), customColor)
     Column(Modifier.fillMaxWidth().background(InkPaper)) {
@@ -486,33 +469,38 @@ private fun InkToolbar(
                 InkColorSwatch(
                     color = swatch,
                     selected = !eraser && swatch.value == penColor.value,
-                    onClick = { onChooseColor(swatch) }
+                    onClick = { onControlEvent(InkToolbarEvent.CLOSE); onChooseColor(swatch) }
                 )
             }
-            InkIconButton("사용자 색상 등록", onClick = onOpenColorPicker) {
+            InkIconButton("사용자 색상 등록", onClick = { onControlEvent(InkToolbarEvent.CLOSE); onOpenColorPicker() }) {
                 Icon(Icons.Filled.Palette, "사용자 색상 등록", tint = InkSecondary, modifier = Modifier.size(20.dp))
             }
             InkThicknessControl(
                 penColor = penColor,
                 eraser = eraser,
                 penWidth = penWidth,
+                expanded = expandedControl == InkToolbarControl.PEN,
+                onExpand = { onControlEvent(InkToolbarEvent.OPEN_PEN) },
+                onCollapse = { onControlEvent(InkToolbarEvent.ADJUSTMENT_FINISHED) },
                 onWidthChange = onWidthChange
             )
             Spacer(Modifier.width(6.dp))
             Box(Modifier.width(1.dp).height(22.dp).background(InkDivider))
             Spacer(Modifier.width(4.dp))
-            InkIconButton(
-                label = "지우개",
+            EraserMorphControl(
                 selected = eraser,
-                onClick = onToggleEraser,
-                onLongClick = onRequestClear
-            ) {
-                EraserGlyph(if (eraser) InkText else InkSecondary)
-            }
-            InkIconButton("되돌리기", enabled = canUndo, onClick = onUndo) {
+                expanded = expandedControl == InkToolbarControl.ERASER,
+                eraserWidth = eraserWidth,
+                onClick = { onControlEvent(InkToolbarEvent.CLOSE); onToggleEraser() },
+                onLongClick = { onControlEvent(InkToolbarEvent.OPEN_ERASER) },
+                onWidthChange = onEraserWidthChange,
+                onAdjustmentFinished = { onControlEvent(InkToolbarEvent.ADJUSTMENT_FINISHED) },
+                onClear = { onControlEvent(InkToolbarEvent.CLOSE); onClear() }
+            )
+            InkIconButton("되돌리기", enabled = canUndo, onClick = { onControlEvent(InkToolbarEvent.CLOSE); onUndo() }) {
                 Icon(Icons.AutoMirrored.Filled.Undo, "되돌리기", tint = if (canUndo) InkText else InkMuted, modifier = Modifier.size(20.dp))
             }
-            InkIconButton("다시 실행", enabled = canRedo, onClick = onRedo) {
+            InkIconButton("다시 실행", enabled = canRedo, onClick = { onControlEvent(InkToolbarEvent.CLOSE); onRedo() }) {
                 Icon(Icons.AutoMirrored.Filled.Redo, "다시 실행", tint = if (canRedo) InkText else InkMuted, modifier = Modifier.size(20.dp))
             }
         }
@@ -524,12 +512,14 @@ private fun InkThicknessControl(
     penColor: Color,
     eraser: Boolean,
     penWidth: Float,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    onCollapse: () -> Unit,
     onWidthChange: (Float) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
     val animatedWidth by animateDpAsState(
         targetValue = if (expanded) 224.dp else 38.dp,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = 520f),
+        animationSpec = spring(dampingRatio = 0.54f, stiffness = 430f),
         label = "필기 굵기 조절 너비"
     )
     Box(
@@ -544,7 +534,7 @@ private fun InkThicknessControl(
         Crossfade(targetState = expanded, animationSpec = tween(120), label = "필기 굵기 조절 내용") { isExpanded ->
             if (!isExpanded) {
                 Box(
-                    Modifier.fillMaxSize().clickable { expanded = true },
+                    Modifier.fillMaxSize().clickable(onClick = onExpand),
                     contentAlignment = Alignment.Center
                 ) {
                     ThicknessGlyph(penWidth, if (eraser) InkSecondary else penColor)
@@ -555,7 +545,7 @@ private fun InkThicknessControl(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
-                        Modifier.size(30.dp).clip(CircleShape).clickable { expanded = false },
+                        Modifier.size(30.dp).clip(CircleShape).clickable(onClick = onCollapse),
                         contentAlignment = Alignment.Center
                     ) {
                         ThicknessGlyph(penWidth, if (eraser) InkSecondary else penColor)
@@ -563,6 +553,7 @@ private fun InkThicknessControl(
                     ElasticThicknessSlider(
                         value = penWidth,
                         onValueChange = onWidthChange,
+                        onValueChangeFinished = onCollapse,
                         valueRange = 1.5f..14f,
                         modifier = Modifier.weight(1f)
                     )
@@ -573,27 +564,83 @@ private fun InkThicknessControl(
 }
 
 @Composable
-private fun EraserWidthMenuControl(
-    width: Float,
-    onWidthChange: (Float) -> Unit
+private fun EraserMorphControl(
+    selected: Boolean,
+    expanded: Boolean,
+    eraserWidth: Float,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onWidthChange: (Float) -> Unit,
+    onAdjustmentFinished: () -> Unit,
+    onClear: () -> Unit
 ) {
-    Column(
+    val animatedWidth by animateDpAsState(
+        targetValue = if (expanded) 286.dp else 38.dp,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = 390f),
+        label = "지우개 설정 탄성 너비"
+    )
+    val animatedCorner by animateDpAsState(
+        targetValue = if (expanded) 19.dp else 10.dp,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 460f),
+        label = "지우개 설정 모서리"
+    )
+    val shape = RoundedCornerShape(animatedCorner)
+    Box(
         Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .width(animatedWidth)
+            .height(38.dp)
+            .clip(shape)
+            .background(if (expanded) Color(0xFFF3F4F6) else if (selected) InkSelected else Color.Transparent)
+            .border(if (expanded) 1.dp else 0.dp, InkBorder, shape),
+        contentAlignment = Alignment.CenterStart
     ) {
-        ElasticThicknessSlider(
-            value = width,
-            onValueChange = onWidthChange,
-            valueRange = 6f..48f,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Text(
-            "S펜 측면 버튼에도 같은 굵기가 적용됩니다.",
-            style = KakaoText.caption,
-            color = InkSecondary,
-            modifier = Modifier.padding(start = 8.dp, bottom = 6.dp)
-        )
+        Crossfade(targetState = expanded, animationSpec = tween(110), label = "지우개 설정 내용") { isExpanded ->
+            if (!isExpanded) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .combinedClickable(
+                            onClickLabel = "지우개",
+                            onLongClickLabel = "지우개 굵기 설정",
+                            onLongClick = onLongClick,
+                            onClick = onClick
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EraserGlyph(if (selected) InkText else InkSecondary)
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(30.dp).clip(CircleShape).clickable(onClick = onAdjustmentFinished),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        EraserGlyph(InkText)
+                    }
+                    ElasticThicknessSlider(
+                        value = eraserWidth,
+                        onValueChange = onWidthChange,
+                        onValueChangeFinished = onAdjustmentFinished,
+                        valueRange = 6f..48f,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        Modifier.size(34.dp).clip(CircleShape).clickable(onClick = onClear),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.DeleteSweep,
+                            "전체 지우기",
+                            tint = Color(0xFFE54848),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -601,15 +648,16 @@ private fun EraserWidthMenuControl(
 private fun ElasticThicknessSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val dragged by interactionSource.collectIsDraggedAsState()
-    val blobProgress by animateFloatAsState(
+    val morphProgress by animateFloatAsState(
         targetValue = if (dragged) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.56f, stiffness = 620f),
-        label = "굵기 슬라이더 메타볼"
+        animationSpec = spring(dampingRatio = 0.42f, stiffness = 560f),
+        label = "굵기 슬라이더 탄성 변형"
     )
     val valueScale by animateFloatAsState(
         targetValue = if (dragged) 1.1f else 1f,
@@ -619,37 +667,34 @@ private fun ElasticThicknessSlider(
 
     Row(modifier.height(38.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f).fillMaxHeight()) {
-            Canvas(Modifier.fillMaxSize()) {
-                val span = valueRange.endInclusive - valueRange.start
-                val progress = if (span == 0f) 0f else ((value - valueRange.start) / span).coerceIn(0f, 1f)
-                val edgeInset = 12.dp.toPx()
-                val center = Offset(edgeInset + (size.width - edgeInset * 2f) * progress, size.height / 2f)
-                val radius = (7.5f + blobProgress * 3.5f).dp.toPx()
-                val stretch = (8f + blobProgress * 10f).dp.toPx()
-                drawRoundRect(
-                    color = InkAccent.copy(alpha = 0.12f + blobProgress * 0.16f),
-                    topLeft = Offset(center.x - stretch, center.y - radius),
-                    size = androidx.compose.ui.geometry.Size(stretch * 2f, radius * 2f),
-                    cornerRadius = CornerRadius(radius, radius)
-                )
-                drawCircle(
-                    color = InkText.copy(alpha = 0.05f + blobProgress * 0.07f),
-                    radius = radius,
-                    center = center
-                )
-            }
             Slider(
                 value = value,
                 onValueChange = onValueChange,
+                onValueChangeFinished = onValueChangeFinished,
                 valueRange = valueRange,
                 interactionSource = interactionSource,
                 colors = SliderDefaults.colors(
-                    thumbColor = InkText,
+                    thumbColor = Color.Transparent,
                     activeTrackColor = InkText,
                     inactiveTrackColor = InkDivider
                 ),
                 modifier = Modifier.fillMaxSize()
             )
+            Canvas(Modifier.fillMaxSize()) {
+                val span = valueRange.endInclusive - valueRange.start
+                val progress = if (span == 0f) 0f else ((value - valueRange.start) / span).coerceIn(0f, 1f)
+                val edgeInset = 10.dp.toPx()
+                val center = Offset(edgeInset + (size.width - edgeInset * 2f) * progress, size.height / 2f)
+                val morph = morphProgress.coerceIn(-0.25f, 1.15f)
+                val thumbWidth = (20f + morph * 12f).dp.toPx()
+                val thumbHeight = (20f - morph * 4f).dp.toPx()
+                drawRoundRect(
+                    color = InkText,
+                    topLeft = Offset(center.x - thumbWidth / 2f, center.y - thumbHeight / 2f),
+                    size = androidx.compose.ui.geometry.Size(thumbWidth, thumbHeight),
+                    cornerRadius = CornerRadius(thumbHeight / 2f, thumbHeight / 2f)
+                )
+            }
         }
         Text(
             String.format(Locale.US, "%.1f", value),
@@ -861,6 +906,7 @@ private fun InkWritingSurface(
     eraserWidth: Float,
     eraser: Boolean,
     modifier: Modifier = Modifier,
+    onInteractionStarted: () -> Unit,
     onStrokeFinished: () -> Unit
 ) {
     var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
@@ -872,6 +918,7 @@ private fun InkWritingSurface(
             .background(InkPaper)
             .onSizeChanged { surfaceSize = it }
             .pointerInteropFilter { event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) onInteractionStarted()
                 val completed = session.onMotionEvent(
                     event,
                     surfaceSize,
