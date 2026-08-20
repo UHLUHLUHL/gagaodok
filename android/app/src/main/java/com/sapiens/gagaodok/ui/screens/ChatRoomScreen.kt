@@ -262,6 +262,10 @@ fun ChatRoomScreen(
                 // 원조는 마지막 줄이 보입니다.
                 editValue = TextFieldValue(target.text, TextRange(target.text.length))
             },
+            onResend = {
+                menu.dismiss()
+                vm.resendFromMessage(target, replacementText = null, room = room, model = activeModel)
+            },
             onDelete = { menu.dismiss(); vm.delete(target) }
         ).toTypedArray()
     )

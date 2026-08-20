@@ -86,31 +86,26 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
     /// 실패한 메시지를 다시 보냅니다. 그 메시지까지의 이력으로 다시 요청하므로
     /// 뒤에 다른 대화가 있어도 순서를 지킵니다.
     fun resend(message: ChatMessage, room: ChatRoom, model: AIModel) {
-        if (_isTyping.value) return
-        val index = _messages.value.indexOfFirst { it.id == message.id }
-        if (index < 0) return
-        _messages.value = _messages.value.toMutableList().also {
-            it[index] = it[index].copy(deliveryFailed = false)
-        }
-        persist()
-        _isTyping.value = true
-        respond(_messages.value.take(index + 1), room, model, failingMessageId = message.id)
+        resendFromMessage(message, replacementText = null, room = room, model = model)
     }
 
     /// 내 메시지를 고쳐 다시 답변을 받습니다. 그 뒤의 대화는 지워집니다.
     fun editAndResend(message: ChatMessage, newText: String, room: ChatRoom, model: AIModel) {
-        if (_isTyping.value) return
-        val trimmed = newText.trim()
-        if (trimmed.isEmpty()) return
-        val index = _messages.value.indexOfFirst { it.id == message.id }
-        if (index < 0) return
+        resendFromMessage(message, replacementText = newText, room = room, model = model)
+    }
 
-        val truncated = _messages.value.take(index + 1).toMutableList()
-        truncated[index] = truncated[index].copy(
-            text = trimmed,
-            canonicalText = trimmed,
-            deliveryFailed = false
-        )
+    /** 실패 재시도, 텍스트 수정, 첨부파일 전용 재전송이 공유하는 단일 경로입니다. */
+    fun resendFromMessage(
+        message: ChatMessage,
+        replacementText: String?,
+        room: ChatRoom,
+        model: AIModel
+    ) {
+        if (_isTyping.value) return
+        if (replacementText != null && replacementText.isBlank()) return
+        val current = _messages.value
+        val truncated = MessageResendLogic.truncateFrom(current, message.id, replacementText)
+        if (truncated === current) return
         _messages.value = truncated
         persist()
         _isTyping.value = true

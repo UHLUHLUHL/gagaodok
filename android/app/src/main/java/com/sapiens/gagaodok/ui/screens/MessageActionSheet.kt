@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import com.sapiens.gagaodok.model.ChatMessage
-import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.ui.components.KakaoMenuItem
 
 /// 말풍선을 길게 눌렀을 때 나오는 메뉴의 줄들입니다.
@@ -19,11 +18,15 @@ fun messageMenuItems(
     message: ChatMessage,
     onDone: () -> Unit,
     onEdit: () -> Unit,
+    onResend: () -> Unit,
     onDelete: () -> Unit
 ): List<KakaoMenuItem> = buildList {
     add(KakaoMenuItem("복사") { copyToClipboard(context, message.text); onDone() })
-    // 내가 보낸 것만 고칠 수 있습니다.
-    if (message.sender == MessageSender.USER) add(KakaoMenuItem("수정", onClick = onEdit))
+    when (MessageResendLogic.actionFor(message)) {
+        MessageUserAction.EDIT -> add(KakaoMenuItem("수정", onClick = onEdit))
+        MessageUserAction.RESEND -> add(KakaoMenuItem("다시 보내기", onClick = onResend))
+        MessageUserAction.NONE -> Unit
+    }
     // 원조의 '삭제'도 다른 줄과 같은 검정입니다. 빨강으로 두면
     // 이 카드에서 그 줄만 다른 앱처럼 보입니다.
     add(KakaoMenuItem("삭제", onClick = onDelete))
