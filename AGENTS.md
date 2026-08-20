@@ -40,3 +40,9 @@ it into another branch unless the user explicitly requests a merge.
 - Tablet Obsidian export and Mac-tablet cloud sync are deferred unless the user
   explicitly resumes them.
 - Keep credentials out of source, logs, binaries, URLs, and Git history.
+
+## User-facing language
+
+- Internal reasoning and scratch notes may use concise English to save tokens.
+- Write every design document, implementation plan, handoff, and result shown
+  to the user in Korean unless the user explicitly requests another language.
