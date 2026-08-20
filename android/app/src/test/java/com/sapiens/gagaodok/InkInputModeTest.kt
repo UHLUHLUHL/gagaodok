@@ -16,12 +16,38 @@ class InkInputModeTest {
             buttonState = MotionEvent.BUTTON_STYLUS_PRIMARY,
             toolbarEraser = false,
             colorArgb = 0xFF191919,
-            width = 4.5f
+            penWidth = 4.5f,
+            eraserWidth = 18f
         )
 
         assertTrue(style.eraser)
         assertEquals(0xFF191919, style.colorArgb)
-        assertEquals(4.5f, style.width)
+        assertEquals(18f, style.width)
+    }
+
+    @Test
+    fun `도구막대 지우개와 펜은 각자의 굵기를 사용한다`() {
+        val eraserStyle = InkInputMode.resolveStrokeStyle(
+            MotionEvent.TOOL_TYPE_STYLUS,
+            0,
+            true,
+            0xFF191919,
+            penWidth = 4.5f,
+            eraserWidth = 24f
+        )
+        val penStyle = InkInputMode.resolveStrokeStyle(
+            MotionEvent.TOOL_TYPE_STYLUS,
+            0,
+            false,
+            0xFF191919,
+            penWidth = 4.5f,
+            eraserWidth = 24f
+        )
+
+        assertTrue(eraserStyle.eraser)
+        assertEquals(24f, eraserStyle.width)
+        assertFalse(penStyle.eraser)
+        assertEquals(4.5f, penStyle.width)
     }
 
     @Test

@@ -59,7 +59,8 @@ data class KakaoMenuItem(
 /// 소제목으로 묶인 줄 묶음입니다. 묶음 사이에는 얇은 선이 들어갑니다.
 data class KakaoMenuSection(
     val title: String? = null,
-    val items: List<KakaoMenuItem>
+    val items: List<KakaoMenuItem> = emptyList(),
+    val content: (@Composable () -> Unit)? = null
 )
 
 /// 메뉴 카드를 띄우는 손잡이입니다. `LocalKakaoMenu`로 어디서나 꺼내 씁니다.
@@ -179,6 +180,7 @@ fun KakaoActionCard(
                             )
                         )
                     }
+                    section.content?.invoke()
                     section.items.forEach { MenuRow(it) }
                 }
             }

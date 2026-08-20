@@ -21,10 +21,14 @@ object InkInputMode {
         buttonState: Int,
         toolbarEraser: Boolean,
         colorArgb: Long,
-        width: Float
-    ) = StrokeStyle(
-        colorArgb = colorArgb,
-        width = width,
-        eraser = shouldErase(toolType, buttonState, toolbarEraser)
-    )
+        penWidth: Float,
+        eraserWidth: Float
+    ): StrokeStyle {
+        val eraser = shouldErase(toolType, buttonState, toolbarEraser)
+        return StrokeStyle(
+            colorArgb = colorArgb,
+            width = if (eraser) eraserWidth else penWidth,
+            eraser = eraser
+        )
+    }
 }
