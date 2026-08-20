@@ -3,6 +3,7 @@ package com.sapiens.gagaodok.data
 import android.content.Context
 import com.sapiens.gagaodok.model.Codec
 import com.sapiens.gagaodok.model.InkDocument
+import com.sapiens.gagaodok.service.InkCoordinateSpace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,8 +29,13 @@ class InkStore private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
 
+    private var migrationNeeded = false
     private val _documents = MutableStateFlow(load())
     val documents: StateFlow<List<InkDocument>> = _documents
+
+    init {
+        if (migrationNeeded) persistAsync()
+    }
 
     fun document(id: UUID): InkDocument? = _documents.value.firstOrNull { it.id == id }
 
@@ -62,7 +68,15 @@ class InkStore private constructor(context: Context) {
         _documents.value.filter { it.roomId == roomId.toString() }
 
     private fun load(): List<InkDocument> = runCatching {
-        if (!file.exists()) emptyList() else Codec.json.decodeFromString<List<InkDocument>>(file.readText())
+        if (!file.exists()) {
+            emptyList()
+        } else {
+            Codec.json.decodeFromString<List<InkDocument>>(file.readText()).map { document ->
+                InkCoordinateSpace.toCurrent(document).also { migrated ->
+                    if (migrated != document) migrationNeeded = true
+                }
+            }
+        }
     }.getOrDefault(emptyList()).sortedByDescending { it.updatedAtMillis }
 
     private fun persistAsync() {

@@ -3,12 +3,7 @@ package com.sapiens.gagaodok.model
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
-/**
- * 화면 크기와 분할 화면 여부에 영향을 받지 않는 필기 원본입니다.
- *
- * 점은 0..1 좌표계로 저장하고, 화면에 그릴 때만 현재 패널 크기로 환산합니다. 따라서
- * PNG를 매번 보관하거나 패널을 늘릴 때마다 비트맵을 복제할 필요가 없습니다.
- */
+/** 화면 크기와 독립적인 무한 월드 좌표의 필기 원본입니다. */
 @Serializable
 data class InkDocument(
     @Serializable(with = UuidSerializer::class)
@@ -17,7 +12,17 @@ data class InkDocument(
     val title: String = "새 필기",
     val createdAtMillis: Long = System.currentTimeMillis(),
     val updatedAtMillis: Long = System.currentTimeMillis(),
+    /** 0은 예전 0..1 정규화 좌표, 1부터는 월드 좌표입니다. */
+    val coordinateSpaceVersion: Int = 0,
+    val viewport: InkViewport = InkViewport(),
     val strokes: List<InkStroke> = emptyList()
+)
+
+@Serializable
+data class InkViewport(
+    val centerX: Float = 800f,
+    val centerY: Float = 600f,
+    val zoom: Float = 1f
 )
 
 @Serializable
