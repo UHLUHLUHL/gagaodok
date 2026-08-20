@@ -119,7 +119,12 @@ private fun TabletSideBar(selected: RootTab, onSelect: (RootTab) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
     ) {
         RootTab.entries.forEach { entry ->
-            TabItem(tab = entry, selected = selected == entry, onSelect = { onSelect(entry) })
+            TabItem(
+                tab = entry,
+                selected = selected == entry,
+                onSelect = { onSelect(entry) },
+                compact = true
+            )
         }
     }
 }
@@ -155,6 +160,7 @@ private fun TabItem(
     tab: RootTab,
     selected: Boolean,
     onSelect: () -> Unit,
+    compact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val colors = KakaoTheme.colors
@@ -164,7 +170,7 @@ private fun TabItem(
 
     Column(
         modifier
-            .fillMaxSize()
+            .then(if (compact) Modifier.fillMaxWidth().height(72.dp) else Modifier.fillMaxSize())
             .selectable(
                 selected = selected,
                 interactionSource = interaction,
