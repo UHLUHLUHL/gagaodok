@@ -26,11 +26,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -39,6 +43,7 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,6 +69,8 @@ import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.io.ByteArrayOutputStream
+import android.provider.OpenableColumns
+import java.util.Locale
 
 // 메시지를 쓰고 고치는 자리입니다. 첨부를 읽어 들이는 것도 여기 있습니다.
 @Composable
@@ -71,13 +78,17 @@ internal fun ChatInputBar(
     text: String,
     attachment: ChatAttachment?,
     enabled: Boolean,
+    enhancedAttachments: Boolean,
     onTextChange: (String) -> Unit,
     onPickImage: () -> Unit,
+    onPickPdf: () -> Unit,
+    onOpenInk: () -> Unit,
     onClearAttachment: () -> Unit,
     onSend: () -> Unit
 ) {
     val colors = KakaoTheme.colors
     val canSend = enabled && (text.isNotBlank() || attachment != null)
+    var attachmentMenuExpanded by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -95,7 +106,8 @@ internal fun ChatInputBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "사진 1장 첨부됨",
+                    if (attachment.type == AttachmentType.IMAGE) "${attachment.fileName} · ${attachment.formattedSize}"
+                    else "${attachment.fileName} · ${attachment.formattedSize}",
                     style = KakaoText.caption,
                     color = colors.textSecondary,
                     modifier = Modifier.weight(1f)
@@ -124,12 +136,40 @@ internal fun ChatInputBar(
                 .padding(end = Metrics.inputBarEndPadding, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.Bottom
         ) {
-            RoundInputButton(onClick = onPickImage, contentDescription = "사진 첨부") {
-                Icon(
-                    Icons.Filled.AddPhotoAlternate, "사진 첨부",
-                    tint = colors.textPrimary,
-                    modifier = Modifier.size(Metrics.inputButtonGlyph)
-                )
+            if (enhancedAttachments) {
+                Box {
+                    RoundInputButton(onClick = { attachmentMenuExpanded = true }, contentDescription = "첨부 메뉴") {
+                        Icon(
+                            Icons.Filled.Add, "첨부 메뉴",
+                            tint = colors.textPrimary,
+                            modifier = Modifier.size(Metrics.inputButtonGlyph + 2.dp)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = attachmentMenuExpanded,
+                        onDismissRequest = { attachmentMenuExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("사진", style = KakaoText.body) },
+                            leadingIcon = { Icon(Icons.Filled.Image, null, modifier = Modifier.size(20.dp)) },
+                            onClick = { attachmentMenuExpanded = false; onPickImage() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("파일", style = KakaoText.body) },
+                            leadingIcon = { Icon(Icons.Filled.Description, null, modifier = Modifier.size(20.dp)) },
+                            onClick = { attachmentMenuExpanded = false; onPickPdf() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("필기", style = KakaoText.body) },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, null, modifier = Modifier.size(20.dp)) },
+                            onClick = { attachmentMenuExpanded = false; onOpenInk() }
+                        )
+                    }
+                }
+            } else {
+                RoundInputButton(onClick = onPickImage, contentDescription = "사진 첨부") {
+                    Icon(Icons.Filled.Image, "사진 첨부", tint = colors.textPrimary, modifier = Modifier.size(Metrics.inputButtonGlyph))
+                }
             }
 
             // 필드를 단추와 같은 높이(48dp)의 상자에 넣고 가운데에 둡니다.
@@ -171,7 +211,7 @@ internal fun ChatInputBar(
                 contentDescription = "보내기"
             ) {
                 Icon(
-                    Icons.Filled.Send, "보내기",
+                    Icons.AutoMirrored.Filled.Send, "보내기",
                     tint = if (canSend) colors.bubbleMineText else colors.textTertiary,
                     // 꽉 찬 삼각형이라 같은 숫자면 더 커 보입니다. 한 단 줄여 눈으로 맞춥니다.
                     modifier = Modifier.size(Metrics.inputButtonGlyph - 2.dp)
@@ -421,7 +461,39 @@ internal fun EditBar(
 // MARK: - 날짜 구분선
 
 internal fun readAttachment(context: android.content.Context, uri: Uri): ChatAttachment? = runCatching {
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+    val resolver = context.contentResolver
+    val mimeType = resolver.getType(uri)?.lowercase(Locale.ROOT).orEmpty()
+    val displayName = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) else null
+    } ?: "첨부파일"
+    val isPdf = mimeType == "application/pdf" || displayName.endsWith(".pdf", ignoreCase = true)
+    val bytes = resolver.openInputStream(uri)?.use { input ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        var total = 0
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            // 채팅 모델에 inline data로 보내는 파일은 사용자가 읽을 수 있게 제한합니다.
+            if (total > 12 * 1024 * 1024) return null
+            output.write(buffer, 0, read)
+        }
+        output.toByteArray()
+    } ?: return null
+
+    if (isPdf) {
+        return ChatAttachment(
+            type = AttachmentType.FILE,
+            fileName = displayName,
+            fileSize = bytes.size.toLong(),
+            fileExtension = "pdf",
+            dataBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP),
+            mimeType = "application/pdf"
+        )
+    }
+
+    if (!mimeType.startsWith("image/")) return null
 
     // 얼마로 줄여 보낼지 먼저 정합니다. 요금은 화소가 아니라 **타일 수**에 비례해서,
     // 아무 크기로나 줄이면 한 푼도 못 아낍니다(`ImageBudget` 설명).

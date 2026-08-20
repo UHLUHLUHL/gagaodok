@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -182,6 +183,14 @@ internal fun ChatHeader(
                 }
                 IconButton(onClick = onToggleSearch) {
                     MagnifierIcon(colors.onChatHeader, Modifier.size(Metrics.roomHeaderIcon))
+                }
+                IconButton(onClick = onOpenMenu) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        "대화방 메뉴",
+                        tint = colors.onChatHeader,
+                        modifier = Modifier.size(Metrics.roomHeaderIcon + 2.dp)
+                    )
                 }
             }
         }

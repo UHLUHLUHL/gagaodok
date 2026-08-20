@@ -13,7 +13,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.content.ReceiveContentListener
+import androidx.compose.foundation.content.TransferableContent
+import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +62,8 @@ import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.AIModel
+import com.sapiens.gagaodok.model.InkDocument
+import com.sapiens.gagaodok.service.InkAttachmentFactory
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.components.KakaoMenuItem
@@ -69,6 +76,9 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // 대화방 화면입니다. 목록에 놓을 줄을 만들고 조각들을 배치합니다.
 //
@@ -85,6 +95,7 @@ fun ChatRoomScreen(
     val app = context.applicationContext as GagaodokApp
     val colors = KakaoTheme.colors
     val vm: ChatRoomViewModel = viewModel()
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(roomId) { vm.bind(roomId) }
 
@@ -97,6 +108,10 @@ fun ChatRoomScreen(
 
     var inputText by remember { mutableStateOf("") }
     var pendingAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
+    var attachmentNotice by remember { mutableStateOf<String?>(null) }
+    var receivingDrop by remember { mutableStateOf(false) }
+    var activeInkDocument by remember { mutableStateOf<InkDocument?>(null) }
+    var inkHistoryVisible by remember { mutableStateOf(false) }
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
     // 수정 중인 글은 입력창과 **따로 둡니다.** 한 칸을 같이 쓰면 수정을 시작할 때
     // 쓰던 글이 지워지고, 취소해도 돌아오지 않습니다.
@@ -108,6 +123,31 @@ fun ChatRoomScreen(
     var searchIndex by remember { mutableIntStateOf(0) }
     var viewingImage by remember { mutableStateOf<ChatAttachment?>(null) }
     val menu = LocalKakaoMenu.current
+    val inkDocuments by app.inkStore.documents.collectAsState()
+    val dropReceiver = remember(context) {
+        object : ReceiveContentListener {
+            override fun onDragEnter() { receivingDrop = true }
+            override fun onDragExit() { receivingDrop = false }
+            override fun onDragEnd() { receivingDrop = false }
+
+            override fun onReceive(transferable: TransferableContent): TransferableContent {
+                val clip = transferable.clipEntry.clipData
+                for (index in 0 until clip.itemCount) {
+                    val uri = clip.getItemAt(index).uri ?: continue
+                    val attachment = readAttachment(context, uri)
+                    if (attachment == null) {
+                        attachmentNotice = "이미지 또는 12MB 이하 PDF만 첨부할 수 있어요."
+                    } else {
+                        pendingAttachment = attachment
+                        attachmentNotice = null
+                    }
+                }
+                // 이 Column에는 텍스트 입력 receiver가 없으므로 URI를 문자열로 전달하지
+                // 않습니다. 첨부 처리만 하고 기존 Compose 전달값은 그대로 돌려줍니다.
+                return transferable
+            }
+        }
+    }
 
     if (room == null) {
         // 방이 지워진 뒤에 남아 있던 화면입니다. 조용히 빠져나갑니다.
@@ -158,7 +198,23 @@ fun ChatRoomScreen(
     BackHandler(enabled = editingMessage != null) { editingMessage = null }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) pendingAttachment = readAttachment(context, uri)
+        if (uri != null) {
+            pendingAttachment = readAttachment(context, uri)
+            if (pendingAttachment == null) attachmentNotice = "이미지 파일을 읽을 수 없어요."
+        }
+    }
+    val pdfPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            pendingAttachment = readAttachment(context, uri)
+            if (pendingAttachment == null) attachmentNotice = "12MB 이하의 PDF 파일만 첨부할 수 있어요."
+        }
+    }
+
+    fun openNewInk() {
+        InkDocument(roomId = room.id.toString()).also {
+            app.inkStore.save(it)
+            activeInkDocument = it
+        }
     }
 
     // 상단 바의 이름을 누르면 나오는 메뉴입니다. 지금 쓰는 모드와 모델에 체크가 붙습니다.
@@ -181,10 +237,14 @@ fun ChatRoomScreen(
                 }
             ),
             KakaoMenuSection(
-                items = listOf(
-                    KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile() },
-                    KakaoMenuItem("말투 편집") { menu.dismiss(); onEditPersona() }
-                )
+                items = buildList {
+                    if (tabletLayout) {
+                        add(KakaoMenuItem("새 필기") { menu.dismiss(); openNewInk() })
+                        add(KakaoMenuItem("필기 기록") { menu.dismiss(); inkHistoryVisible = true })
+                    }
+                    add(KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile() })
+                    add(KakaoMenuItem("말투 편집") { menu.dismiss(); onEditPersona() })
+                }
             )
         )
     )
@@ -215,6 +275,7 @@ fun ChatRoomScreen(
             .fillMaxHeight()
             .fillMaxWidth()
             .then(if (tabletLayout) Modifier.widthIn(max = 1_080.dp) else Modifier)
+            .then(if (tabletLayout) Modifier.contentReceiver(dropReceiver) else Modifier)
             .background(colors.chatBackground)
             // 키보드가 올라온 만큼 화면 전체를 밀어 올립니다. 이게 없으면 입력창이
             // 키보드 아래에 깔립니다. 안드로이드 채팅 앱에서 가장 흔한 실패 지점입니다.
@@ -286,6 +347,19 @@ fun ChatRoomScreen(
                 Icon(Icons.Filled.Close, "닫기", tint = Color(0xFFD05050), modifier = Modifier.size(16.dp))
             }
         }
+        attachmentNotice?.let {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Color(0x22D05050))
+                    .clickable { attachmentNotice = null }
+                    .padding(horizontal = Metrics.screenPadding, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(it, style = KakaoText.caption, color = Color(0xFFD05050), modifier = Modifier.weight(1f))
+                Icon(Icons.Filled.Close, "닫기", tint = Color(0xFFD05050), modifier = Modifier.size(16.dp))
+            }
+        }
 
         // 입력바와 수정 바를 갈아 끼웁니다.
         //
@@ -307,10 +381,13 @@ fun ChatRoomScreen(
                     text = inputText,
                     attachment = pendingAttachment,
                     enabled = !isTyping,
+                    enhancedAttachments = tabletLayout,
                     onTextChange = { inputText = it },
                     onPickImage = {
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
+                    onPickPdf = { pdfPicker.launch(arrayOf("application/pdf")) },
+                    onOpenInk = { openNewInk() },
                     onClearAttachment = { pendingAttachment = null },
                     onSend = {
                         vm.send(inputText, pendingAttachment, room, activeModel)
@@ -333,6 +410,60 @@ fun ChatRoomScreen(
         }
     }
 
+    }
+    if (receivingDrop) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0x22000000))
+                .border(2.dp, colors.bubbleMine, RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("사진 또는 PDF를 놓으세요", style = KakaoText.body, color = colors.textPrimary,
+                modifier = Modifier.background(colors.surface, RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 10.dp))
+        }
+    }
+    activeInkDocument?.let { document ->
+        InkFloatingPanel(
+            document = document,
+            onDocumentChanged = { updated ->
+                app.inkStore.save(updated)
+                activeInkDocument = updated
+            },
+            onAttachToChat = { ink ->
+                coroutineScope.launch {
+                    val attachment = withContext(Dispatchers.Default) { InkAttachmentFactory.create(ink) }
+                    if (attachment == null) {
+                        attachmentNotice = "필기를 이미지로 만들지 못했어요."
+                    } else {
+                        pendingAttachment = attachment
+                        activeInkDocument = null
+                    }
+                }
+            },
+            onClose = { activeInkDocument = null }
+        )
+    }
+    if (inkHistoryVisible) {
+        InkHistoryDialog(
+            documents = inkDocuments.filter { it.roomId == room.id.toString() },
+            onOpen = { activeInkDocument = it; inkHistoryVisible = false },
+            onAttach = { ink ->
+                coroutineScope.launch {
+                    val attachment = withContext(Dispatchers.Default) { InkAttachmentFactory.create(ink) }
+                    if (attachment == null) {
+                        attachmentNotice = "필기를 PNG로 만들지 못했어요."
+                    } else {
+                        pendingAttachment = attachment
+                        attachmentNotice = null
+                        inkHistoryVisible = false
+                    }
+                }
+            },
+            onRename = { id, title -> app.inkStore.rename(id, title) },
+            onDelete = { id -> app.inkStore.delete(id) },
+            onDismiss = { inkHistoryVisible = false }
+        )
     }
     viewingImage?.let { ImageViewerDialog(it) { viewingImage = null } }
 }

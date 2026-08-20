@@ -149,6 +149,9 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         // 저장을 0.7초 모아서 하기 때문에, 이게 없으면 마지막 말풍선이 유실될 수 있습니다.
         // 안드로이드는 화면에서 사라진 앱을 언제든 메모리에서 내립니다.
-        (applicationContext as GagaodokApp).chatStore.flushPendingSaves()
+        (applicationContext as GagaodokApp).run {
+            chatStore.flushPendingSaves()
+            inkStore.flushPendingSaves()
+        }
     }
 }

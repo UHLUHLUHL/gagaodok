@@ -152,5 +152,14 @@ class AIService private constructor(internal val appContext: Context) {
         instance ?: synchronized(this) {
             instance ?: AIService(context.applicationContext).also { instance = it }
         }
+
+    /**
+     * 답변 말풍선 분리에 쓰는 순수 문자열 유틸리티입니다.
+     *
+     * 서비스 인스턴스나 네트워크 상태에 의존하지 않으므로 companion에 둡니다. 그 덕분에
+     * 단위 테스트와 스트리밍·일괄 응답 경로가 같은 규칙을 공유합니다.
+     */
+    internal fun splitTextAndComplexMath(paragraph: String): List<String> =
+        com.sapiens.gagaodok.service.splitTextAndComplexMath(paragraph)
     }
 }

@@ -3,6 +3,7 @@ package com.sapiens.gagaodok
 import android.app.Application
 import com.sapiens.gagaodok.data.AppSettings
 import com.sapiens.gagaodok.data.ChatStore
+import com.sapiens.gagaodok.data.InkStore
 import com.sapiens.gagaodok.data.MyProfileStore
 import com.sapiens.gagaodok.data.TokenUsageStore
 
@@ -20,6 +21,8 @@ class GagaodokApp : Application() {
         private set
     lateinit var myProfile: MyProfileStore
         private set
+    lateinit var inkStore: InkStore
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -28,6 +31,7 @@ class GagaodokApp : Application() {
         settings = AppSettings.get(this)
         usage = TokenUsageStore.get(this)
         myProfile = MyProfileStore.get(this)
+        inkStore = InkStore.get(this)
     }
 
     companion object {

@@ -71,7 +71,7 @@ fun AIService.parseResponseIntoBubbles(
     // 들어오므로 호출하는 쪽이 지금까지 본 것을 `roleplay`로 알려 줍니다.
     val isRoleplay = roleplay || paragraphs.any { RoleplayParser.establishesRoleplay(it) }
 
-    val chunks = paragraphs.flatMap { splitTextAndComplexMath(it) }
+    val chunks = paragraphs.flatMap { AIService.splitTextAndComplexMath(it) }
     val bubbles = mutableListOf<GeneratedMessageBubble>()
     for (item in chunks) {
         var text = item.trim()
@@ -98,19 +98,19 @@ fun AIService.parseResponseIntoBubbles(
 internal fun AIService.graphAttachment(spec: MathGraphSpec): ChatAttachment? = runCatching {
     val bitmap = MathGraphRenderer.render(spec)
     val stream = ByteArrayOutputStream()
-    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
     val bytes = stream.toByteArray()
     ChatAttachment(
         type = AttachmentType.IMAGE,
-        fileName = "${spec.title}.jpg",
+        fileName = "${spec.title}.png",
         fileSize = bytes.size.toLong(),
-        fileExtension = "jpg",
+        fileExtension = "png",
         dataBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
-        mimeType = "image/jpeg"
+        mimeType = "image/png"
     )
 }.getOrNull()
 
-internal fun AIService.splitTextAndComplexMath(paragraph: String): List<String> {
+internal fun splitTextAndComplexMath(paragraph: String): List<String> {
     val lines = paragraph.split("\n")
     if (lines.size <= 1) return listOf(paragraph)
 
@@ -173,7 +173,7 @@ internal fun AIService.splitTextAndComplexMath(paragraph: String): List<String> 
     return result.ifEmpty { listOf(paragraph) }
 }
 
-internal fun AIService.isMarkdownTableLine(line: String): Boolean {
+internal fun isMarkdownTableLine(line: String): Boolean {
     val trimmed = line.trim()
     if (trimmed.isEmpty()) return false
     if (trimmed.startsWith("|")) return true
@@ -183,7 +183,7 @@ internal fun AIService.isMarkdownTableLine(line: String): Boolean {
     return false
 }
 
-internal fun AIService.isStandaloneMathLine(line: String): Boolean {
+internal fun isStandaloneMathLine(line: String): Boolean {
     if (line.startsWith("$$") || line.startsWith("\\[")) return true
     if (line.startsWith("$") && line.endsWith("$") && line.contains("=")) return true
     if (line.contains("=") &&

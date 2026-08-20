@@ -132,7 +132,7 @@ class BubbleSplitterTableTest {
         assertEquals(2, chunks.size)
         assertEquals("💡 딱 이렇게 3개 대칭으로만 정리하세요", chunks[0])
         assertTrue(chunks[1].startsWith("| 삼각 (역함수) | 쌍곡선 (역함수) |"))
-        assertTrue(chunks[1].contains("(\\tanh^{-1} x)' = \\frac{1}{1-x^2} |"))
+        assertTrue(chunks[1].contains("\$(\\tanh^{-1} x)' = \\frac{1}{1-x^2}\$ |"))
     }
 }
 

@@ -108,9 +108,11 @@ object MathGraphRenderer {
     // 다만 **y축 방향이 반대**입니다. CoreGraphics는 위로 자라고 안드로이드 Canvas는
     // 아래로 자랍니다. 화면 좌표로 옮기는 함수 한 곳에서만 뒤집어 처리합니다.
 
-    private const val WIDTH = 800
-    private const val HEIGHT = 600
-    private const val PADDING = 60f
+    // 채팅 안에서는 축소해서 보이더라도 원본을 다시 열거나 PNG로 내보낼 때 선명해야 합니다.
+    // 논리적인 800×600 도안을 2배 픽셀 밀도로 렌더링합니다.
+    private const val WIDTH = 1600
+    private const val HEIGHT = 1200
+    private const val PADDING = 120f
 
     fun render(spec: MathGraphSpec): Bitmap {
         val bitmap = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
@@ -123,7 +125,7 @@ object MathGraphRenderer {
 
         val left = PADDING
         val right = WIDTH - PADDING
-        val top = PADDING + 30f
+        val top = PADDING + 60f
         val bottom = HEIGHT - PADDING
         paint.color = Color.WHITE
         canvas.drawRect(left, top, right, bottom, paint)
@@ -137,7 +139,7 @@ object MathGraphRenderer {
 
         // 2. 격자선
         paint.color = Color.rgb(230, 235, 240)
-        paint.strokeWidth = 1f
+        paint.strokeWidth = 2f
         paint.style = Paint.Style.STROKE
         val xStep = (spec.xMax - spec.xMin) / 10.0
         for (i in 0..10) {
@@ -152,7 +154,7 @@ object MathGraphRenderer {
 
         // 3. 축
         paint.color = Color.rgb(64, 71, 82)
-        paint.strokeWidth = 1.8f
+        paint.strokeWidth = 3.6f
         val originY = sy(0.0)
         val originX = sx(0.0)
         if (originY in top..bottom) canvas.drawLine(left, originY, right, originY, paint)
@@ -163,7 +165,7 @@ object MathGraphRenderer {
         canvas.clipRect(left, top, right, bottom)
 
         paint.color = Color.rgb(41, 128, 242)
-        paint.strokeWidth = 3f
+        paint.strokeWidth = 6f
         paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
 
@@ -212,8 +214,8 @@ object MathGraphRenderer {
         val py = spec.tangentPointY
         if (slope != null && px != null && py != null) {
             paint.color = Color.argb(217, 240, 64, 64)
-            paint.strokeWidth = 2f
-            paint.pathEffect = DashPathEffect(floatArrayOf(6f, 4f), 0f)
+            paint.strokeWidth = 4f
+            paint.pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f)
             val y1 = slope * (spec.xMin - px) + py
             val y2 = slope * (spec.xMax - px) + py
             canvas.drawLine(left, sy(y1), right, sy(y2), paint)
@@ -221,11 +223,11 @@ object MathGraphRenderer {
 
             paint.style = Paint.Style.FILL
             paint.color = Color.rgb(240, 64, 64)
-            canvas.drawCircle(sx(px), sy(py), 5f, paint)
+            canvas.drawCircle(sx(px), sy(py), 10f, paint)
             paint.style = Paint.Style.STROKE
             paint.color = Color.WHITE
-            paint.strokeWidth = 2f
-            canvas.drawCircle(sx(px), sy(py), 5f, paint)
+            paint.strokeWidth = 4f
+            canvas.drawCircle(sx(px), sy(py), 10f, paint)
         }
 
         canvas.restore()
@@ -233,16 +235,24 @@ object MathGraphRenderer {
         // 6. 외곽 테두리
         paint.style = Paint.Style.STROKE
         paint.color = Color.rgb(204, 209, 217)
-        paint.strokeWidth = 1.2f
+        paint.strokeWidth = 2.4f
         canvas.drawRect(left, top, right, bottom, paint)
 
         // 7. 제목
         paint.style = Paint.Style.FILL
         paint.color = Color.rgb(38, 38, 38)
-        paint.textSize = 22f
+        paint.textSize = 44f
         paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText(spec.title, PADDING, PADDING + 12f, paint)
+        canvas.drawText(graphTitle(spec.title), PADDING, PADDING + 24f, paint)
 
         return bitmap
     }
+
+    /** 이미지 안에 TeX 명령이 그대로 남는 일을 피하기 위한 안전한 최소 정리입니다. */
+    private fun graphTitle(raw: String): String = raw
+        .replace("$", "")
+        .replace('\\'.toString() + "cdot", "·")
+        .replace('\\'.toString() + "pi", "π")
+        .replace('\\'.toString() + "sqrt{", "√(")
+        .replace("}", ")")
 }

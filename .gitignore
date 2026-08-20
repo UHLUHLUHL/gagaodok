@@ -27,6 +27,7 @@ tools/iconcheck/KakaoIcons.swift
 
 # 안드로이드
 android/.gradle/
+android/.kotlin/
 android/build/
 android/app/build/
 android/local.properties
