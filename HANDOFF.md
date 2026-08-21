@@ -8,6 +8,58 @@
 
 ---
 
+## 최신 Android 인수인계 — 2026-08-21
+
+### 현재 기준
+
+- 브랜치: `codex/persona-repetition-control`
+- 현재 HEAD: `3c85387 feat(android): measure cache optimization sessions`
+- 이 브랜치는 사용자가 현재 사용하는 이전 버전에 맞춘 기준선이다.
+- 이후 작성했던 `dc8548b`와 그 안의 HTML 기반 B안 Compose 모션 구현은 제거했다.
+- `main`은 건드리지 않았다.
+- 현재 작업 범위에는 공식 소스 우선 말투 추출, 반복 제어, 사용량·비용 측정 세션과 JSON
+  내보내기까지 포함되어 있다.
+- Figma를 이용한 Android phone UI 모션 대개편은 아직 구현하지 않는다. 계획만 새 문서로
+  보존했으며, Figma MCP 한도 회복과 실기기 확인 후 이어간다.
+
+### 사용자의 설치 상태
+
+사용자는 최신 실험 APK가 마음에 들지 않아 이전 버전으로 되돌려 사용 중이다. 따라서 다음
+작업자는 최신 실험 APK가 설치되어 있다고 가정하지 말고, 먼저 휴대폰의 실제 앱 버전과
+서명을 읽어야 한다. 앱 데이터 삭제, 초기화, 무단 재설치는 하지 않는다.
+
+### 유지해야 하는 기능
+
+- `96f9a0c`: 공식 영상·자막 우선의 전역 캐릭터 말투 추출 파이프라인
+- `e896523`: 말투 조사 로딩 신호
+- `cecca28`: phone COMPANION 말투 반복 제어
+- `d2716f2`: API 캐시·비용 최적화 측정 세션 설계
+- `3c85387`: 사용량 측정 저장소, 비용·토큰 관찰, 사용 패턴 JSON 내보내기
+- 멘토 모드, tabletMentor, macOS, Obsidian 흐름은 위 변경을 이어서 작업할 때도 보호한다.
+
+### 계속할 계획
+
+Figma 기반 모션 계획은 [Android phone motion UI overhaul plan](docs/superpowers/plans/2026-08-21-android-phone-motion-ui-overhaul.md)에 있다.
+모든 Phase는 아직 미완료다. 이전에 Figma 한도 때문에 만들었던 로컬 HTML 시안과 그에 따른
+Compose 구현은 기준선에서 제거했으므로, 나중에 Figma에서 다시 설계·검증한다.
+
+다음 시작점은 다음 순서다.
+
+1. 실제 휴대폰 연결 여부와 설치 버전 확인
+2. Figma 파일 `https://www.figma.com/design/tYEBz5VicQ9lbd9alrJQgB?node-id=2-2` 접근 및 MCP 한도 확인
+3. Phase 0 실기기 모션 감사
+4. Phase 1 Figma Motion 토큰·페이지 구조 작성
+5. Phase 2 응답 생명주기 A/B/C 시안을 Figma에서 다시 만들고 사용자 승인 받기
+6. 승인된 시안만 별도 구현 계획과 TDD를 거쳐 Android phone COMPANION에 적용
+
+### 문서 상태 규칙
+
+Figma 파일에 실제 등록하지 못했거나 실기기에서 검증하지 못한 항목은 문서에서 완료(`[x]`)로
+표시하지 않는다. 로컬 HTML·에뮬레이터·컴파일 성공은 Figma 등록 또는 실기기 검증을 대신하지
+않는다.
+
+---
+
 ## 1. 이게 무슨 앱인가
 
 macOS SwiftUI 앱이다. **카카오톡 UI를 그대로 흉내 낸 AI 수학 과외 선생**이다.
