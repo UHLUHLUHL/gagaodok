@@ -30,9 +30,9 @@ internal data class PrefixCache(
 
 internal const val CACHE_TTL_SECONDS = 900
 
-// 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 어림값이 실제보다 조금 클 수
-// 있으므로 여유를 둡니다. 거부돼도 캐시 없이 진행하므로 대화에는 영향이 없습니다.
-internal const val MINIMUM_CACHE_TOKENS = 1200
+// Gemini 3.7 Flash 명시적 캐시는 4,096토큰 미만이면 생성이 거부됩니다. 로컬 추정값이
+// 실제보다 조금 클 수 있어 약 12% 여유를 둡니다. 짧은 방에서 실패할 캐시 요청을 보내지 않습니다.
+internal const val MINIMUM_CACHE_TOKENS = 4600
 
 // 캐시를 다시 만들 기준입니다. 자세한 셈은 `refreshPrefixCache`에 적었습니다.
 // 짧은 대화에서 몇 마디 붙었다고 다시 만들지 않게 하는 바닥값입니다.

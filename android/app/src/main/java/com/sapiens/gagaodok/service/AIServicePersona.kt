@@ -3,6 +3,8 @@ package com.sapiens.gagaodok.service
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.SecureStore
 import com.sapiens.gagaodok.model.ChatMode
+import com.sapiens.gagaodok.model.PersonaSampleEvidence
+import com.sapiens.gagaodok.model.PersonaSourceTier
 import com.sapiens.gagaodok.model.PersonaStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,7 +19,8 @@ data class PersonaLookup(
     val note: String,
     val samples: List<String>,
     val styleGuide: String,
-    val sources: List<String>
+    val sources: List<String>,
+    val evidence: List<PersonaSampleEvidence> = emptyList()
 ) {
     val isUsable: Boolean get() = samples.isNotEmpty() || styleGuide.isNotEmpty()
 }
@@ -52,7 +55,45 @@ internal val LOOKUP_INSTRUCTION = """
 private val COMPANION_LOOKUP_SUFFIX = """
 챗봇 말투를 위한 분석에서는 대표 문구를 암기시키지 않는다. 문장 구조와 리듬, 호칭, 감정 표현을 우선한다.
 표현마다 항상/자주/가끔/드물게의 빈도를 구분하고, 한 번만 나온 표현이나 중복 표본을 말버릇으로 단정하지 않는다.
-같은 시작 표현을 여러 대사에 반복해서 싣지 말고, 실제로 확인된 서로 다른 표본만 최대 12줄까지 고른다.
+같은 시작 표현을 여러 대사에 반복해서 싣지 말고, 실제로 확인된 서로 다른 표본을 충분히 수집한다.
+""".trimIndent()
+
+internal val PERSONA_SOURCE_DISCOVERY_INSTRUCTION = """
+너는 애니메이션 캐릭터 말투 조사의 원출처 탐색기다. 특정 작품이나 캐릭터를 우대하지 않는다.
+Google 검색 결과를 거꾸로 원출처까지 추적해 최대 8개만 고른다.
+
+우선순위:
+1. OFFICIAL_LOCALIZED_VIDEO: 한국 공식 배급사·제작사·방송사 영상과 공식 한국어 자막
+2. OFFICIAL_ORIGINAL_VIDEO: 원 제작사·공식 작품 채널의 원어 영상
+3. OFFICIAL_TEXT: 공식 사이트·출판물·대본·인터뷰
+4. REPUTABLE_SECONDARY: 신뢰 가능한 언론·데이터베이스의 직접 인용
+5. UNVERIFIED: 위키·커뮤니티·밈·원출처 불명 문구
+
+채널명에 '공식'이 있다는 이유만으로 공식 등급을 주지 말고 소유자·배급권 근거를 확인한다.
+동명이인, 작품·시즌·극장판/TV판, 더빙·자막 판본을 구분한다.
+공식 자료가 있으면 위키나 밈을 대사 증거로 채우지 않는다.
+
+아래 형식만 출력한다. 각 필드는 실제 탭 문자로 나눈다.
+[확신도] 높음/보통/낮음 - 한 줄 근거
+[출처]
+등급<TAB>전체 URL<TAB>게시자<TAB>제목<TAB>언어<TAB>판본<TAB>공식성 근거<TAB>영상 길이(초, 아니거나 모르면 빈칸)
+""".trimIndent()
+
+internal val PERSONA_EVIDENCE_EXTRACTION_INSTRUCTION = """
+너는 공식 자료에서 캐릭터의 실제 발화만 옮기는 증거 추출기다.
+목표는 서로 다른 대사 40개, 최대 48개이며 공식 자료가 부족하면 개수를 지어내지 않는다.
+
+- 영상에서는 지정된 인물이 실제로 말한 문장만 고르고 화자가 불명확하면 제외한다.
+- 한국 공식 영상은 음성을 새로 번역하지 말고 화면의 공식 한국어 자막을 최우선으로 읽는다.
+- 자막과 음성이 충돌하면 화면 자막을 보존한다.
+- 밈, 댓글, 요약문, 팬 번역, 다른 인물의 말은 실제 대사로 넣지 않는다.
+- 같은 자막 조각은 논리적인 한 발화로 합치고, 공백·문장부호만 다른 중복은 하나만 둔다.
+- 평상시·질문·동의·거절·장난·친밀함·분노·당황 등 서로 다른 상황을 넓게 고른다.
+
+아래 형식만 출력한다. 각 필드는 실제 탭 문자로 나누고 대사 안의 탭과 줄바꿈은 공백으로 바꾼다.
+[확신도] 높음/보통/낮음 - 한 줄 근거
+[대사]
+MM:SS<TAB>상황 태그<TAB>화자<TAB>대사 원문<TAB>출처 전체 URL<TAB>출처 제목<TAB>출처 등급<TAB>판본<TAB>언어<TAB>추출 확신도
 """.trimIndent()
 
 internal val ANALYZE_INSTRUCTION = """
@@ -70,6 +111,9 @@ internal val ANALYZE_INSTRUCTION = """
 - 피해야 할 것: 이 인물이 절대 쓰지 않을 법한 말투
 
 마지막에 '- 한 줄 요약:'으로 전체를 한 문장으로 압축한다.
+빈도 판정은 관찰 횟수/관련 표본 수와 서로 다른 상황 수를 함께 쓴다. '항상'은 관련 표본 전부와 3개 이상 상황에서
+일관될 때만, '자주'는 절반 이상이면서 3개 이상 상황일 때만 쓴다. 한 상황에서만 보이면 '드물게'로 적는다.
+대표 문구 자체보다 문장 구조·호흡·리듬, 호칭·높임 전환, 감정별 표현 강도를 앞에 둔다.
 설명이나 인사말 없이 목록만 출력한다.
 """.trimIndent()
 
@@ -103,7 +147,7 @@ internal val REFINE_INSTRUCTION = """
 설명이나 인사말 없이 고친 목록만 출력한다.
 """.trimIndent()
 
-fun parsePersonaLookup(text: String, sources: List<String>): PersonaLookup {
+fun parsePersonaLookup(text: String, sources: List<String>, sampleLimit: Int = 20): PersonaLookup {
     var confidence = "보통"
     var note = ""
     val samples = mutableListOf<String>()
@@ -141,7 +185,7 @@ fun parsePersonaLookup(text: String, sources: List<String>): PersonaLookup {
         note = note,
         samples = samples
             .distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }
-            .take(20),
+            .take(sampleLimit),
         styleGuide = guideLines.joinToString("\n"),
         sources = sources.distinct().sorted()
     )
@@ -171,6 +215,11 @@ suspend fun AIService.lookupPersona(
     val trimmed = query.trim()
     if (trimmed.isEmpty() && imageBase64 == null) {
         throw AIServiceException("캐릭터 이름이나 참고 링크를 입력해주세요.")
+    }
+
+    val companionControls = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
+    if (companionControls && imageBase64 == null) {
+        return@withContext lookupCompanionPersona(trimmed, roomId, apiKey, onProgress)
     }
 
     val parts = JSONArray()
@@ -220,6 +269,145 @@ suspend fun AIService.lookupPersona(
         throw AIServiceException(emptyResponseMessage(result.finishReason))
     }
     parsePersonaLookup(result.text, result.sources)
+}
+
+private suspend fun AIService.lookupCompanionPersona(
+    query: String,
+    roomId: UUID,
+    apiKey: String,
+    onProgress: (String) -> Unit
+): PersonaLookup {
+    onProgress("공식 출처를 찾고 있습니다…")
+    val discoveryBody = JSONObject()
+        .put(
+            "systemInstruction",
+            JSONObject().put("parts", JSONArray().put(JSONObject().put("text", PERSONA_SOURCE_DISCOVERY_INSTRUCTION)))
+        )
+        .put(
+            "contents",
+            JSONArray().put(
+                JSONObject().put("role", "user").put(
+                    "parts", JSONArray().put(JSONObject().put("text", "조사할 인물 또는 참고 자료: $query"))
+                )
+            )
+        )
+        .put(
+            "tools",
+            JSONArray().put(JSONObject().put("google_search", JSONObject()))
+                .put(JSONObject().put("url_context", JSONObject()))
+        )
+        .put(
+            "generationConfig",
+            JSONObject().put("maxOutputTokens", 3072)
+                .put("thinkingConfig", JSONObject().put("thinkingLevel", "medium"))
+        )
+    val discoveryCandidate = postGemini(discoveryBody, apiKey, roomId)
+        .optJSONArray("candidates")?.optJSONObject(0)
+    val discoveryText = discoveryCandidate?.let { joinParts(it) }.orEmpty()
+    val sources = parsePersonaSources(discoveryText)
+
+    if (sources.isEmpty()) {
+        return PersonaLookup(
+            confidence = "낮음",
+            note = "검증 가능한 원출처를 찾지 못했습니다. 기존 말투는 바꾸지 않습니다.",
+            samples = emptyList(),
+            styleGuide = "",
+            sources = emptyList()
+        )
+    }
+
+    val bestOfficial = sources.minOfOrNull { it.tier.priority }?.takeIf { it <= 2 }
+    val extractionSources = (if (bestOfficial != null) {
+        sources.filter { it.tier.priority == bestOfficial }
+    } else {
+        sources.filter { it.tier != PersonaSourceTier.UNVERIFIED }.ifEmpty { sources }
+    }).take(8)
+
+    onProgress(
+        if (personaVideoUrls(extractionSources).isNotEmpty()) "공식 영상 자막을 읽고 있습니다…"
+        else "공식 문서에서 대사를 확인하고 있습니다…"
+    )
+    fun extractionBody(forSources: List<PersonaSourceCandidate>): JSONObject = JSONObject()
+            .put(
+                "systemInstruction",
+                JSONObject().put("parts", JSONArray().put(JSONObject().put("text", PERSONA_EVIDENCE_EXTRACTION_INSTRUCTION)))
+            )
+            .put(
+                "contents",
+                JSONArray().put(
+                    JSONObject().put("role", "user")
+                        .put("parts", buildPersonaExtractionParts(forSources, query))
+                )
+            )
+            .apply {
+                if (forSources.any { !it.isYouTube }) {
+                    put("tools", JSONArray().put(JSONObject().put("url_context", JSONObject())))
+                }
+            }
+            .put(
+                "generationConfig",
+                JSONObject().put("maxOutputTokens", GEMINI_MAX_OUTPUT_TOKENS)
+                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "medium"))
+            )
+
+    suspend fun extract(forSources: List<PersonaSourceCandidate>): TextStreamResult = streamGeminiText(
+        extractionBody(forSources), apiKey, roomId
+    ) { soFar -> onProgress(AIService.lookupProgressLabel(soFar)) }
+
+    val textSources = extractionSources.filter { !it.isYouTube }.ifEmpty {
+        sources.filter { !it.isYouTube && it.tier.priority <= PersonaSourceTier.OFFICIAL_TEXT.priority }
+            .take(8)
+    }
+    var usedSources = extractionSources
+    var extraction = runCatching { extract(usedSources) }.getOrElse { error ->
+        if (textSources.isEmpty()) throw error
+        onProgress("영상 대신 공식 문서를 확인하고 있습니다…")
+        usedSources = textSources
+        extract(usedSources)
+    }
+    fun parsedEvidence(): List<PersonaSampleEvidence> {
+        val accessibleSourceUrls = personaVideoUrls(usedSources).toSet() +
+            usedSources.filter { !it.isYouTube }.map { it.url }
+        return selectPersonaEvidence(
+            parsePersonaEvidence(
+                extraction.text,
+                allowedSourceUrls = accessibleSourceUrls,
+                sourceCandidates = usedSources
+            )
+        )
+    }
+    var evidence = parsedEvidence()
+    if (evidence.isEmpty() && usedSources.any { it.isYouTube } && textSources.isNotEmpty()) {
+        onProgress("영상에서 대사를 확인하지 못해 공식 문서를 확인하고 있습니다…")
+        usedSources = textSources
+        extraction = extract(usedSources)
+        evidence = parsedEvidence()
+    }
+    if (evidence.isEmpty()) {
+        return PersonaLookup(
+            confidence = "낮음",
+            note = "원출처에서 해당 인물의 대사를 확인하지 못했습니다. 기존 말투는 바꾸지 않습니다.",
+            samples = emptyList(),
+            styleGuide = "",
+            sources = usedSources.map { it.url }.distinct()
+        )
+    }
+
+    onProgress("확인한 ${evidence.size}줄로 말투 규칙을 만들고 있습니다…")
+    val guide = analyzePersonaStyle(roomId, query, evidence.map { it.text }, ChatMode.COMPANION, evidence)
+    val confidenceLine = extraction.text.lineSequence()
+        .firstOrNull { it.trim().startsWith("[확신도]") }.orEmpty()
+    val confidence = listOf("높음", "보통", "낮음")
+        .firstOrNull { confidenceLine.substringAfter("[확신도]").trim().startsWith(it) } ?: "보통"
+    val note = confidenceLine.substringAfter(confidence, "").trim(' ', '-', '–', '—', '·')
+    return PersonaLookup(
+        confidence = confidence,
+        note = note.ifBlank { "원출처가 연결된 대사 ${evidence.size}줄을 확인했습니다." },
+        samples = evidence.map { it.text },
+        styleGuide = guide,
+        sources = evidence.map { it.sourceUrl }.filter { it.isNotBlank() }.distinct(),
+        evidence = evidence
+    )
 }
 
 /// 저장하기 전에 이 말투가 실제 그 캐릭터 같은지 확인할 수 있도록 짧은 답변을 만듭니다.
@@ -288,28 +476,34 @@ suspend fun AIService.analyzePersonaStyle(
     roomId: UUID,
     description: String,
     samples: List<String>,
-    mode: ChatMode = ChatMode.MATH_MENTOR
+    mode: ChatMode = ChatMode.MATH_MENTOR,
+    evidence: List<PersonaSampleEvidence> = emptyList()
 ): String =
     withContext(Dispatchers.IO) {
         val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
             ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
         val companionControls = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
-        val cleanedSamples = samples
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .let { values ->
-                if (companionControls) {
-                    values.distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }.take(12)
-                } else {
-                    values
-                }
-            }
+        val cleanedSamples = if (companionControls) {
+            val linked = reconcilePersonaEvidence(samples, evidence)
+            if (linked.isNotEmpty()) selectAnalysisEvidence(linked).map { it.text }
+            else selectPersonaEvidence(samples.map { PersonaSampleEvidence(text = it) }, PERSONA_ANALYSIS_LIMIT)
+                .map { it.text }
+        } else {
+            samples.map { it.trim() }.filter { it.isNotEmpty() }
+        }
         val joined = cleanedSamples.joinToString("\n")
         if (joined.isEmpty()) throw AIServiceException("말투를 분석할 대사를 먼저 입력해주세요.")
 
         var userText = ""
         if (description.isNotBlank()) userText += "인물 설명: ${description.trim()}\n\n"
         userText += "대사:\n$joined"
+        if (companionControls && evidence.isNotEmpty()) {
+            val selectedEvidence = selectAnalysisEvidence(reconcilePersonaEvidence(cleanedSamples, evidence))
+            userText += "\n\n표본 근거(등급 / 상황 / 유사표본 수 / 판본 / 출처):\n" + selectedEvidence.joinToString("\n") {
+                "${it.sourceTier} / ${it.contextTag.ifBlank { "미상" }} / ${it.similarSampleCount} / " +
+                    "${it.edition.ifBlank { "미상" }} / ${it.sourceUrl}"
+            }
+        }
 
         val body = JSONObject()
             .put(

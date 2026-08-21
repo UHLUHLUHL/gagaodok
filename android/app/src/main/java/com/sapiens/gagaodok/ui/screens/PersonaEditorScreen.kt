@@ -51,6 +51,7 @@ import com.sapiens.gagaodok.model.PersonaStyle
 import com.sapiens.gagaodok.service.AIService
 import com.sapiens.gagaodok.service.analyzePersonaStyle
 import com.sapiens.gagaodok.service.lookupPersona
+import com.sapiens.gagaodok.service.reconcilePersonaEvidence
 import com.sapiens.gagaodok.service.previewPersona
 import com.sapiens.gagaodok.service.refinePersonaStyle
 import com.sapiens.gagaodok.service.repetitionAdvice
@@ -90,6 +91,7 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
     var samplesText by remember {
         mutableStateOf(room.profile.persona.samples.joinToString("\n"))
     }
+    var sampleEvidence by remember { mutableStateOf(room.profile.persona.sampleEvidence) }
     var suppressedText by remember {
         mutableStateOf(room.profile.persona.suppressedExpressions.joinToString("\n"))
     }
@@ -122,7 +124,8 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 samples = samples(),
                 styleGuide = styleGuide.trim(),
                 isEnabled = enabled,
-                suppressedExpressions = suppressedExpressions()
+                suppressedExpressions = suppressedExpressions(),
+                sampleEvidence = reconcilePersonaEvidence(samples(), sampleEvidence)
             )
         )
     }
@@ -152,7 +155,14 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
         run("preview") {
             val answer = ai.previewPersona(
                 roomId,
-                PersonaStyle(description, samples(), styleGuide, true),
+                PersonaStyle(
+                    description = description,
+                    samples = samples(),
+                    styleGuide = styleGuide,
+                    isEnabled = true,
+                    suppressedExpressions = suppressedExpressions(),
+                    sampleEvidence = reconcilePersonaEvidence(samples(), sampleEvidence)
+                ),
                 room.profile.name,
                 message,
                 mode,
@@ -242,6 +252,7 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                             return@run
                         }
                         if (result.samples.isNotEmpty()) samplesText = result.samples.joinToString("\n")
+                        sampleEvidence = result.evidence
                         if (result.styleGuide.isNotEmpty()) styleGuide = result.styleGuide
                         if (description.isBlank()) description = lookupQuery.trim()
                         status = buildString {
@@ -279,7 +290,13 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 run("analyze") {
-                    styleGuide = ai.analyzePersonaStyle(roomId, description, samples(), mode)
+                    styleGuide = ai.analyzePersonaStyle(
+                        roomId,
+                        description,
+                        samples(),
+                        mode,
+                        reconcilePersonaEvidence(samples(), sampleEvidence)
+                    )
                     status = "말투 규칙을 새로 만들었습니다."
                 }
             }

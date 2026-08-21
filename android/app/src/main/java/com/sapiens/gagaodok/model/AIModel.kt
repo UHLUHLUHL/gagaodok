@@ -28,19 +28,19 @@ enum class AIModel(val rawValue: String) {
     val inputPricePerMillion: Double
         get() = when (this) {
             GEMINI_37_FLASH -> if (isIntroductoryPricingActive) 0.75 else 1.50
-            GPT_56_LUNA -> 1.00
+            GPT_56_LUNA -> 0.20
         }
 
     val cachedInputPricePerMillion: Double
         get() = when (this) {
             GEMINI_37_FLASH -> if (isIntroductoryPricingActive) 0.075 else 0.15
-            GPT_56_LUNA -> 0.10
+            GPT_56_LUNA -> 0.02
         }
 
     val outputPricePerMillion: Double
         get() = when (this) {
             GEMINI_37_FLASH -> if (isIntroductoryPricingActive) 3.75 else 7.50
-            GPT_56_LUNA -> 6.00
+            GPT_56_LUNA -> 1.20
         }
 
     /// 명시적 캐시를 1시간 보관할 때 100만 토큰당 요금입니다.

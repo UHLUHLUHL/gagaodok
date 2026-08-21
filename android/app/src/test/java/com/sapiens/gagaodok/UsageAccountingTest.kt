@@ -4,6 +4,7 @@ import com.sapiens.gagaodok.data.ModelTokenUsage
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.service.AIService
+import com.sapiens.gagaodok.service.MINIMUM_CACHE_TOKENS
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,6 +16,18 @@ import org.junit.Test
 class UsageAccountingTest {
 
     private val model = AIModel.GEMINI_37_FLASH
+
+    @Test
+    fun `Gemini 명시적 캐시는 공식 최소값보다 추정 여유를 둔다`() {
+        assertEquals(4_600, MINIMUM_CACHE_TOKENS)
+    }
+
+    @Test
+    fun `Luna 최신 인하 단가를 사용한다`() {
+        assertEquals(0.20, AIModel.GPT_56_LUNA.inputPricePerMillion, 0.0)
+        assertEquals(0.02, AIModel.GPT_56_LUNA.cachedInputPricePerMillion, 0.0)
+        assertEquals(1.20, AIModel.GPT_56_LUNA.outputPricePerMillion, 0.0)
+    }
 
     @Test
     fun `캐시에 올린 토큰도 요금에 들어간다`() {

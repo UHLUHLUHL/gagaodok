@@ -1,7 +1,32 @@
 package com.sapiens.gagaodok.model
 
 import kotlinx.serialization.Serializable
+import com.sapiens.gagaodok.service.selectRuntimePersonaSamples
 import java.util.UUID
+
+@Serializable
+enum class PersonaSourceTier(val priority: Int) {
+    OFFICIAL_LOCALIZED_VIDEO(0),
+    OFFICIAL_ORIGINAL_VIDEO(1),
+    OFFICIAL_TEXT(2),
+    REPUTABLE_SECONDARY(3),
+    UNVERIFIED(4)
+}
+
+@Serializable
+data class PersonaSampleEvidence(
+    val text: String = "",
+    val speaker: String = "",
+    val sourceUrl: String = "",
+    val sourceTitle: String = "",
+    val sourceTier: PersonaSourceTier = PersonaSourceTier.UNVERIFIED,
+    val edition: String = "",
+    val language: String = "",
+    val timestampSeconds: Int? = null,
+    val contextTag: String = "",
+    val confidence: String = "",
+    val similarSampleCount: Int = 1
+)
 
 /// 방마다 다른 말투를 주기 위한 설정입니다.
 ///
@@ -20,7 +45,9 @@ data class PersonaStyle(
     val isEnabled: Boolean = false,
     /// 사용자가 편집 화면이나 말풍선 메뉴에서 직접 억제하기로 한 표현입니다.
     /// 자동 감지 결과는 여기에 저장하지 않습니다.
-    val suppressedExpressions: List<String> = emptyList()
+    val suppressedExpressions: List<String> = emptyList(),
+    /// 자동 조사에서 대사가 어디서 확인됐는지 나타냅니다. 옛 저장에는 없으므로 기본은 빈 목록입니다.
+    val sampleEvidence: List<PersonaSampleEvidence> = emptyList()
 ) {
     val hasContent: Boolean
         get() = description.isNotBlank() || styleGuide.isNotBlank() || samples.isNotEmpty()
@@ -58,11 +85,7 @@ data class PersonaStyle(
             lines += ""
             if (mode == ChatMode.COMPANION && companionRepetitionControlEnabled) {
                 lines += "아래는 이 인물의 실제 대사에서 고른 관찰 표본이다. 표본 수보다 다양성을 우선한다."
-                samples
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }
-                    .take(8)
+                selectRuntimePersonaSamples(samples, sampleEvidence)
                     .forEach { lines += "- $it" }
                 lines += ""
             } else {
