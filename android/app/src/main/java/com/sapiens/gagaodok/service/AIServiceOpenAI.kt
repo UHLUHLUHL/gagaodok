@@ -19,7 +19,8 @@ internal fun AIService.sendOpenAIRequest(
     botName: String,
     roomId: UUID,
     persona: PersonaStyle?,
-    mode: ChatMode
+    mode: ChatMode,
+    repetitionAdvice: RepetitionAdvice?
 ): String {
     val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.OPENAI)
         ?: throw AIServiceException("설정에서 OpenAI API 키를 먼저 등록해주세요.")
@@ -27,7 +28,7 @@ internal fun AIService.sendOpenAIRequest(
     val body = JSONObject()
         .put("model", AIModel.GPT_56_LUNA.rawValue)
         .put("instructions", systemPrompt(botName, persona, mode))
-        .put("input", buildOpenAIInput(conversation))
+        .put("input", buildOpenAIInput(conversation.withRepetitionGuidance(repetitionAdvice)))
         .put("prompt_cache_key", "gagaodok-room-$roomId")
         // 대화가 뒤에 계속 추가되는 메신저에는 implicit 경계가 가장 잘 맞습니다.
         .put("prompt_cache_options", JSONObject().put("mode", "implicit").put("ttl", "30m"))

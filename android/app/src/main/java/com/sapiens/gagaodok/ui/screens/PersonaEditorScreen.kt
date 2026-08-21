@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.PersonaStyle
@@ -52,6 +53,7 @@ import com.sapiens.gagaodok.service.analyzePersonaStyle
 import com.sapiens.gagaodok.service.lookupPersona
 import com.sapiens.gagaodok.service.previewPersona
 import com.sapiens.gagaodok.service.refinePersonaStyle
+import com.sapiens.gagaodok.service.repetitionAdvice
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -85,6 +87,9 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
     var samplesText by remember {
         mutableStateOf(room.profile.persona.samples.joinToString("\n"))
     }
+    var suppressedText by remember {
+        mutableStateOf(room.profile.persona.suppressedExpressions.joinToString("\n"))
+    }
     var lookupQuery by remember { mutableStateOf("") }
     var refineInstruction by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -101,6 +106,11 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
 
     fun samples(): List<String> = samplesText.lines().map { it.trim() }.filter { it.isNotEmpty() }
 
+    fun suppressedExpressions(): List<String> = suppressedText.lines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }
+
     fun save() {
         app.chatStore.updatePersona(
             roomId,
@@ -108,7 +118,8 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 description = description.trim(),
                 samples = samples(),
                 styleGuide = styleGuide.trim(),
-                isEnabled = enabled
+                isEnabled = enabled,
+                suppressedExpressions = suppressedExpressions()
             )
         )
     }
@@ -139,7 +150,10 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
             val answer = ai.previewPersona(
                 roomId,
                 PersonaStyle(description, samples(), styleGuide, true),
-                room.profile.name, message, mode
+                room.profile.name,
+                message,
+                mode,
+                repetitionAdvice(emptyList(), suppressedExpressions())
             )
             previewAnswers = previewAnswers + (message to answer)
         }
@@ -217,6 +231,7 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                         val result = ai.lookupPersona(
                             lookupQuery,
                             roomId,
+                            mode = mode,
                             onProgress = { progress = it }
                         )
                         if (!result.isUsable) {
@@ -256,7 +271,7 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 run("analyze") {
-                    styleGuide = ai.analyzePersonaStyle(roomId, description, samples())
+                    styleGuide = ai.analyzePersonaStyle(roomId, description, samples(), mode)
                     status = "말투 규칙을 새로 만들었습니다."
                 }
             }
@@ -284,6 +299,16 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                 }
             }
             if (busy == "refine") BusyLine("규칙을 고치고 있습니다…")
+
+            if (!BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
+                SectionTitle("반복하지 않을 표현")
+                Text(
+                    "자동으로 저장하지 않습니다. 직접 금지하거나 줄이고 싶은 표현만 한 줄에 하나씩 적고 저장하세요.",
+                    style = KakaoText.caption,
+                    color = colors.textTertiary
+                )
+                Field("", suppressedText, minHeight = 88.dp) { suppressedText = it }
+            }
 
             // MARK: - 미리보기
             //

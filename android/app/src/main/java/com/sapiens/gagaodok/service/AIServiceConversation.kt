@@ -30,6 +30,7 @@ internal suspend fun AIService.sendGeminiRequest(
     persona: PersonaStyle?,
     mode: ChatMode,
     roleplayInProgress: Boolean,
+    repetitionAdvice: RepetitionAdvice?,
     onBubble: suspend (GeneratedMessageBubble) -> Unit
 ): String {
     val model = AIModel.GEMINI_37_FLASH
@@ -43,6 +44,8 @@ internal suspend fun AIService.sendGeminiRequest(
 
     var contents = buildGeminiContents(plan.verbatimTurns)
     plan.digestText?.let { contents = digestPreamble(it) + contents }
+    var requestContents = buildGeminiContents(plan.verbatimTurns.withRepetitionGuidance(repetitionAdvice))
+    plan.digestText?.let { requestContents = digestPreamble(it) + requestContents }
     val system = systemPrompt(botName, persona, mode)
 
     // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
@@ -65,7 +68,7 @@ internal suspend fun AIService.sendGeminiRequest(
     // 손에 있습니다. 그걸 버리지 않고 적습니다.
     val outcome = StreamOutcome()
     try {
-        streamGemini(outcome, contents, system, cache, apiKey, model, mode) { sink.consume(it) }
+        streamGemini(outcome, requestContents, system, cache, apiKey, model, mode) { sink.consume(it) }
         sink.finish()
     } finally {
         val reported = outcome.usage

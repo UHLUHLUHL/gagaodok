@@ -19,9 +19,13 @@ fun messageMenuItems(
     onDone: () -> Unit,
     onEdit: () -> Unit,
     onResend: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onSuppressExpression: (() -> Unit)? = null
 ): List<KakaoMenuItem> = buildList {
     add(KakaoMenuItem("복사") { copyToClipboard(context, message.text); onDone() })
+    onSuppressExpression?.let {
+        add(KakaoMenuItem("이 시작 표현 반복하지 않기") { it(); onDone() })
+    }
     when (MessageResendLogic.actionFor(message)) {
         MessageUserAction.EDIT -> add(KakaoMenuItem("수정", onClick = onEdit))
         MessageUserAction.RESEND -> add(KakaoMenuItem("다시 보내기", onClick = onResend))

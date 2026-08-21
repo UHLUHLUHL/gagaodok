@@ -1,6 +1,7 @@
 package com.sapiens.gagaodok.service
 
 import android.content.Context
+import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.ChatStore
 import com.sapiens.gagaodok.data.TokenUsageStore
 import com.sapiens.gagaodok.model.AIModel
@@ -59,7 +60,11 @@ class AIService private constructor(internal val appContext: Context) {
         // 방 이름 같은 동적 값은 끝에 둬 캐시 적중률을 높입니다.
         var prompt = mode.stableSystemPrompt
         // 말투는 방마다 고정이라 캐시 접두사 안쪽에 두어도 적중률이 떨어지지 않습니다.
-        persona?.promptSection(botName, mode)?.let { prompt += "\n\n$it" }
+        persona?.promptSection(
+            botName,
+            mode,
+            companionRepetitionControlEnabled = !BuildConfig.TABLET_MENTOR
+        )?.let { prompt += "\n\n$it" }
         prompt += "\n\n# 현재 대화 설정\n이 대화에서 당신의 이름은 '$botName'이다. 자신을 지칭해야 할 때 이 이름을 사용한다."
         return prompt
     }
@@ -70,7 +75,7 @@ class AIService private constructor(internal val appContext: Context) {
     /// 글자 단위로 올리지 않는 이유는 청크가 수식 한가운데서 끊기기 때문입니다.
     /// `StreamingBubbleBuffer`가 구분자가 모두 닫힌 문단만 통과시키므로
     /// 깨진 수식이 화면에 뜨는 일이 없습니다.
-    suspend fun streamResponse(
+    internal suspend fun streamResponse(
         conversation: List<ConversationTurn>,
         botName: String,
         roomId: UUID,
@@ -78,15 +83,16 @@ class AIService private constructor(internal val appContext: Context) {
         persona: PersonaStyle?,
         mode: ChatMode,
         roleplayInProgress: Boolean,
+        repetitionAdvice: RepetitionAdvice? = null,
         onBubble: suspend (GeneratedMessageBubble) -> Unit
     ): String = withContext(Dispatchers.IO) {
         when (model) {
             AIModel.GEMINI_37_FLASH -> sendGeminiRequest(
-                conversation, botName, roomId, persona, mode, roleplayInProgress, onBubble
+                conversation, botName, roomId, persona, mode, roleplayInProgress, repetitionAdvice, onBubble
             )
             AIModel.GPT_56_LUNA -> {
                 // Luna는 스트리밍하지 않습니다. 한 번에 받아 말풍선으로 갈라 내보냅니다.
-                val raw = sendOpenAIRequest(conversation, botName, roomId, persona, mode)
+                val raw = sendOpenAIRequest(conversation, botName, roomId, persona, mode, repetitionAdvice)
                 parseResponseIntoBubbles(raw, botName, mode == ChatMode.COMPANION && roleplayInProgress)
                     .forEach { onBubble(it) }
                 raw

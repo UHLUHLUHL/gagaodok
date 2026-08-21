@@ -140,6 +140,27 @@ class ChatStore private constructor(context: Context) {
     fun updatePersona(roomId: UUID, persona: PersonaStyle) =
         update(roomId) { it.copy(profile = it.profile.copy(persona = persona)) }
 
+    /// 사용자가 직접 선택한 표현만 방별 영구 규칙으로 추가합니다.
+    /// 자동 감지 결과를 이 목록에 넣는 호출은 없습니다.
+    fun suppressExpression(roomId: UUID, expression: String) {
+        val trimmed = expression.trim()
+        if (trimmed.isEmpty()) return
+        update(roomId) { room ->
+            val persona = room.profile.persona
+            if (persona.suppressedExpressions.any { it.trim().equals(trimmed, ignoreCase = true) }) {
+                room
+            } else {
+                room.copy(
+                    profile = room.profile.copy(
+                        persona = persona.copy(
+                            suppressedExpressions = persona.suppressedExpressions + trimmed
+                        )
+                    )
+                )
+            }
+        }
+    }
+
     fun togglePinned(roomId: UUID) = update(roomId) { it.copy(isPinned = !it.isPinned) }
 
     fun updateAvatar(roomId: UUID, bitmap: Bitmap?) {

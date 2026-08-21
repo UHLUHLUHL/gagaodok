@@ -58,12 +58,14 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sapiens.gagaodok.GagaodokApp
+import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.InkDocument
 import com.sapiens.gagaodok.service.InkAttachmentFactory
+import com.sapiens.gagaodok.service.extractOpeningPhrase
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.components.KakaoMenuItem
@@ -250,8 +252,20 @@ fun ChatRoomScreen(
     )
 
     // 말풍선을 길게 눌렀을 때 나오는 메뉴입니다.
-    fun openMessageMenu(target: ChatMessage) = menu.show(
-        *messageMenuItems(
+    fun openMessageMenu(target: ChatMessage) {
+        val suppressPhrase = if (
+            !BuildConfig.TABLET_MENTOR &&
+            activeMode == ChatMode.COMPANION &&
+            target.sender == com.sapiens.gagaodok.model.MessageSender.SAPIENS
+        ) {
+            extractOpeningPhrase(target.text)?.takeIf { candidate ->
+                room.profile.persona.suppressedExpressions.none {
+                    it.trim().equals(candidate, ignoreCase = true)
+                }
+            }
+        } else null
+
+        menu.show(*messageMenuItems(
             context = context,
             message = target,
             onDone = { menu.dismiss() },
@@ -266,9 +280,12 @@ fun ChatRoomScreen(
                 menu.dismiss()
                 vm.resendFromMessage(target, replacementText = null, room = room, model = activeModel)
             },
-            onDelete = { menu.dismiss(); vm.delete(target) }
-        ).toTypedArray()
-    )
+            onDelete = { menu.dismiss(); vm.delete(target) },
+            onSuppressExpression = suppressPhrase?.let { phrase ->
+                { app.chatStore.suppressExpression(room.id, phrase) }
+            }
+        ).toTypedArray())
+    }
 
     Box(
         Modifier.fillMaxSize().background(colors.chatBackground),

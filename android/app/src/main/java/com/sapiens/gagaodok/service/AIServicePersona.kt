@@ -1,5 +1,6 @@
 package com.sapiens.gagaodok.service
 
+import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.SecureStore
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.PersonaStyle
@@ -48,7 +49,31 @@ internal val LOOKUP_INSTRUCTION = """
 없는 사실을 지어내지 않는다. 확실하지 않으면 확신도를 낮춘다.
 """.trimIndent()
 
+private val COMPANION_LOOKUP_SUFFIX = """
+챗봇 말투를 위한 분석에서는 대표 문구를 암기시키지 않는다. 문장 구조와 리듬, 호칭, 감정 표현을 우선한다.
+표현마다 항상/자주/가끔/드물게의 빈도를 구분하고, 한 번만 나온 표현이나 중복 표본을 말버릇으로 단정하지 않는다.
+같은 시작 표현을 여러 대사에 반복해서 싣지 말고, 실제로 확인된 서로 다른 표본만 최대 12줄까지 고른다.
+""".trimIndent()
+
 internal val ANALYZE_INSTRUCTION = """
+너는 말투 분석가다. 아래 대사를 읽고, 다른 사람이 이 인물의 말투를 그대로 재현할 수 있도록
+관찰된 특징만 한국어로 정리한다. 대사에 없는 특징은 지어내지 않는다.
+
+다음 항목을 각각 한 줄씩, '- 항목: 내용' 형태로 쓴다. 해당 없으면 그 줄은 생략한다.
+- 문장 끝맺음: 항상/자주/가끔/드물게 중 빈도와 함께, 어미와 종결 형태를 실제 예와 함께
+- 높임 수준: 반말/존댓말/혼용 중 무엇이며 어떤 상황에서 바뀌는지
+- 1인칭과 호칭: 자기를 뭐라 부르고 상대를 뭐라 부르는지
+- 표현 빈도: 항상/자주/가끔/드물게로 구분하고, 표본에 한 번만 나온 것을 말버릇으로 단정하지 않기
+- 표본 중복: 같은 내용이 반복된 표본은 하나로 보고, 중복이 특징의 빈도를 부풀리지 않기
+- 문장 구조와 리듬: 절과 문장 길이, 끊는 위치, 반복되는 구조를 우선해 설명하기
+- 감정 표현: 이모지·물결·느낌표 사용 습관과 강도
+- 피해야 할 것: 이 인물이 절대 쓰지 않을 법한 말투
+
+마지막에 '- 한 줄 요약:'으로 전체를 한 문장으로 압축한다.
+설명이나 인사말 없이 목록만 출력한다.
+""".trimIndent()
+
+private val MENTOR_ANALYZE_INSTRUCTION = """
 너는 말투 분석가다. 아래 대사를 읽고, 다른 사람이 이 인물의 말투를 그대로 재현할 수 있도록
 관찰된 특징만 한국어로 정리한다. 대사에 없는 특징은 지어내지 않는다.
 
@@ -114,7 +139,9 @@ fun parsePersonaLookup(text: String, sources: List<String>): PersonaLookup {
     return PersonaLookup(
         confidence = confidence,
         note = note,
-        samples = samples,
+        samples = samples
+            .distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }
+            .take(20),
         styleGuide = guideLines.joinToString("\n"),
         sources = sources.distinct().sorted()
     )
@@ -136,6 +163,7 @@ suspend fun AIService.lookupPersona(
     roomId: UUID,
     imageBase64: String? = null,
     imageMimeType: String? = null,
+    mode: ChatMode = ChatMode.MATH_MENTOR,
     onProgress: (String) -> Unit = {}
 ): PersonaLookup = withContext(Dispatchers.IO) {
     val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
@@ -158,7 +186,22 @@ suspend fun AIService.lookupPersona(
     }
 
     val body = JSONObject()
-        .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", LOOKUP_INSTRUCTION))))
+            .put(
+                "systemInstruction",
+                JSONObject().put(
+                    "parts",
+                    JSONArray().put(
+                        JSONObject().put(
+                            "text",
+                            if (!BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
+                                "$LOOKUP_INSTRUCTION\n\n$COMPANION_LOOKUP_SUFFIX"
+                            } else {
+                                LOOKUP_INSTRUCTION
+                            }
+                        )
+                    )
+                )
+            )
         .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
         // 이름이면 검색이, 링크가 섞여 있으면 URL 읽기가 각각 동작합니다.
         .put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject()))
@@ -181,12 +224,13 @@ suspend fun AIService.lookupPersona(
 
 /// 저장하기 전에 이 말투가 실제 그 캐릭터 같은지 확인할 수 있도록 짧은 답변을 만듭니다.
 /// 실제 대화와 똑같은 시스템 지침을 쓰므로, 여기서 보이는 결이 채팅방에서도 그대로 나옵니다.
-suspend fun AIService.previewPersona(
+internal suspend fun AIService.previewPersona(
     roomId: UUID,
     persona: PersonaStyle,
     botName: String,
     message: String,
-    mode: ChatMode
+    mode: ChatMode,
+    repetitionAdvice: RepetitionAdvice? = null
 ): String = withContext(Dispatchers.IO) {
     val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
         ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
@@ -197,8 +241,16 @@ suspend fun AIService.previewPersona(
         .put(
             "contents",
             JSONArray().put(
-                JSONObject().put("role", "user")
-                    .put("parts", JSONArray().put(JSONObject().put("text", message)))
+                    JSONObject().put("role", "user")
+                    .put(
+                        "parts",
+                        JSONArray().put(
+                            JSONObject().put(
+                                "text",
+                                repetitionAdvice?.promptSection()?.let { "$message\n\n$it" } ?: message
+                            )
+                        )
+                    )
             )
         )
         .put(
@@ -232,11 +284,27 @@ suspend fun AIService.previewPersona(
 /// 모델에게 "이 캐릭터처럼 말해"라고만 하면 흉내가 흐려집니다.
 /// 관찰 가능한 항목(문장 끝맺음, 호칭, 자주 쓰는 어휘, 문장 길이 등)을 짚어서 적게 하면
 /// 이후 대화에서 재현이 훨씬 안정적입니다.
-suspend fun AIService.analyzePersonaStyle(roomId: UUID, description: String, samples: List<String>): String =
+suspend fun AIService.analyzePersonaStyle(
+    roomId: UUID,
+    description: String,
+    samples: List<String>,
+    mode: ChatMode = ChatMode.MATH_MENTOR
+): String =
     withContext(Dispatchers.IO) {
         val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
             ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
-        val joined = samples.map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+        val companionControls = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
+        val cleanedSamples = samples
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .let { values ->
+                if (companionControls) {
+                    values.distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }.take(12)
+                } else {
+                    values
+                }
+            }
+        val joined = cleanedSamples.joinToString("\n")
         if (joined.isEmpty()) throw AIServiceException("말투를 분석할 대사를 먼저 입력해주세요.")
 
         var userText = ""
@@ -244,7 +312,18 @@ suspend fun AIService.analyzePersonaStyle(roomId: UUID, description: String, sam
         userText += "대사:\n$joined"
 
         val body = JSONObject()
-            .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", ANALYZE_INSTRUCTION))))
+            .put(
+                "systemInstruction",
+                JSONObject().put(
+                    "parts",
+                    JSONArray().put(
+                        JSONObject().put(
+                            "text",
+                            if (companionControls) ANALYZE_INSTRUCTION else MENTOR_ANALYZE_INSTRUCTION
+                        )
+                    )
+                )
+            )
             .put(
                 "contents",
                 JSONArray().put(

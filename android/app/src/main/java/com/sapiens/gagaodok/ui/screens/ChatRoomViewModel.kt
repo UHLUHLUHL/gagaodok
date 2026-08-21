@@ -4,6 +4,7 @@ import android.app.Application
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatAttachment
@@ -15,6 +16,7 @@ import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.service.AIService
 import com.sapiens.gagaodok.service.AIServiceException
 import com.sapiens.gagaodok.service.RoleplayParser
+import com.sapiens.gagaodok.service.repetitionAdviceFromConversation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,6 +137,11 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         // 그 턴에 따옴표 대사가 나올지 아직 모릅니다. 앞 턴이 상황극이었다면 알려 줍니다.
         val wasRoleplaying = RoleplayParser.roleplayInProgress(history)
         val mode = room.resolvedMode
+        val repeatControl = if (!BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
+            repetitionAdviceFromConversation(conversation, room.profile.persona.suppressedExpressions)
+        } else {
+            null
+        }
 
         responseJob?.cancel()
         responseJob = viewModelScope.launch {
@@ -149,7 +156,8 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                         model = model,
                         persona = room.profile.persona.takeIf { it.isEnabled },
                         mode = mode,
-                        roleplayInProgress = wasRoleplaying
+                        roleplayInProgress = wasRoleplaying,
+                        repetitionAdvice = repeatControl
                     ) { bubble ->
                         // 첫 말풍선이 붙는 순간 타이핑 표시를 끕니다.
                         _isTyping.value = false

@@ -17,7 +17,10 @@ data class PersonaStyle(
     /// 예시에서 추출한 말투 규칙. 비어 있으면 예시만 보냅니다.
     val styleGuide: String = "",
     /// 말투를 실제로 적용할지 여부.
-    val isEnabled: Boolean = false
+    val isEnabled: Boolean = false,
+    /// 사용자가 편집 화면이나 말풍선 메뉴에서 직접 억제하기로 한 표현입니다.
+    /// 자동 감지 결과는 여기에 저장하지 않습니다.
+    val suppressedExpressions: List<String> = emptyList()
 ) {
     val hasContent: Boolean
         get() = description.isNotBlank() || styleGuide.isNotBlank() || samples.isNotEmpty()
@@ -27,7 +30,11 @@ data class PersonaStyle(
     ///
     /// 모드에 따라 요구 강도가 다릅니다. 멘토 모드에서 인물은 겉옷이라 풀이가 우선이지만,
     /// 챗봇 모드에서는 인물이 대화의 전부입니다. 같은 문장을 쓰면 한쪽이 반드시 어긋납니다.
-    fun promptSection(botName: String, mode: ChatMode = ChatMode.MATH_MENTOR): String? {
+    fun promptSection(
+        botName: String,
+        mode: ChatMode = ChatMode.MATH_MENTOR,
+        companionRepetitionControlEnabled: Boolean = true
+    ): String? {
         if (!isEnabled || !hasContent) return null
 
         val lines = mutableListOf<String>()
@@ -49,12 +56,29 @@ data class PersonaStyle(
         }
         if (samples.isNotEmpty()) {
             lines += ""
-            lines += "아래는 이 인물의 실제 대사다. 어휘와 문장 끝맺음을 이 결에 맞춘다."
-            samples.take(20).forEach { lines += "- ${it.trim()}" }
+            if (mode == ChatMode.COMPANION && companionRepetitionControlEnabled) {
+                lines += "아래는 이 인물의 실제 대사에서 고른 관찰 표본이다. 표본 수보다 다양성을 우선한다."
+                samples
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinctBy { it.lowercase().replace(Regex("\\s+"), " ") }
+                    .take(8)
+                    .forEach { lines += "- $it" }
+                lines += ""
+            } else {
+                lines += "아래는 이 인물의 실제 대사다. 어휘와 문장 끝맺음을 이 결에 맞춘다."
+                samples.take(20).forEach { lines += "- ${it.trim()}" }
+            }
             // 예시를 그대로 붙여넣는 실수가 잦습니다. 칭찬 대사를 지적하는 상황에 쓰는 식입니다.
             lines += ""
             lines += "이 대사들은 말투를 보여주는 견본일 뿐이다. 문장을 그대로 복사하지 않는다."
             lines += "지금 상황에 맞는 말을 새로 만들되 어투만 같게 한다."
+        }
+        if (mode == ChatMode.COMPANION && companionRepetitionControlEnabled) {
+            lines += ""
+            lines += "재현 우선순위는 문장 구조와 호흡·리듬, 호칭과 높임 수준, 감정 표현과 강도, 어휘 순서다."
+            lines += "특정 문구나 이름으로 시작하는 버릇은 항상 쓰지 말고, 자주 쓰는 특징도 상황에 맞을 때만 쓴다."
+            lines += "대표 대사는 가끔만 참고하고, 같은 시작 표현이나 반복 구문은 드물게 사용한다."
         }
         lines += ""
         when (mode) {
