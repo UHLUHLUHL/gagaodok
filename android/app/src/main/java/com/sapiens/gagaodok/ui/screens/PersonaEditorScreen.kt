@@ -56,6 +56,9 @@ import com.sapiens.gagaodok.service.refinePersonaStyle
 import com.sapiens.gagaodok.service.repetitionAdvice
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
+import com.sapiens.gagaodok.ui.components.PersonaLoadingSignal
+import com.sapiens.gagaodok.ui.components.personaLoadingPresentation
+import com.sapiens.gagaodok.ui.components.shouldUsePersonaLoadingSignal
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import kotlinx.coroutines.launch
@@ -253,7 +256,12 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
             // 진행 줄은 누른 단추 **바로 아래**에 둡니다. 예전에는 화면 맨 끝에 있어서,
             // 긴 화면을 스크롤해 내려가지 않으면 뭔가 되고 있는지조차 안 보였습니다.
             if (busy == "lookup") {
-                BusyLine(progress ?: "자료를 찾고 있습니다…")
+                PersonaLoadingFeedback(
+                    busy = "lookup",
+                    progress = progress,
+                    mode = mode,
+                    fallbackText = progress ?: "자료를 찾고 있습니다…"
+                )
             }
 
             // MARK: - 대사
@@ -275,7 +283,14 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
                     status = "말투 규칙을 새로 만들었습니다."
                 }
             }
-            if (busy == "analyze") BusyLine("대사에서 말투를 뽑고 있습니다…")
+            if (busy == "analyze") {
+                PersonaLoadingFeedback(
+                    busy = "analyze",
+                    progress = null,
+                    mode = mode,
+                    fallbackText = "대사에서 말투를 뽑고 있습니다…"
+                )
+            }
 
             // MARK: - 규칙
             SectionTitle("말투 규칙")
@@ -400,6 +415,26 @@ fun PersonaEditorScreen(roomId: UUID, onBack: () -> Unit) {
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = KakaoText.roomName, color = KakaoTheme.colors.textPrimary)
+}
+
+/// phone 챗봇의 긴 말투 조사만 대화 신호를 씁니다.
+/// 멘토와 태블릿은 기존의 작은 진행 줄을 그대로 유지합니다.
+@Composable
+private fun PersonaLoadingFeedback(
+    busy: String,
+    progress: String?,
+    mode: ChatMode,
+    fallbackText: String
+) {
+    val presentation = personaLoadingPresentation(busy, progress)
+    if (
+        presentation != null &&
+        shouldUsePersonaLoadingSignal(BuildConfig.TABLET_MENTOR, mode)
+    ) {
+        PersonaLoadingSignal(presentation)
+    } else {
+        BusyLine(fallbackText)
+    }
 }
 
 /// 지금 무엇을 하고 있는지 한 줄로 보여줍니다. 누른 단추 바로 아래에 놓습니다.
