@@ -1,5 +1,7 @@
 package com.sapiens.gagaodok.service
 
+import com.sapiens.gagaodok.data.CacheDecision
+import com.sapiens.gagaodok.data.CacheObservation
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.Codec
 import kotlinx.coroutines.launch
@@ -106,7 +108,8 @@ internal suspend fun AIService.refreshPrefixCache(
     contents: List<JSONObject>,
     system: String,
     apiKey: String,
-    previousRequestAt: Long?
+    previousRequestAt: Long?,
+    measure: Boolean = false
 ) {
     val key = roomId.toString()
     // 막지 않으면 같은 방에 대해 갱신이 겹치면서 캐시가 여러 개 만들어지고
@@ -122,7 +125,15 @@ internal suspend fun AIService.refreshPrefixCache(
         // 사진도 함께 셉니다. 글자만 세던 시절에는 사진이 0자로 잡혀서,
         // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
         val estimated = estimateTokens(contents) + TokenEstimator.textTokens(system)
-        if (estimated < MINIMUM_CACHE_TOKENS) return
+        fun observe(decision: CacheDecision, actualTokens: Int = 0) {
+            if (measure) measurement.observeCache(
+                CacheObservation(key, estimated, decision, actualTokens)
+            )
+        }
+        if (estimated < MINIMUM_CACHE_TOKENS) {
+            observe(CacheDecision.BELOW_MINIMUM)
+            return
+        }
 
         if (previous == null) {
             // **아직 캐시가 없으면, 대화가 이어지는 중일 때만 만듭니다.**
@@ -139,14 +150,20 @@ internal suspend fun AIService.refreshPrefixCache(
             // 5분은 **정한 값입니다.** 실제 사용 기록을 보고 뽑은 값이 아닙니다.
             val ongoing = previousRequestAt != null &&
                 now - previousRequestAt <= CACHE_BURST_WINDOW_MILLIS
-            if (!ongoing) return
+            if (!ongoing) {
+                observe(CacheDecision.NOT_BURST)
+                return
+            }
         }
 
         if (previous != null) {
             // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
             if (previous.coveredTurns >= contents.size &&
                 previous.expiresAtMillis > now + 60_000
-            ) return
+            ) {
+                observe(CacheDecision.CACHE_CURRENT)
+                return
+            }
 
             // **매 턴 다시 만들지 않습니다.**
             //
@@ -160,8 +177,12 @@ internal suspend fun AIService.refreshPrefixCache(
             val tail = estimateTokens(contents.drop(previous.coveredTurns))
             val worthIt = tail >= maxOf(CACHE_REFRESH_MIN_TAIL_TOKENS, previous.tokenCount / 5)
             val expiringSoon = previous.expiresAtMillis <= now + CACHE_REFRESH_TTL_FLOOR_MILLIS
-            if (!worthIt && !expiringSoon) return
+            if (!worthIt && !expiringSoon) {
+                observe(CacheDecision.TAIL_TOO_SMALL)
+                return
+            }
         }
+        observe(CacheDecision.CREATE_ATTEMPT)
         val payload = JSONObject()
             .put("model", "models/${AIModel.GEMINI_37_FLASH.rawValue}")
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
@@ -176,15 +197,25 @@ internal suspend fun AIService.refreshPrefixCache(
             .build()
 
         // 캐시는 요금 최적화 수단일 뿐이라 실패해도 대화에는 영향이 없습니다. 조용히 넘어갑니다.
-        val json = runCatching {
+        val json = try {
             client.newCall(request).execute().use {
-                if (!it.isSuccessful) return
+                if (!it.isSuccessful) {
+                    observe(CacheDecision.HTTP_FAILURE)
+                    return
+                }
                 JSONObject(it.body?.string().orEmpty())
             }
-        }.getOrNull() ?: return
-        val name = json.optString("name").takeIf { it.isNotEmpty() } ?: return
+        } catch (_: Throwable) {
+            observe(CacheDecision.LOCAL_FAILURE)
+            return
+        }
+        val name = json.optString("name").takeIf { it.isNotEmpty() } ?: run {
+            observe(CacheDecision.LOCAL_FAILURE)
+            return
+        }
 
         val cachedTokens = json.optJSONObject("usageMetadata")?.optInt("totalTokenCount") ?: 0
+        observe(CacheDecision.CREATE_SUCCESS, cachedTokens)
         synchronized(prefixCaches) {
             prefixCaches[key] = PrefixCache(
                 name = name,

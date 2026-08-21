@@ -1,5 +1,8 @@
 package com.sapiens.gagaodok.service
 
+import com.sapiens.gagaodok.BuildConfig
+import com.sapiens.gagaodok.data.RequestObservation
+import com.sapiens.gagaodok.data.PromptTokenBreakdown
 import com.sapiens.gagaodok.data.SecureStore
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.AttachmentType
@@ -42,11 +45,22 @@ internal suspend fun AIService.sendGeminiRequest(
     val digest = store.loadDigest(roomId)
     val plan = ConversationCompactor.plan(conversation, digest, mode)
 
-    var contents = buildGeminiContents(plan.verbatimTurns)
+    val verbatimContents = buildGeminiContents(plan.verbatimTurns)
+    var contents = verbatimContents
     plan.digestText?.let { contents = digestPreamble(it) + contents }
     var requestContents = buildGeminiContents(plan.verbatimTurns.withRepetitionGuidance(repetitionAdvice))
     plan.digestText?.let { requestContents = digestPreamble(it) + requestContents }
     val system = systemPrompt(botName, persona, mode)
+    val stableSystemTokens = TokenEstimator.textTokens(mode.stableSystemPrompt)
+    val systemTokens = TokenEstimator.textTokens(system)
+    val digestTokens = plan.digestText?.let(TokenEstimator::textTokens) ?: 0
+    val promptBreakdown = PromptTokenBreakdown(
+        stableSystemTokens = stableSystemTokens.toLong(),
+        personaAndRoomTokens = (systemTokens - stableSystemTokens).coerceAtLeast(0).toLong(),
+        digestTokens = digestTokens.toLong(),
+        recentConversationTokens = estimateTokens(verbatimContents).toLong(),
+        dynamicGuidanceTokens = (estimateTokens(requestContents) - estimateTokens(contents)).coerceAtLeast(0).toLong()
+    )
 
     // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
     val cache = usablePrefixCache(roomId, contents, system, apiKey)
@@ -72,19 +86,32 @@ internal suspend fun AIService.sendGeminiRequest(
         sink.finish()
     } finally {
         val reported = outcome.usage
+        val shouldMeasure = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
         if (reported != null) {
             val output = reported.optInt("candidatesTokenCount") + reported.optInt("thoughtsTokenCount")
+            val input = reported.optInt("promptTokenCount") + reported.optInt("toolUsePromptTokenCount")
+            val cached = reported.optInt("cachedContentTokenCount")
             usage.recordUsage(
                 roomId, model,
                 // 검색 그라운딩을 쓰면 도구가 쓴 입력이 따로 옵니다. 이것도 청구됩니다.
-                inputTokens = reported.optInt("promptTokenCount") +
-                    reported.optInt("toolUsePromptTokenCount"),
+                inputTokens = input,
                 outputTokens = output,
-                cachedInputTokens = reported.optInt("cachedContentTokenCount")
+                cachedInputTokens = cached
             )
+            if (shouldMeasure) measurement.observeRequest(RequestObservation(
+                roomId.toString(), input, cached, output,
+                estimatedPromptTokens = estimateTokens(requestContents) + TokenEstimator.textTokens(system),
+                prompt = promptBreakdown
+            ))
         } else {
             // 한 조각도 못 받고 끊겼습니다. 숫자를 지어내지 않고 건수만 남깁니다.
             usage.recordUnreportedRequest(roomId, model)
+            if (shouldMeasure) measurement.observeRequest(RequestObservation(
+                roomId.toString(), 0, 0, 0,
+                estimatedPromptTokens = estimateTokens(requestContents) + TokenEstimator.textTokens(system),
+                unreported = true,
+                prompt = promptBreakdown
+            ))
         }
     }
 
@@ -97,7 +124,12 @@ internal suspend fun AIService.sendGeminiRequest(
     // 답변까지 덧붙여 캐시하면 적중률이 조금 높지만, 앱이 다음 턴에 재구성하는 문자열과
     // 한 글자라도 어긋나면 지문 검사에서 통째로 탈락합니다.
     // 답변을 이미 확보한 뒤이므로 화면 표시를 막지 않도록 백그라운드에서 진행합니다.
-    scope.launch { refreshPrefixCache(roomId, contents, system, apiKey, previousRequestAt) }
+    scope.launch {
+        refreshPrefixCache(
+            roomId, contents, system, apiKey, previousRequestAt,
+            measure = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
+        )
+    }
 
     // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
     plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, mode, apiKey) } }

@@ -5,6 +5,7 @@ import com.sapiens.gagaodok.data.AppSettings
 import com.sapiens.gagaodok.data.ChatStore
 import com.sapiens.gagaodok.data.InkStore
 import com.sapiens.gagaodok.data.MyProfileStore
+import com.sapiens.gagaodok.data.OptimizationMeasurementStore
 import com.sapiens.gagaodok.data.TokenUsageStore
 
 /// 앱이 살아 있는 동안 하나뿐인 것들이 여기서 시작합니다.
@@ -19,6 +20,8 @@ class GagaodokApp : Application() {
         private set
     lateinit var usage: TokenUsageStore
         private set
+    lateinit var optimizationMeasurement: OptimizationMeasurementStore
+        private set
     lateinit var myProfile: MyProfileStore
         private set
     lateinit var inkStore: InkStore
@@ -30,6 +33,7 @@ class GagaodokApp : Application() {
         chatStore = ChatStore.get(this)
         settings = AppSettings.get(this)
         usage = TokenUsageStore.get(this)
+        optimizationMeasurement = OptimizationMeasurementStore.get(this)
         myProfile = MyProfileStore.get(this)
         inkStore = InkStore.get(this)
     }

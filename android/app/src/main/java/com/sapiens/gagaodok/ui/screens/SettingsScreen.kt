@@ -24,13 +24,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +45,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sapiens.gagaodok.GagaodokApp
+import com.sapiens.gagaodok.BuildConfig
+import com.sapiens.gagaodok.data.MeasurementPolicy
 import com.sapiens.gagaodok.data.SecureStore
 import com.sapiens.gagaodok.model.AIModel
+import com.sapiens.gagaodok.service.buildOptimizationExport
+import com.sapiens.gagaodok.service.shareUsagePatternExport
+import com.sapiens.gagaodok.service.writeUsagePatternExport
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.theme.AppearanceMode
@@ -51,6 +59,9 @@ import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.text.NumberFormat
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen() {
@@ -64,6 +75,12 @@ fun SettingsScreen() {
     val exchangeRate by app.settings.exchangeRate.collectAsState()
     val usageByRoom by app.usage.usageByRoom.collectAsState()
     val rooms by app.chatStore.rooms.collectAsState()
+    val measurement by app.optimizationMeasurement.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    var exportState by remember { mutableStateOf<String?>(null) }
+    var isExporting by remember { mutableStateOf(false) }
+    var showUsageReset by remember { mutableStateOf(false) }
+    var showMeasurementClear by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -83,11 +100,13 @@ fun SettingsScreen() {
             Text("설정", style = KakaoText.screenTitle, color = colors.textPrimary)
         }
 
-        // MARK: - 요금
-        SettingsSection("API 사용 금액") {
+        // MARK: - 데이터
+        SettingsSection("데이터") {
             val totalUSD = app.usage.totalCostUSD
             val savingsUSD = app.usage.totalSavingsUSD
-            Column(Modifier.padding(14.dp)) {
+            Column {
+                Column(Modifier.padding(14.dp)) {
+                    Text("API 사용 금액", style = KakaoText.sectionHeader, color = colors.textSecondary)
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         "₩" + NumberFormat.getNumberInstance(Locale.KOREA)
@@ -135,12 +154,15 @@ fun SettingsScreen() {
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
-            }
-        }
-
-        // MARK: - 대화방별
-        if (usageByRoom.isNotEmpty()) {
-            SettingsSection("대화방별 사용 내역") {
+                }
+                if (usageByRoom.isNotEmpty()) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.surface))
+                    Text(
+                        "대화방별 사용 내역",
+                        style = KakaoText.sectionHeader,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(start = 14.dp, top = 12.dp)
+                    )
                 Column(Modifier.padding(vertical = 4.dp)) {
                     rooms.forEach { room ->
                         val total = app.usage.roomTotal(room.id)
@@ -167,6 +189,90 @@ fun SettingsScreen() {
                             )
                         }
                     }
+                }
+                }
+                if (!BuildConfig.TABLET_MENTOR) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.surface))
+                    val active = measurement.activeRun
+                    val latest = measurement.completedRuns.lastOrNull()
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                if (active == null) app.optimizationMeasurement.start(MeasurementPolicy.current())
+                                else app.optimizationMeasurement.stop()
+                            }
+                            .padding(horizontal = 14.dp, vertical = 13.dp)
+                    ) {
+                        Text(
+                            if (active == null) "최적화 측정 시작" else "측정 종료",
+                            style = KakaoText.body,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            when {
+                                active != null -> "측정 중 · ${active.requests.requestCount}개 요청 기록됨"
+                                latest != null -> "${measurement.completedRuns.size}개 측정 회차 보존됨"
+                                else -> "추가 API 호출 없이 실제 요청의 캐시 판단만 기록합니다."
+                            },
+                            style = KakaoText.timestamp,
+                            color = colors.textTertiary
+                        )
+                    }
+                }
+                Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !isExporting) {
+                        isExporting = true
+                        exportState = "통계를 만드는 중…"
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    val messages = rooms.associate { room ->
+                                        room.id to app.chatStore.loadMessages(room.id)
+                                    }
+                                    val json = buildOptimizationExport(
+                                        rooms, messages, usageByRoom, measurement
+                                    )
+                                    writeUsagePatternExport(context, json)
+                                }
+                            }.onSuccess { (fileName, uri) ->
+                                exportState = "Downloads/Gagaodok에 저장됨"
+                                shareUsagePatternExport(context, fileName, uri)
+                            }.onFailure {
+                                exportState = "내보내기에 실패했습니다."
+                            }
+                            isExporting = false
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 13.dp)
+            ) {
+                Text("분석 데이터 내보내기", style = KakaoText.body, color = colors.textPrimary)
+                Text(
+                    "측정 중에도 대화 내용 없이 회차별 JSON을 공유할 수 있습니다.",
+                    style = KakaoText.timestamp,
+                    color = colors.textTertiary
+                )
+                exportState?.let {
+                    Text(it, style = KakaoText.timestamp, color = colors.textSecondary)
+                }
+            }
+                if (!BuildConfig.TABLET_MENTOR &&
+                    (measurement.activeRun != null || measurement.completedRuns.isNotEmpty())
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth().clickable { showMeasurementClear = true }.padding(14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("측정 기록 삭제", style = KakaoText.body, color = Color(0xFFD05050))
+                    }
+                }
+                Box(
+                    Modifier.fillMaxWidth().clickable { showUsageReset = true }.padding(14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("사용량 초기화", style = KakaoText.body, color = Color(0xFFD05050))
                 }
             }
         }
@@ -213,18 +319,32 @@ fun SettingsScreen() {
             }
         }
 
-        // MARK: - 초기화
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clickable { app.usage.resetAll() }
-                .padding(vertical = 16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("사용량 초기화", style = KakaoText.body, color = androidx.compose.ui.graphics.Color(0xFFD05050))
-        }
-
         Box(Modifier.height(24.dp))
+    }
+
+    if (showUsageReset) {
+        AlertDialog(
+            onDismissRequest = { showUsageReset = false },
+            title = { Text("사용량을 초기화할까요?") },
+            text = { Text("누적 토큰과 금액만 지웁니다. 채팅과 최적화 측정 기록은 유지됩니다.") },
+            confirmButton = {
+                TextButton(onClick = { app.usage.resetAll(); showUsageReset = false }) { Text("초기화") }
+            },
+            dismissButton = { TextButton(onClick = { showUsageReset = false }) { Text("취소") } }
+        )
+    }
+    if (showMeasurementClear) {
+        AlertDialog(
+            onDismissRequest = { showMeasurementClear = false },
+            title = { Text("측정 기록을 삭제할까요?") },
+            text = { Text("완료된 회차와 진행 중인 측정이 모두 삭제됩니다. API 사용량은 유지됩니다.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    app.optimizationMeasurement.clear(); showMeasurementClear = false
+                }) { Text("삭제") }
+            },
+            dismissButton = { TextButton(onClick = { showMeasurementClear = false }) { Text("취소") } }
+        )
     }
 }
 

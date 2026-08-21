@@ -4,6 +4,7 @@ import android.content.Context
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.ChatStore
 import com.sapiens.gagaodok.data.TokenUsageStore
+import com.sapiens.gagaodok.data.OptimizationMeasurementStore
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.Codec
@@ -53,6 +54,7 @@ class AIService private constructor(internal val appContext: Context) {
     internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     internal val store get() = ChatStore.get(appContext)
     internal val usage get() = TokenUsageStore.get(appContext)
+    internal val measurement get() = OptimizationMeasurementStore.get(appContext)
 
     // MARK: - 시스템 지침
     internal fun systemPrompt(botName: String, persona: PersonaStyle?, mode: ChatMode): String {
