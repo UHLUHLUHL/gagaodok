@@ -87,6 +87,13 @@ object RoleplayParser {
     fun establishesRoleplay(paragraph: String): Boolean =
         unwrappedDialogue(paragraph) != null || unwrappedEmphasis(paragraph) != null
 
+    /// 다음 문단의 시작만 도착한 상태에서, 완성됐을 때 상황극 표식이 될 가능성이 있는지 봅니다.
+    /// 첫 실제 문자가 평문이면 앞의 모호한 문단을 더 기다리지 않고 일반 대사로 내보낼 수 있습니다.
+    internal fun canStillEstablishRoleplay(paragraphPrefix: String): Boolean {
+        val first = paragraphPrefix.firstOrNull { !it.isWhitespace() } ?: return true
+        return quotePairs.any { it.first == first } || first in emphasisMarks
+    }
+
     /// 지난 대화를 훑어 이 방이 상황극 중인지 판단합니다.
     ///
     /// 스트리밍은 문단이 완성되는 대로 화면에 붙이므로, 첫 문단을 붙이는 시점에는

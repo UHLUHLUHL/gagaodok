@@ -26,27 +26,54 @@ class StreamBubbleSink(
     /// 이 턴이 상황극이라고 이미 아는지.
     ///
     /// 문단은 완성되는 대로 화면에 붙기 때문에, 첫 문단을 붙일 때는 뒤에 따옴표 대사가
-    /// 나올지 알 수 없습니다. 그래서 지난 턴에서 얻은 값으로 시작합니다.
-    /// 상황극을 처음 시작하는 턴에서만, 첫 대사가 나오기 전의 묘사가 대사 말풍선으로
-    /// 나옵니다. 그 다음 턴부터는 앞 턴이 근거가 되어 첫 문단부터 제대로 갈립니다.
+    /// 나올지 알 수 없습니다. 그래서 지난 턴에서 얻은 값으로 시작하되, 새 상황극의 첫
+    /// 모호한 문단 하나는 다음 문단의 시작을 볼 때까지 보류합니다. 다음 문단이 평문이면
+    /// 즉시 일반 대사로 내보내고, 따옴표 대사이면 앞 문단부터 나레이션으로 분류합니다.
     internal var roleplayEstablished: Boolean,
     internal val makeBubbles: (String, Boolean) -> List<GeneratedMessageBubble>,
     internal val onBubble: suspend (GeneratedMessageBubble) -> Unit
 ) {
     internal val buffer = StreamingBubbleBuffer()
     internal val lock = Mutex()
+    private var pendingAmbiguousParagraph: String? = null
 
     suspend fun consume(piece: String) = lock.withLock {
         buffer.append(piece).forEach { handle(it) }
+        if (!roleplayEstablished && pendingAmbiguousParagraph != null &&
+            !RoleplayParser.canStillEstablishRoleplay(buffer.buffered)
+        ) {
+            flushPending()
+        }
     }
 
     suspend fun finish() = lock.withLock {
         val rest = buffer.flush()
         if (rest.isNotEmpty()) handle(rest)
+        flushPending()
     }
 
     internal suspend fun handle(paragraph: String) {
-        if (RoleplayParser.establishesRoleplay(paragraph)) roleplayEstablished = true
+        if (RoleplayParser.establishesRoleplay(paragraph)) {
+            roleplayEstablished = true
+            flushPending()
+            emit(paragraph)
+            return
+        }
+        if (!roleplayEstablished) {
+            pendingAmbiguousParagraph?.let { emit(it) }
+            pendingAmbiguousParagraph = paragraph
+            return
+        }
+        emit(paragraph)
+    }
+
+    private suspend fun flushPending() {
+        val pending = pendingAmbiguousParagraph ?: return
+        pendingAmbiguousParagraph = null
+        emit(pending)
+    }
+
+    private suspend fun emit(paragraph: String) {
         makeBubbles(paragraph, roleplayEstablished).forEach { onBubble(it) }
     }
 }
