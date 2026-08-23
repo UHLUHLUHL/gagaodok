@@ -95,7 +95,11 @@ class AIService private constructor(internal val appContext: Context) {
             AIModel.GPT_56_LUNA -> {
                 // Luna는 스트리밍하지 않습니다. 한 번에 받아 말풍선으로 갈라 내보냅니다.
                 val raw = sendOpenAIRequest(conversation, botName, roomId, persona, mode, repetitionAdvice)
-                parseResponseIntoBubbles(raw, botName, mode == ChatMode.COMPANION && roleplayInProgress)
+                parseResponseIntoBubbles(
+                    raw, botName,
+                    mode == ChatMode.COMPANION && roleplayInProgress,
+                    preserveMentorMath = mode == ChatMode.MATH_MENTOR
+                )
                     .forEach { onBubble(it) }
                 raw
             }

@@ -114,3 +114,74 @@ public struct StreamingBubbleBuffer {
         return !inFence && !inDisplayMath && !inlineMathOpen && !inGraphTag
     }
 }
+
+/// 멘토 답변을 말풍선으로 나누되 블록 수식은 시작·끝 표기가 같은 줄에 붙어 있어도 보존합니다.
+///
+/// 일반 챗봇의 기존 말풍선 규칙을 바꾸지 않도록 멘토 경로에서만 호출합니다.
+enum MentorBubbleChunker {
+    static func split(
+        _ text: String,
+        isStandaloneMathLine: (String) -> Bool
+    ) -> [String] {
+        let lines = text.components(separatedBy: "\n")
+        var result: [String] = []
+        var buffer: [String] = []
+        var mathMode: Bool?
+        var displayMathClosingDelimiter: String?
+
+        func flushBuffer() {
+            guard !buffer.isEmpty else { return }
+            result.append(buffer.joined(separator: "\n"))
+            buffer.removeAll()
+        }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                if displayMathClosingDelimiter != nil {
+                    buffer.append("")
+                } else {
+                    flushBuffer()
+                    mathMode = nil
+                }
+                continue
+            }
+
+            if let closing = displayMathClosingDelimiter {
+                buffer.append(trimmed)
+                if trimmed.contains(closing) {
+                    flushBuffer()
+                    displayMathClosingDelimiter = nil
+                    mathMode = nil
+                }
+                continue
+            }
+
+            let delimiter: (opening: String, closing: String)? =
+                trimmed.contains("$$") ? ("$$", "$$") :
+                trimmed.contains("\\[") ? ("\\[", "\\]") : nil
+            if let delimiter,
+               let opening = trimmed.range(of: delimiter.opening) {
+                flushBuffer()
+                buffer.append(trimmed)
+                let remainder = trimmed[opening.upperBound...]
+                if remainder.contains(delimiter.closing) {
+                    flushBuffer()
+                    mathMode = nil
+                } else {
+                    mathMode = true
+                    displayMathClosingDelimiter = delimiter.closing
+                }
+                continue
+            }
+
+            let isMath = isStandaloneMathLine(trimmed)
+            if let mode = mathMode, mode != isMath { flushBuffer() }
+            mathMode = isMath
+            buffer.append(trimmed)
+        }
+
+        flushBuffer()
+        return result.isEmpty ? [text] : result
+    }
+}

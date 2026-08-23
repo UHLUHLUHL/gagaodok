@@ -71,7 +71,8 @@ public actor GeminiService {
             rawText: rawText,
             bubbles: await parseResponseIntoBubbles(
                 rawText: rawText, botName: botName,
-                roleplay: mode == .companion && roleplayInProgress
+                roleplay: mode == .companion && roleplayInProgress,
+                preserveMentorMath: mode == .mathMentor
             )
         )
     }

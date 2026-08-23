@@ -57,7 +57,8 @@ class StreamBubbleSink(
 fun AIService.parseResponseIntoBubbles(
     rawText: String,
     botName: String,
-    roleplay: Boolean = false
+    roleplay: Boolean = false,
+    preserveMentorMath: Boolean = false
 ): List<GeneratedMessageBubble> {
     val clean = rawText.trim()
     var paragraphs = clean.split("\n\n")
@@ -71,7 +72,11 @@ fun AIService.parseResponseIntoBubbles(
     // 들어오므로 호출하는 쪽이 지금까지 본 것을 `roleplay`로 알려 줍니다.
     val isRoleplay = roleplay || paragraphs.any { RoleplayParser.establishesRoleplay(it) }
 
-    val chunks = paragraphs.flatMap { AIService.splitTextAndComplexMath(it) }
+    val chunks = if (preserveMentorMath) {
+        splitMentorTextAndComplexMath(clean)
+    } else {
+        paragraphs.flatMap { AIService.splitTextAndComplexMath(it) }
+    }
     val bubbles = mutableListOf<GeneratedMessageBubble>()
     for (item in chunks) {
         var text = item.trim()
@@ -181,6 +186,72 @@ internal fun isMarkdownTableLine(line: String): Boolean {
     if (pipeCount >= 2) return true
     if (trimmed.contains("---") && trimmed.contains("|")) return true
     return false
+}
+
+/** 멘토 답변의 블록 수식을 tight delimiter와 내부 빈 줄까지 포함해 한 말풍선으로 보존합니다. */
+internal fun splitMentorTextAndComplexMath(text: String): List<String> {
+    val lines = text.split("\n")
+    val result = mutableListOf<String>()
+    val buffer = mutableListOf<String>()
+    var mathMode: Boolean? = null
+    var displayMathClosing: String? = null
+
+    fun flush() {
+        if (buffer.isEmpty()) return
+        result += buffer.joinToString("\n")
+        buffer.clear()
+    }
+
+    for (line in lines) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) {
+            if (displayMathClosing != null) {
+                buffer += ""
+            } else {
+                flush()
+                mathMode = null
+            }
+            continue
+        }
+
+        val closing = displayMathClosing
+        if (closing != null) {
+            buffer += trimmed
+            if (trimmed.contains(closing)) {
+                flush()
+                displayMathClosing = null
+                mathMode = null
+            }
+            continue
+        }
+
+        val delimiter = when {
+            trimmed.contains("$$") -> "$$" to "$$"
+            trimmed.contains("\\[") -> "\\[" to "\\]"
+            else -> null
+        }
+        if (delimiter != null) {
+            flush()
+            buffer += trimmed
+            val remainder = trimmed.substringAfter(delimiter.first)
+            if (remainder.contains(delimiter.second)) {
+                flush()
+                mathMode = null
+            } else {
+                mathMode = true
+                displayMathClosing = delimiter.second
+            }
+            continue
+        }
+
+        val isMath = isStandaloneMathLine(trimmed)
+        if (mathMode != null && mathMode != isMath) flush()
+        mathMode = isMath
+        buffer += trimmed
+    }
+
+    flush()
+    return result.ifEmpty { listOf(text) }
 }
 
 internal fun isStandaloneMathLine(line: String): Boolean {

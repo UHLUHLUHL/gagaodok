@@ -68,7 +68,8 @@ extension GeminiService {
             ) { [weak self] paragraph, roleplay in
                 guard let self else { return [] }
                 return await self.parseResponseIntoBubbles(
-                    rawText: paragraph, botName: botName, roleplay: roleplay
+                    rawText: paragraph, botName: botName, roleplay: roleplay,
+                    preserveMentorMath: mode == .mathMentor
                 )
             }
             try await streamGeminiRequest(

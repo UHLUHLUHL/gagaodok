@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.outlined.Edit
@@ -87,6 +88,20 @@ import android.provider.OpenableColumns
 import java.util.Locale
 
 // 메시지를 쓰고 고치는 자리입니다. 첨부를 읽어 들이는 것도 여기 있습니다.
+internal enum class AttachmentAction {
+    PHOTO_LIBRARY,
+    CAMERA,
+    PDF,
+    INK
+}
+
+internal fun tabletAttachmentActions(): List<AttachmentAction> = listOf(
+    AttachmentAction.PHOTO_LIBRARY,
+    AttachmentAction.CAMERA,
+    AttachmentAction.PDF,
+    AttachmentAction.INK
+)
+
 @Composable
 internal fun ChatInputBar(
     text: String,
@@ -95,6 +110,7 @@ internal fun ChatInputBar(
     enhancedAttachments: Boolean,
     onTextChange: (String) -> Unit,
     onPickImage: () -> Unit,
+    onTakePhoto: () -> Unit,
     onPickPdf: () -> Unit,
     onOpenInk: () -> Unit,
     onClearAttachment: () -> Unit,
@@ -164,11 +180,18 @@ internal fun ChatInputBar(
                     }
                     if (attachmentMenuExpanded) {
                         AttachmentPopover(
-                            items = listOf(
-                                AttachmentPopoverItem("사진", Icons.Filled.Image, onPickImage),
-                                AttachmentPopoverItem("파일", Icons.Filled.Description, onPickPdf),
-                                AttachmentPopoverItem("필기", Icons.Outlined.Edit, onOpenInk)
-                            ),
+                            items = tabletAttachmentActions().map { action ->
+                                when (action) {
+                                    AttachmentAction.PHOTO_LIBRARY ->
+                                        AttachmentPopoverItem("사진", Icons.Filled.Image, onPickImage)
+                                    AttachmentAction.CAMERA ->
+                                        AttachmentPopoverItem("사진 촬영", Icons.Filled.CameraAlt, onTakePhoto)
+                                    AttachmentAction.PDF ->
+                                        AttachmentPopoverItem("파일", Icons.Filled.Description, onPickPdf)
+                                    AttachmentAction.INK ->
+                                        AttachmentPopoverItem("필기", Icons.Outlined.Edit, onOpenInk)
+                                }
+                            },
                             onDismiss = { attachmentMenuExpanded = false }
                         )
                     }

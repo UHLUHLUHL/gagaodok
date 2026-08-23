@@ -69,7 +69,12 @@ internal suspend fun AIService.sendGeminiRequest(
 
     val sink = StreamBubbleSink(
         roleplayEstablished = mode == ChatMode.COMPANION && roleplayInProgress,
-        makeBubbles = { paragraph, roleplay -> parseResponseIntoBubbles(paragraph, botName, roleplay) },
+        makeBubbles = { paragraph, roleplay ->
+            parseResponseIntoBubbles(
+                paragraph, botName, roleplay,
+                preserveMentorMath = mode == ChatMode.MATH_MENTOR
+            )
+        },
         onBubble = onBubble
     )
 

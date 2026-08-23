@@ -82,7 +82,8 @@ extension GeminiService {
     func parseResponseIntoBubbles(
         rawText: String,
         botName: String,
-        roleplay: Bool = false
+        roleplay: Bool = false,
+        preserveMentorMath: Bool = false
     ) async -> [GeneratedMessageBubble] {
         let cleanText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         var paragraphs = cleanText.components(separatedBy: "\n\n")
@@ -96,8 +97,16 @@ extension GeminiService {
         // 들어오므로 호출하는 쪽이 지금까지 본 것을 `roleplay`로 알려 줍니다.
         let isRoleplay = roleplay || paragraphs.contains { RoleplayParser.establishesRoleplay($0) }
 
-        var chunks: [String] = []
-        for paragraph in paragraphs { chunks.append(contentsOf: splitTextAndComplexMath(paragraph: paragraph)) }
+        let chunks: [String]
+        if preserveMentorMath {
+            chunks = MentorBubbleChunker.split(cleanText, isStandaloneMathLine: isStandaloneMathLine)
+        } else {
+            var regularChunks: [String] = []
+            for paragraph in paragraphs {
+                regularChunks.append(contentsOf: splitTextAndComplexMath(paragraph: paragraph))
+            }
+            chunks = regularChunks
+        }
         var bubbles: [GeneratedMessageBubble] = []
         for item in chunks {
             var text = item.trimmingCharacters(in: .whitespacesAndNewlines)

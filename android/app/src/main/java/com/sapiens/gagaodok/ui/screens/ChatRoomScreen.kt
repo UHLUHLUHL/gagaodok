@@ -57,6 +57,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.FileProvider
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.model.ChatAttachment
@@ -74,6 +75,7 @@ import com.sapiens.gagaodok.ui.components.MessageBubble
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.text.SimpleDateFormat
+import java.io.File
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -81,6 +83,15 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private data class CameraCaptureTarget(val file: File, val uri: Uri)
+
+private fun createCameraCaptureTarget(context: android.content.Context): CameraCaptureTarget? = runCatching {
+    val directory = File(context.cacheDir, "camera-captures").apply { mkdirs() }
+    val file = File.createTempFile("camera-", ".jpg", directory)
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+    CameraCaptureTarget(file, uri)
+}.getOrNull()
 
 // 대화방 화면입니다. 목록에 놓을 줄을 만들고 조각들을 배치합니다.
 //
@@ -110,6 +121,7 @@ fun ChatRoomScreen(
 
     var inputText by remember { mutableStateOf("") }
     var pendingAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
+    var cameraCaptureTarget by remember { mutableStateOf<CameraCaptureTarget?>(null) }
     var attachmentNotice by remember { mutableStateOf<String?>(null) }
     var receivingDrop by remember { mutableStateOf(false) }
     var activeInkDocument by remember { mutableStateOf<InkDocument?>(null) }
@@ -210,6 +222,37 @@ fun ChatRoomScreen(
             pendingAttachment = readAttachment(context, uri)
             if (pendingAttachment == null) attachmentNotice = "12MB 이하의 PDF 파일만 첨부할 수 있어요."
         }
+    }
+    val cameraPicker = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val target = cameraCaptureTarget
+        cameraCaptureTarget = null
+        if (target != null) {
+            if (captured) {
+                val attachment = readAttachment(context, target.uri)
+                if (attachment == null) {
+                    attachmentNotice = "촬영한 사진을 읽을 수 없어요."
+                } else {
+                    pendingAttachment = attachment
+                    attachmentNotice = null
+                }
+            }
+            target.file.delete()
+        }
+    }
+
+    fun takePhoto() {
+        val target = createCameraCaptureTarget(context)
+        if (target == null) {
+            attachmentNotice = "카메라용 임시 파일을 만들 수 없어요."
+            return
+        }
+        cameraCaptureTarget = target
+        runCatching { cameraPicker.launch(target.uri) }
+            .onFailure {
+                cameraCaptureTarget = null
+                target.file.delete()
+                attachmentNotice = "카메라를 열 수 없어요."
+            }
     }
 
     fun openNewInk() {
@@ -407,6 +450,7 @@ fun ChatRoomScreen(
                     onPickImage = {
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
+                    onTakePhoto = { takePhoto() },
                     onPickPdf = { pdfPicker.launch(arrayOf("application/pdf")) },
                     onOpenInk = { openNewInk() },
                     onClearAttachment = { pendingAttachment = null },
