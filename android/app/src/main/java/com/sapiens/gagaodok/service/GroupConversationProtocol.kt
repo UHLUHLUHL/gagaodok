@@ -1,8 +1,10 @@
 package com.sapiens.gagaodok.service
 
+import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.MessageKind
+import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.model.PersonaStyle
 import java.util.UUID
 
@@ -41,6 +43,27 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
         append("말하지 않는 참여자의 반응은 대상 대사 문단 안에 [[react:<ROOM_UUID>:<EMOJI>]]로 한 번 둔다. ")
         append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
         append("목록에 있는 참여자 UUID만 사용한다. 표식은 설명할 텍스트가 아닌 전송 메타데이터다.")
+    }
+
+    /// 첫 말풍선이 도착하기 전에 누가 입력 중일지를 고릅니다.
+    ///
+    /// 응답이 오기 전에는 화자를 알 수 없습니다. 그렇다고 "대화를 준비하고 있어요" 같은
+    /// 앱 사정을 화면에 띄울 수는 없습니다. 사용자는 캐릭터와 단톡을 하는 중이지 스케줄러를
+    /// 구경하는 중이 아닙니다.
+    ///
+    /// 틀려도 괜찮습니다. 실제 단톡방에서도 "A님이 입력 중"이 떴다가 B가 먼저 말하는 일은
+    /// 늘 있어서, 틀린 추측이 오히려 진짜 단톡방처럼 읽힙니다. 첫 말풍선이 도착하면
+    /// 조용히 바뀝니다.
+    fun guessFirstSpeaker(history: List<ChatMessage>, userText: String): UUID {
+        // 사용자가 이름을 부른 사람이 있으면 그 사람이 답할 차례입니다.
+        participants.firstOrNull { it.profile.name.isNotBlank() && userText.contains(it.profile.name) }
+            ?.let { return it.id }
+        // 없으면 직전에 말한 사람이 이어서 말한다고 봅니다.
+        history.lastOrNull { it.sender == MessageSender.SAPIENS && it.speakerRoomId != null }
+            ?.speakerRoomId
+            ?.takeIf { it in allowedIds }
+            ?.let { return it }
+        return participants.first().id
     }
 
     data class ParsedBubble(

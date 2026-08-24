@@ -1,7 +1,9 @@
 package com.sapiens.gagaodok
 
+import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.MessageKind
+import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.model.PersonaStyle
 import com.sapiens.gagaodok.model.PersonaSampleEvidence
 import com.sapiens.gagaodok.model.RoomProfile
@@ -163,6 +165,33 @@ class GroupConversationProtocolTest {
         assertFalse(protocol.systemPrompt("테스트").contains("숨긴 비활성 예시"))
         expected.forEach { assertTrue(protocol.systemPrompt("테스트").contains(it)) }
         assertTrue(protocol.systemPrompt("테스트").contains("견본일 뿐"))
+    }
+
+    /// 응답이 오기 전에도 캐릭터 한 명이 입력 중으로 보여야 합니다. 그 한 명을 고르는 규칙입니다.
+    @Test
+    fun `첫 화자는 이름을 부른 사람, 없으면 직전 화자를 따른다`() {
+        val history = listOf(
+            ChatMessage(sender = MessageSender.SAPIENS, text = "먼저 말했어.", speakerRoomId = secondId),
+            ChatMessage(sender = MessageSender.USER, text = "둘아, 이건 어때?")
+        )
+
+        // 1. 사용자가 이름을 부르면 그 사람이 답할 차례입니다.
+        assertEquals(secondId, protocol.guessFirstSpeaker(history, "둘아, 이건 어때?"))
+        assertEquals(firstId, protocol.guessFirstSpeaker(history, "하나야, 이건 어때?"))
+        // 2. 이름이 없으면 직전에 말한 사람이 이어서 말한다고 봅니다.
+        assertEquals(secondId, protocol.guessFirstSpeaker(history, "다들 어떻게 생각해?"))
+        // 3. 그것도 없으면 첫 참여자입니다. 어떤 경우에도 참여자 중 한 명이어야 합니다.
+        assertEquals(firstId, protocol.guessFirstSpeaker(emptyList(), "안녕?"))
+    }
+
+    /// 방을 나간 사람이 남긴 기록을 그대로 믿으면 참여자가 아닌 사람이 입력 중으로 뜹니다.
+    @Test
+    fun `참여자가 아닌 직전 화자는 추측에 쓰지 않는다`() {
+        val history = listOf(
+            ChatMessage(sender = MessageSender.SAPIENS, text = "지나간 사람.", speakerRoomId = foreignId)
+        )
+
+        assertEquals(firstId, protocol.guessFirstSpeaker(history, "다들 어때?"))
     }
 
     private fun room(id: UUID, name: String) = ChatRoom(

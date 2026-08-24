@@ -1,5 +1,7 @@
 package com.sapiens.gagaodok.service
 
+import android.os.SystemClock
+import android.util.Log
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.RequestObservation
 import com.sapiens.gagaodok.data.PromptTokenBreakdown
@@ -88,19 +90,32 @@ internal suspend fun AIService.sendGeminiRequest(
     // 사용량 조각은 매 청크에 실려 오기 때문에, 도중에 멈춰도 그때까지 받은 값은
     // 손에 있습니다. 그걸 버리지 않고 적습니다.
     val outcome = StreamOutcome()
+    // 응답이 왜 느린지는 "총 몇 초"로는 안 갈립니다. 첫 글자까지 걸린 시간과 그 뒤
+    // 생성에 걸린 시간을 나눠 봐야, 모델이 생각만 하고 있었는지 길게 쓰느라 오래
+    // 걸렸는지가 구분됩니다. 실기기에서 첫 말풍선까지 23초가 걸린 적이 있는데,
+    // 그중 22초가 첫 글자를 기다린 시간이었습니다.
+    val requestStartedAt = SystemClock.elapsedRealtime()
+    var firstTokenAt = 0L
     try {
         streamGemini(outcome, requestContents, system, cache, apiKey, model, mode) {
+            if (firstTokenAt == 0L) firstTokenAt = SystemClock.elapsedRealtime()
             onRawText(it)
             sink.consume(it)
         }
         sink.finish()
     } finally {
+        val finishedAt = SystemClock.elapsedRealtime()
+        val ttftMillis = if (firstTokenAt == 0L) 0L else firstTokenAt - requestStartedAt
+        val totalMillis = finishedAt - requestStartedAt
         val reported = outcome.usage
         val shouldMeasure = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
         if (reported != null) {
-            val output = reported.optInt("candidatesTokenCount") + reported.optInt("thoughtsTokenCount")
+            // 사고 토큰은 요금에서는 출력에 합산되지만, 느린 이유를 가릴 때는 따로 봐야 합니다.
+            val thoughts = reported.optInt("thoughtsTokenCount")
+            val output = reported.optInt("candidatesTokenCount") + thoughts
             val input = reported.optInt("promptTokenCount") + reported.optInt("toolUsePromptTokenCount")
             val cached = reported.optInt("cachedContentTokenCount")
+            logRequestTiming(mode, ttftMillis, totalMillis, input, cached, thoughts, output - thoughts)
             usage.recordUsage(
                 roomId, model,
                 // 검색 그라운딩을 쓰면 도구가 쓴 입력이 따로 옵니다. 이것도 청구됩니다.
@@ -111,16 +126,22 @@ internal suspend fun AIService.sendGeminiRequest(
             if (shouldMeasure) measurement.observeRequest(RequestObservation(
                 roomId.toString(), input, cached, output,
                 estimatedPromptTokens = estimateTokens(requestContents) + TokenEstimator.textTokens(system),
-                prompt = promptBreakdown
+                prompt = promptBreakdown,
+                ttftMillis = ttftMillis,
+                totalMillis = totalMillis,
+                thoughtsTokens = thoughts
             ))
         } else {
             // 한 조각도 못 받고 끊겼습니다. 숫자를 지어내지 않고 건수만 남깁니다.
+            logRequestTiming(mode, ttftMillis, totalMillis, 0, 0, 0, 0)
             usage.recordUnreportedRequest(roomId, model)
             if (shouldMeasure) measurement.observeRequest(RequestObservation(
                 roomId.toString(), 0, 0, 0,
                 estimatedPromptTokens = estimateTokens(requestContents) + TokenEstimator.textTokens(system),
                 unreported = true,
-                prompt = promptBreakdown
+                prompt = promptBreakdown,
+                ttftMillis = ttftMillis,
+                totalMillis = totalMillis
             ))
         }
     }
@@ -295,3 +316,30 @@ internal fun AIService.buildGeminiContents(conversation: List<ConversationTurn>)
             .put("role", if (turn.sender == MessageSender.USER) "user" else "model")
             .put("parts", finalParts)
     }
+
+/// 요청 한 건의 시간과 토큰을 한 줄로 남깁니다.
+///
+/// 기기를 연결해 두고 `adb logcat -s GagaodokTiming`으로 봅니다. 저장하지 않으므로
+/// 요금이나 사용량 장부에는 영향이 없고, 기기가 없을 때는 최적화 측정 장부 쪽 숫자를
+/// 봅니다(합계와 최댓값).
+///
+/// 이 네 숫자면 느린 이유가 갈립니다.
+/// - ttft가 크고 사고 토큰이 많다 → 모델이 답을 쓰기 전에 오래 생각한 것
+/// - ttft가 크고 입력 토큰이 크다 → 프롬프트가 커진 것(대화가 길어질수록 느려짐)
+/// - ttft가 큰데 둘 다 보통이다 → 네트워크나 서버 사정
+/// - ttft는 작은데 총 시간이 크다 → 답변이 길어서 생성에 걸린 것
+private fun logRequestTiming(
+    mode: ChatMode,
+    ttftMillis: Long,
+    totalMillis: Long,
+    inputTokens: Int,
+    cachedTokens: Int,
+    thoughtsTokens: Int,
+    answerTokens: Int
+) {
+    Log.i(
+        "GagaodokTiming",
+        "$mode ttft=${ttftMillis}ms total=${totalMillis}ms " +
+            "input=$inputTokens(cached=$cachedTokens) thoughts=$thoughtsTokens answer=$answerTokens"
+    )
+}

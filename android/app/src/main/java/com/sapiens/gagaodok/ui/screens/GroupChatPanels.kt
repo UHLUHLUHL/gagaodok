@@ -15,7 +15,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +63,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.WorldlineState
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.icons.MagnifierIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -80,6 +80,35 @@ private object HeartGaugeTokens {
 }
 
 private val RelationshipMotionEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+
+/// 호감도 카드의 치수입니다. 피그마 `02B · Group chat` 프레임에서 잰 값입니다.
+///
+/// 카드 높이는 원래 2명과 3명 이상을 각각 154dp, 192dp로 적어 두었는데, 두 값 모두
+/// `78 + 인원수 × 38`로 정확히 떨어집니다. 인원이 늘어도 같은 규칙이 이어지도록
+/// 공식으로 되돌렸습니다. 숫자를 두 개만 적어 두면 4명째부터 자리가 모자랍니다.
+private object HeartGaugeMetrics {
+    /// 접힌 칩. 피그마 실측 84 × 36dp, 모서리 18dp.
+    val collapsedWidth = 84.dp
+    val collapsedHeight = 36.dp
+    val collapsedRadius = 18.dp
+
+    /// 펼친 카드. 피그마 실측 폭 336dp, 모서리 16dp, 테두리 1dp, 그림자 20dp.
+    val expandedWidth = 336.dp
+    val expandedRadius = 16.dp
+    val elevation = 20.dp
+
+    /// 참여자 한 줄의 높이. 위 여백 6dp를 포함한 값입니다.
+    val participantRow = 38.dp
+
+    /// 참여자 줄을 뺀 나머지(제목·구분선·안내문·상하 여백)의 합입니다.
+    /// 실측 154dp에서 2줄(76dp)을 뺀 값이라 짐작이 아닙니다.
+    val expandedChrome = 78.dp
+
+    /// 한 카드에 세울 수 있는 최대 줄 수입니다. 넘치면 마지막 줄을 "외 N명"으로 씁니다.
+    const val maxRows = 4
+
+    fun expandedHeight(rowCount: Int) = expandedChrome + participantRow * rowCount
+}
 
 internal data class GroupParticipantUi(
     val room: ChatRoom,
@@ -141,7 +170,7 @@ internal fun GroupChatHeader(
             }
         }
         Column(
-            Modifier.weight(1f).padding(start = 4.dp).clickable(onClick = onOpenMenu),
+            Modifier.weight(1f).padding(start = 4.dp).clickableNoRipple(onClick = onOpenMenu),
             verticalArrangement = Arrangement.Center
         ) {
             Text(title, style = KakaoText.roomTitle, color = colors.onChatHeader, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -170,16 +199,23 @@ internal fun HeartGaugePanel(
 ) {
     val colors = KakaoTheme.colors
     val average = if (participants.isEmpty()) 0 else participants.sumOf { it.heart } / participants.size
+    // 카드에 세울 줄과, 자리가 모자라 접은 인원입니다. 예전에는 `take(3)`으로 잘라내기만 해서
+    // 4명째부터는 카드에 흔적도 남지 않았습니다.
+    val visibleParticipants = participants.take(HeartGaugeMetrics.maxRows)
+    val hiddenCount = participants.size - visibleParticipants.size
     val transition = updateTransition(expanded, label = "호감도 카드")
     val width by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "너비"
-    ) { if (it) 336.dp else 84.dp }
+    ) { if (it) HeartGaugeMetrics.expandedWidth else HeartGaugeMetrics.collapsedWidth }
     val height by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "높이"
-    ) { if (it) (if (participants.size > 2) 192.dp else 154.dp) else 36.dp }
+    ) {
+        if (it) HeartGaugeMetrics.expandedHeight(visibleParticipants.size)
+        else HeartGaugeMetrics.collapsedHeight
+    }
     val radius by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "모서리"
-    ) { if (it) 16.dp else 18.dp }
+    ) { if (it) HeartGaugeMetrics.expandedRadius else HeartGaugeMetrics.collapsedRadius }
     val detailsAlpha by transition.animateFloat(
         transitionSpec = { tween(if (targetState) 260 else 120, delayMillis = if (targetState) 80 else 0) },
         label = "상세 내용"
@@ -190,19 +226,31 @@ internal fun HeartGaugePanel(
     val heartX by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "하트 위치 X"
     ) { if (it) 16.dp else 10.dp }
+    // 펼친 카드의 하트를 제목 줄 한가운데 놓습니다.
+    //
+    // 피그마 원안은 하트(20dp, 위 14dp)와 제목이 가운데로 나란한데, 구현에서는 제목 줄만
+    // 카드 세로 여백 10dp 자리에서 시작해서 하트가 아래로 처져 보였습니다.
+    // 제목 줄 높이를 h라 하면 줄 중심은 `10 + h/2`, 하트 중심은 `heartY + 10`이므로
+    // `heartY = h/2`입니다. `sectionHeader`에 lineHeight가 없어 h는 13sp의 기본 줄 높이(약 18dp)로
+    // 잡았습니다. **h는 짐작입니다.**
+    //
+    // 접힌 칩은 36dp 높이에 `8 + 10 = 18`이라 이미 정확히 가운데입니다.
     val heartY by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "하트 위치 Y"
-    ) { if (it) 14.dp else 8.dp }
+    ) { if (it) 9.dp else 8.dp }
     val chevronProgress by transition.animateFloat(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "펼침 화살표"
     ) { if (it) 1f else 0f }
     val shape = RoundedCornerShape(radius)
 
-    Box(modifier.fillMaxWidth().height(if (participants.size > 2) 212.dp else 174.dp).padding(top = 12.dp), contentAlignment = Alignment.TopCenter) {
+    // 바깥 상자는 카드가 차지하는 만큼만 잡습니다. 예전에는 접혀 있어도 174dp를 잡고 있어서,
+    // 카드 아래 빈 자리가 목록 위에 얹힌 채로 남아 있었습니다.
+    Box(modifier.fillMaxWidth().height(height + 12.dp).padding(top = 12.dp), contentAlignment = Alignment.TopCenter) {
         Box(
-            Modifier.width(width).height(height).shadow(if (expanded) 12.dp else 0.dp, shape, clip = false)
+            Modifier.width(width).height(height)
+                .shadow(if (expanded) HeartGaugeMetrics.elevation else 0.dp, shape, clip = false)
                 .clip(shape).background(colors.bubbleTheirs).border(1.dp, colors.border, shape)
-                .clickable(onClick = onToggle)
+                .clickableNoRipple(onClick = onToggle)
         ) {
             Row(
                 Modifier.fillMaxSize().graphicsLayer { alpha = compactAlpha }.padding(horizontal = 10.dp),
@@ -230,9 +278,9 @@ internal fun HeartGaugePanel(
                     Spacer(Modifier.width(16.dp))
                 }
                 Box(Modifier.fillMaxWidth().padding(top = 8.dp).height(1.dp).background(colors.border))
-                participants.take(3).forEach { participant ->
+                visibleParticipants.forEach { participant ->
                     Row(
-                        Modifier.fillMaxWidth().height(38.dp).padding(top = 6.dp),
+                        Modifier.fillMaxWidth().height(HeartGaugeMetrics.participantRow).padding(top = 6.dp),
                         verticalAlignment = Alignment.Top
                     ) {
                         RoomAvatar(participant.avatar, 28.dp)
@@ -243,24 +291,30 @@ internal fun HeartGaugePanel(
                                 Text("${participant.heart}", style = KakaoText.senderName, color = HeartGaugeTokens.heart)
                             }
                             Box(Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp).clip(CircleShape).background(HeartGaugeTokens.soft)) {
-                                Box(
-                                    Modifier.fillMaxWidth((participant.heart.coerceIn(0, 100) / 100f).coerceAtLeast(0.01f))
-                                        .height(4.dp).background(HeartGaugeTokens.heart, CircleShape)
-                                )
+                                // 0은 0으로 보여야 합니다. 예전에는 최소 1%를 채워 두어서
+                                // 호감도가 바닥난 순간을 화면에서 알아볼 수 없었습니다.
+                                val filled = participant.heart.coerceIn(0, 100) / 100f
+                                if (filled > 0f) {
+                                    Box(
+                                        Modifier.fillMaxWidth(filled)
+                                            .height(4.dp).background(HeartGaugeTokens.heart, CircleShape)
+                                    )
+                                }
                             }
                         }
                     }
                 }
-                if (participants.size <= 3) {
-                    Text(
-                        if (participants.size == 1) "앞으로의 대화에 따라 변화합니다."
-                        else "기본 호감도를 이어받아 이 세계선에서 변화합니다.",
-                        style = KakaoText.timestamp,
-                        color = colors.textTertiary,
-                        maxLines = 1,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
+                Text(
+                    when {
+                        hiddenCount > 0 -> "외 ${hiddenCount}명은 이 카드에 표시하지 않았습니다."
+                        participants.size == 1 -> "앞으로의 대화에 따라 변화합니다."
+                        else -> "기본 호감도를 이어받아 이 세계선에서 변화합니다."
+                    },
+                    style = KakaoText.timestamp,
+                    color = colors.textTertiary,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
             RelationshipHeart(Modifier.offset(x = heartX, y = heartY).size(20.dp))
             RelationshipChevron(
@@ -343,7 +397,7 @@ internal fun WorldlineSwitcherSheet(
                 }
                 Row(
                     Modifier.clip(CircleShape).background(WorldlineTokens.soft)
-                        .clickable(enabled = branchEnabled, onClick = onBranch)
+                        .clickableNoRipple(enabled = branchEnabled, onClick = onBranch)
                         .padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -383,7 +437,7 @@ private fun WorldlineRow(worldline: WorldlineState, selected: Boolean, onClick: 
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
             .background(if (selected) WorldlineTokens.soft else colors.sunken)
-            .border(1.dp, border, RoundedCornerShape(16.dp)).clickable(onClick = onClick)
+            .border(1.dp, border, RoundedCornerShape(16.dp)).clickableNoRipple(onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -467,7 +521,7 @@ private fun DialogAction(
         modifier.height(44.dp).clip(RoundedCornerShape(12.dp))
             .background(if (primary) WorldlineTokens.accent else colors.sunken)
             .then(if (primary) Modifier else Modifier.border(1.dp, colors.border, RoundedCornerShape(12.dp)))
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickableNoRipple(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(label, style = KakaoText.senderName, color = if (primary) Color(0xFF1A1A1A) else colors.textSecondary)

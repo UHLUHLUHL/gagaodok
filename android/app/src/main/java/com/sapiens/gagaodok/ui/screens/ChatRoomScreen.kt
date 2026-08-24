@@ -123,7 +123,7 @@ fun ChatRoomScreen(
     val globalModel by app.settings.selectedModel.collectAsState()
     val messages by vm.messages.collectAsState()
     val isTyping by vm.isTyping.collectAsState()
-    val typingParticipantIds by vm.typingParticipantIds.collectAsState()
+    val groupTyping by vm.groupTyping.collectAsState()
     val isResponding by vm.isResponding.collectAsState()
     val loadedBinding by vm.loadedBinding.collectAsState()
     val error by vm.errorMessage.collectAsState()
@@ -201,9 +201,6 @@ fun ChatRoomScreen(
         )
     }
 
-    val listState = rememberLazyListState()
-    val rendered = remember(messages) { buildRows(messages) }
-
     // 검색 결과는 아래에서 위로 훑습니다. 최근 대화가 더 자주 찾는 대상입니다.
     val hits = remember(messages, searchText) {
         val needle = searchText.trim().lowercase()
@@ -215,16 +212,6 @@ fun ChatRoomScreen(
     // 키보드가 올라오면 화면이 그만큼 줄어듭니다. 그때 맨 아래로 따라가지 않으면
     // 방금 쓰던 대화가 키보드 뒤로 밀려 올라가 버립니다.
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-
-    // 새 말풍선이 붙거나 키보드가 오르내리면 맨 아래로 따라갑니다.
-    LaunchedEffect(rendered.size, isTyping, typingParticipantIds, imeVisible) {
-        if (rendered.isNotEmpty()) listState.animateScrollToItem(rendered.size)
-    }
-    LaunchedEffect(currentHitId) {
-        val id = currentHitId ?: return@LaunchedEffect
-        val index = rendered.indexOfFirst { it is Row.Bubble && it.message.id == id }
-        if (index >= 0) listState.animateScrollToItem(index)
-    }
 
     // 검색 중이면 뒤로가기가 먼저 검색을 닫습니다.
     BackHandler(enabled = searchVisible) {
@@ -455,9 +442,28 @@ fun ChatRoomScreen(
             ) {
                 listOf(GroupParticipantUi(room, room.profile.baseAffection, avatar))
             } else emptyList()
+            // 목록 상태는 **화면에 뜬 pane마다 따로** 둡니다.
+            //
+            // 예전에는 화면 전체에서 하나를 만들어 모든 pane이 나눠 썼습니다. 그런데
+            // `AnimatedContent`는 전환하는 동안 이전 pane과 새 pane을 **동시에** 올려 둡니다.
+            // 그 순간 두 `LazyColumn`이 같은 상태 객체에 서로 값을 쓰면서 측정이 끝나지
+            // 않습니다. 방에 들어가는 순간 한 코어를 가득 쓰며 화면이 멈췄고, 로그에는
+            // 앱 코드가 한 줄도 없는 Compose 측정 루프만 남았습니다.
+            val paneListState = rememberLazyListState()
+
+            // 새 말풍선이 붙거나 키보드가 오르내리면 맨 아래로 따라갑니다.
+            LaunchedEffect(displayedRows.size, isTyping, groupTyping, imeVisible) {
+                if (displayedRows.isNotEmpty()) paneListState.animateScrollToItem(displayedRows.size)
+            }
+            LaunchedEffect(currentHitId) {
+                val id = currentHitId ?: return@LaunchedEffect
+                val index = displayedRows.indexOfFirst { it is Row.Bubble && it.message.id == id }
+                if (index >= 0) paneListState.animateScrollToItem(index)
+            }
+
             Box(Modifier.fillMaxSize()) {
                 LazyColumn(
-                    state = listState,
+                    state = paneListState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = if (relationshipParticipants.isEmpty()) 0.dp else 56.dp)
                 ) {
@@ -486,23 +492,30 @@ fun ChatRoomScreen(
                             }
                         }
                     }
-                    if (group != null && typingParticipantIds.isNotEmpty()) {
-                        typingParticipantIds.forEach { participantId ->
-                            val participant = participantRooms.firstOrNull { it.id == participantId } ?: return@forEach
-                            item("typing-$participantId") {
-                                TypingIndicator(
-                                    botName = participant.profile.name,
-                                    avatar = app.chatStore.avatar(participant.id, participant.profile)
+                    // 입력 표시는 턴 내내 같은 항목 자리를 씁니다.
+                    //
+                    // 예전에는 "대화를 준비하고 있어요"와 캐릭터 입력 표시가 서로 다른 키를
+                    // 써서, 준비가 끝나는 순간 항목이 사라졌다가 다른 항목이 새로 생겼습니다.
+                    // 화면에서는 표시가 내려갔다 다시 올라오는 것으로 보였습니다.
+                    // 지금은 단톡방에서 이름과 아바타만 바뀝니다.
+                    val typingRoom = (groupTyping as? GroupTypingState.Speaking)
+                        ?.let { state -> participantRooms.firstOrNull { it.id == state.roomId } }
+                    val showsGroupTyping = groupTyping != GroupTypingState.Idle
+                    if (showsGroupTyping || isTyping) {
+                        item("turn-indicator") {
+                            when {
+                                typingRoom != null -> TypingIndicator(
+                                    botName = typingRoom.profile.name,
+                                    avatar = app.chatStore.avatar(typingRoom.id, typingRoom.profile)
                                 ) { vm.cancelResponse() }
+                                // 화자를 아직 모릅니다. 추측한 이름을 오래 붙여 두는 대신
+                                // 참여자 아바타만 보여줍니다.
+                                showsGroupTyping -> TypingIndicator(
+                                    botName = null,
+                                    avatars = displayedParticipants.map { it.avatar }
+                                ) { vm.cancelResponse() }
+                                else -> TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
                             }
-                        }
-                    } else if (group != null && isTyping) {
-                        item("group-preparing") {
-                            GroupPreparingIndicator(displayedParticipants.map { it.avatar }) { vm.cancelResponse() }
-                        }
-                    } else if (isTyping) {
-                        item("typing") {
-                            TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
                         }
                     }
                     item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }

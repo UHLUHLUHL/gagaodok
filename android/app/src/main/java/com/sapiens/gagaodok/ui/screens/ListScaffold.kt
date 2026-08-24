@@ -1,8 +1,6 @@
 package com.sapiens.gagaodok.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +33,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.sapiens.gagaodok.ui.Metrics
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.icons.MagnifierIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -132,13 +131,6 @@ fun ListTopBar(
             }
         }
     }
-}
-
-/// 물결 효과 없이 누를 수 있게 합니다. 작은 아이콘에는 물결이 아이콘보다 커서 어색합니다.
-@Composable
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier {
-    val interaction = remember { MutableInteractionSource() }
-    return this.clickable(interactionSource = interaction, indication = null, onClick = onClick)
 }
 
 /// 목록이 비었을 때 자리를 채웁니다.

@@ -14,8 +14,8 @@ android {
         create("phone") {
             dimension = "device"
             applicationId = "com.sapiens.gagaodok"
-            versionCode = 8
-            versionName = "1.7-phone"
+            versionCode = 11
+            versionName = "1.7.3-phone"
             buildConfigField("boolean", "TABLET_MENTOR", "false")
         }
         create("tabletMentor") {
@@ -38,6 +38,13 @@ android {
         // 1.5: 챗봇 모드 사고량을 낮추고, 사진을 타일 기준으로 줄여 보냅니다.
         // 1.6: 안 쓸 캐시를 안 만들고, 키 저장소가 안 죽고, 요약 지침이 모드를 따릅니다.
         // 1.7: 개인·세계선 호감도, 자연스러운 단톡 응답 일정, 반응 칩과 하트 모션을 더했습니다.
+        // 1.7.1: 단톡 말풍선을 스트리밍 중에 바로 재생하고, 입력 표시를 캐릭터 한 명으로
+        //        모았습니다. 하트 패널의 머티리얼 물결을 걷어냈습니다.
+        // 1.7.2: 응답 시간을 첫 글자까지와 그 뒤로 나눠 재고, 사고 토큰을 따로 셉니다.
+        //        추측한 화자 이름은 3초까지만 보여주고, 화자가 확정되면 최소 0.6초는
+        //        입력 표시를 보여줍니다.
+        // 1.7.3: 대화방에 들어갈 때 화면이 멈추던 것을 고쳤습니다. 목록 상태 하나를 전환
+        //        중인 두 화면이 나눠 쓰면서 측정이 끝나지 않던 문제입니다.
     }
 
     buildTypes {

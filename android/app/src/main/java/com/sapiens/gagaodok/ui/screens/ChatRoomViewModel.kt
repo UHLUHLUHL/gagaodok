@@ -21,14 +21,15 @@ import com.sapiens.gagaodok.service.AIServiceException
 import com.sapiens.gagaodok.service.GeneratedMessageBubble
 import com.sapiens.gagaodok.service.GroupConversationProtocol
 import com.sapiens.gagaodok.service.GroupReplyBubble
-import com.sapiens.gagaodok.service.GroupReplyEvent
-import com.sapiens.gagaodok.service.GroupReplyScheduler
+import com.sapiens.gagaodok.service.GroupReplyTimeline
 import com.sapiens.gagaodok.service.PersonalAffectionProtocol
 import com.sapiens.gagaodok.service.PlannedReaction
 import com.sapiens.gagaodok.service.RoleplayParser
 import com.sapiens.gagaodok.service.repetitionAdviceFromConversation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -61,6 +62,33 @@ internal class GroupResponseBuffer(history: List<ChatMessage>) {
     }
 }
 
+/// 단톡방에서 지금 누가 입력 중으로 보이는지입니다.
+sealed interface GroupTypingState {
+    /// 아무도 입력 중이 아닙니다. **이 턴이 끝났다는 뜻입니다.**
+    data object Idle : GroupTypingState
+
+    /// 누군가 쓰고 있지만 아직 누구인지 모릅니다. 이름 없이 참여자 아바타만 보여줍니다.
+    ///
+    /// 응답이 오기 전에는 화자를 알 수 없어 한 명을 추측해 보여주는데, 그 추측이 오래
+    /// 노출되면 명백한 거짓말이 됩니다. 실기기에서 "아라 입력 중"이 23초 떠 있다가
+    /// 마린이 말한 적이 있습니다. 짧은 대기에는 추측이 대체로 맞으니 이름을 보여주고,
+    /// [GUESS_GRACE_MILLIS]가 지나도록 응답이 없으면 이름을 내려 이 상태로 물러납니다.
+    data object Unknown : GroupTypingState
+
+    /// 이 사람이 입력 중입니다.
+    data class Speaking(val roomId: UUID) : GroupTypingState
+}
+
+/// 추측한 화자의 이름을 보여줄 수 있는 시간입니다. (짐작)
+private const val GUESS_GRACE_MILLIS = 3_000L
+
+/// 화자가 확정된 뒤 말풍선이 뜨기 전에 그 사람의 입력 표시를 최소한 보여줄 시간입니다.
+///
+/// 응답이 계획보다 늦게 오면 예정 시각이 이미 지나 있어서 말풍선이 곧바로 떠 버립니다.
+/// 그러면 정작 오래 기다린 턴에서 "누가 말하는지"의 연출이 통째로 사라집니다. 23초를
+/// 기다린 뒤의 이 짧은 시간은 체감되지 않습니다. (짐작)
+private const val MIN_TYPING_VISIBLE_MILLIS = 600L
+
 private data class PendingGroupBubble(
     val generated: GeneratedMessageBubble,
     val visibleText: String,
@@ -91,11 +119,26 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
     private val _isTyping = MutableStateFlow(false)
     val isTyping: StateFlow<Boolean> = _isTyping
 
-    private val _typingParticipantIds = MutableStateFlow<Set<UUID>>(emptySet())
-    val typingParticipantIds: StateFlow<Set<UUID>> = _typingParticipantIds
+    /// 단톡방 입력 표시의 상태입니다.
+    ///
+    /// **[GroupTypingState.Idle]은 이 턴이 끝났다는 뜻입니다.** 그 밖의 상태인 동안에는
+    /// 모델이 아직 쓰고 있거나 보여줄 말풍선이 남아 있습니다. 사용자는 이 표시 하나만
+    /// 보고 "더 오나"를 판단할 수 있어야 합니다.
+    ///
+    /// 한 명만 두는 이유가 있습니다. 두 명이 동시에 입력 중이면 누가 말할 차례인지
+    /// 흐려지고, "눌러서 중지"도 두 개가 떠서 무엇을 멈추는지 헷갈립니다. 그리고 어차피
+    /// 대사는 한 번의 호출에서 순서대로 만들어지므로, 동시에 치는 두 사람은 실제로
+    /// 존재하지 않습니다.
+    private val _groupTyping = MutableStateFlow<GroupTypingState>(GroupTypingState.Idle)
+    val groupTyping: StateFlow<GroupTypingState> = _groupTyping
 
     private val _isResponding = MutableStateFlow(false)
     val isResponding: StateFlow<Boolean> = _isResponding
+
+    private fun clearTyping() {
+        if (_groupTyping.value != GroupTypingState.Idle) _groupTyping.value = GroupTypingState.Idle
+    }
+
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
@@ -112,7 +155,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         responseJob?.cancel()
         responseJob = null
         _isTyping.value = false
-        _typingParticipantIds.value = emptySet()
+        clearTyping()
         _isResponding.value = false
         bindJob?.cancel()
         bindJob = viewModelScope.launch {
@@ -205,8 +248,89 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         responseJob?.cancel()
         responseJob = null
         _isTyping.value = false
-        _typingParticipantIds.value = emptySet()
+        clearTyping()
         _isResponding.value = false
+    }
+
+    /// 모델이 만들어 내는 말풍선을 도착하는 대로 화면에 올립니다.
+    ///
+    /// 입력 표시는 이 함수가 도는 내내 떠 있고, 함수가 끝날 때 내려갑니다. 그래서 사용자에게
+    /// 표시의 유무가 곧 "이 턴이 진행 중인가"입니다.
+    ///
+    /// 다음 말풍선의 화자는 그것이 도착하기 전에는 알 수 없습니다. 모르는 동안에는 **직전
+    /// 화자를 그대로 둡니다.** 같은 사람이 이어서 치는 것으로 보이고, 실제로 그 사람이
+    /// 이어서 말하는 경우도 많아 대개는 맞습니다. 틀리면 다음 말풍선이 도착할 때 바뀝니다.
+    private suspend fun playGroupBubbles(
+        channel: Channel<PendingGroupBubble>,
+        buffer: GroupResponseBuffer,
+        turnId: UUID,
+        turnStartedAt: Long,
+        roomId: UUID,
+        worldlineId: UUID?,
+        binding: ConversationBinding,
+        onSpeakerKnown: () -> Unit
+    ) = coroutineScope {
+        val timeline = GroupReplyTimeline(turnId)
+        var index = 0
+        for (pending in channel) {
+            val step = timeline.next(
+                GroupReplyBubble(
+                    index = index,
+                    visibleText = pending.visibleText,
+                    kind = pending.generated.kind,
+                    speakerRoomId = pending.speakerRoomId,
+                    reactions = pending.reactions
+                )
+            )
+            // 이제 이 말풍선의 화자를 알았으므로 입력 표시를 그 사람으로 맞춥니다.
+            val speakerShownAt = SystemClock.elapsedRealtime()
+            if (pending.speakerRoomId != null) {
+                onSpeakerKnown()
+                _groupTyping.value = GroupTypingState.Speaking(pending.speakerRoomId)
+            }
+            delayUntil(turnStartedAt + step.revealAt)
+            // 응답이 늦게 오면 예정 시각이 이미 지나 있어 말풍선이 곧바로 떠 버립니다.
+            // 오래 기다린 턴일수록 연출이 사라지는 셈이라, 최소한의 입력 표시를 보장합니다.
+            if (pending.speakerRoomId != null) delayUntil(speakerShownAt + MIN_TYPING_VISIBLE_MILLIS)
+            // 모델이 늦게 써서 예정보다 뒤에 떴다면 실제 시각으로 기준을 옮깁니다.
+            timeline.commitReveal(SystemClock.elapsedRealtime() - turnStartedAt)
+
+            val message = ChatMessage(
+                sender = MessageSender.SAPIENS,
+                text = pending.visibleText,
+                attachment = pending.generated.attachment,
+                turnId = turnId,
+                kind = pending.generated.kind,
+                speakerRoomId = pending.speakerRoomId
+            )
+            buffer.append(message)
+            publishGroupResponse(binding, buffer)
+            persist(roomId, worldlineId, buffer.messages)
+
+            pending.reactions.forEachIndexed { reactionIndex, planned ->
+                val at = step.reactionAt.getOrNull(reactionIndex) ?: return@forEachIndexed
+                // 반응은 말풍선보다 뒤에 붙지만, 다음 말풍선을 기다리게 하지는 않습니다.
+                launch {
+                    delayUntil(turnStartedAt + at)
+                    val messageIndex = buffer.messages.indexOfFirst { it.id == message.id }
+                    if (messageIndex < 0) return@launch
+                    val current = buffer.messages[messageIndex]
+                    val reaction = MessageReaction(planned.participantRoomId, planned.emoji)
+                    if (reaction in current.reactions) return@launch
+                    buffer.replace(messageIndex, current.copy(reactions = current.reactions + reaction))
+                    publishGroupResponse(binding, buffer)
+                    persist(roomId, worldlineId, buffer.messages)
+                }
+            }
+            index += 1
+        }
+        // 통로가 닫혔고 남은 말풍선도 다 보여줬습니다. 표시를 내리는 것이 곧 "턴이 끝났다"입니다.
+        clearTyping()
+    }
+
+    private suspend fun delayUntil(targetElapsedRealtime: Long) {
+        val remaining = targetElapsedRealtime - SystemClock.elapsedRealtime()
+        if (remaining > 0) delay(remaining)
     }
 
     private fun respond(
@@ -224,7 +348,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         val participantRooms = group?.participantRoomIds?.mapNotNull(store::room).orEmpty()
         if (group != null && participantRooms.size != group.participantRoomIds.size) {
             _isTyping.value = false
-            _typingParticipantIds.value = emptySet()
+            clearTyping()
             _isResponding.value = false
             _errorMessage.value = "참여자 정보를 찾을 수 없습니다."
             val failIndex = _messages.value.indexOfFirst { it.id == failingMessageId }
@@ -238,6 +362,17 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         }
         val protocol = group?.let {
             GroupConversationProtocol(participantRooms)
+        }
+        if (protocol != null) {
+            // 보내자마자 캐릭터 한 명이 입력 중으로 보입니다. 응답을 기다리는 동안 앱 사정을
+            // 알리는 표시가 화면에 남지 않게 합니다.
+            _isTyping.value = false
+            _groupTyping.value = GroupTypingState.Speaking(
+                protocol.guessFirstSpeaker(
+                    history = history,
+                    userText = history.lastOrNull { it.sender == MessageSender.USER }?.text.orEmpty()
+                )
+            )
         }
         val requestWorldlineId = group?.activeWorldlineId
         val requestBinding = ConversationBinding(id, requestWorldlineId)
@@ -267,9 +402,40 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
             val responseTurnId = UUID.randomUUID()
             val groupBuffer = protocol?.let { GroupResponseBuffer(history) }
             val groupRawText = StringBuilder()
-            val pendingGroupBubbles = mutableListOf<PendingGroupBubble>()
             var previousSpeakerId: UUID? = null
             var attempt = 0
+            // 사용자가 보낸 순간을 0으로 잡습니다. 연출 시간을 API 응답 시간 **뒤에** 이어
+            // 붙이면 둘이 더해져서 첫 글자까지 7초가 넘게 걸립니다. 겹쳐야 합니다.
+            val turnStartedAt = SystemClock.elapsedRealtime()
+            // 스트리밍이 만들어 내는 말풍선을 받아 두는 통로입니다. 재생은 이 통로를 읽는
+            // 별도 코루틴이 맡으므로, 모델이 아직 쓰는 중에도 앞 말풍선을 보여줄 수 있습니다.
+            val bubbleChannel = if (groupBuffer == null) null else Channel<PendingGroupBubble>(Channel.UNLIMITED)
+            // 추측한 화자의 이름을 언제까지 보여줄지를 재는 시계입니다.
+            var speakerConfirmed = false
+            var guessGrace: Job? = null
+            val playback = if (groupBuffer == null || bubbleChannel == null) null else launch {
+                playGroupBubbles(
+                    channel = bubbleChannel,
+                    buffer = groupBuffer,
+                    turnId = responseTurnId,
+                    turnStartedAt = turnStartedAt,
+                    roomId = id,
+                    worldlineId = requestWorldlineId,
+                    binding = requestBinding,
+                    onSpeakerKnown = {
+                        speakerConfirmed = true
+                        guessGrace?.cancel()
+                    }
+                )
+            }
+            guessGrace = if (groupBuffer == null) null else launch {
+                delay(GUESS_GRACE_MILLIS)
+                // 아직 응답이 없으면 추측한 이름을 내립니다. 틀린 이름을 오래 붙여 두는 것보다
+                // 이름 없이 "누군가 쓰는 중"만 보여주는 편이 낫습니다.
+                if (!speakerConfirmed && _groupTyping.value is GroupTypingState.Speaking) {
+                    _groupTyping.value = GroupTypingState.Unknown
+                }
+            }
             while (true) {
                 try {
                     val rawText = ai.streamResponse(
@@ -304,70 +470,22 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                             _messages.value = _messages.value + message
                             persist(requestWorldlineId)
                         } else {
-                            pendingGroupBubbles += PendingGroupBubble(
-                                generated = bubble,
-                                visibleText = visibleText,
-                                speakerRoomId = if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) parsed?.speakerRoomId else null,
-                                reactions = parsed?.reactions.orEmpty()
+                            bubbleChannel?.trySend(
+                                PendingGroupBubble(
+                                    generated = bubble,
+                                    visibleText = visibleText,
+                                    speakerRoomId = if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) parsed?.speakerRoomId else null,
+                                    reactions = parsed?.reactions.orEmpty()
+                                )
                             )
                         }
                     }
 
                     _isTyping.value = false
-                    if (groupBuffer != null) {
-                        val scheduled = pendingGroupBubbles.mapIndexed { index, pending ->
-                            GroupReplyBubble(
-                                index = index,
-                                visibleText = pending.visibleText,
-                                kind = pending.generated.kind,
-                                speakerRoomId = pending.speakerRoomId,
-                                reactions = pending.reactions
-                            )
-                        }
-                        val startedAt = SystemClock.elapsedRealtime()
-                        val messageIds = mutableMapOf<Int, UUID>()
-                        for (event in GroupReplyScheduler.plan(responseTurnId, scheduled)) {
-                            val remaining = event.atMillis - (SystemClock.elapsedRealtime() - startedAt)
-                            if (remaining > 0) delay(remaining)
-                            when (event) {
-                                is GroupReplyEvent.TypingStarted -> {
-                                    _typingParticipantIds.value = _typingParticipantIds.value + event.participantRoomId
-                                }
-                                is GroupReplyEvent.TypingStopped -> {
-                                    _typingParticipantIds.value = _typingParticipantIds.value - event.participantRoomId
-                                }
-                                is GroupReplyEvent.RevealBubble -> {
-                                    val pending = pendingGroupBubbles[event.bubbleIndex]
-                                    val message = ChatMessage(
-                                        sender = MessageSender.SAPIENS,
-                                        text = pending.visibleText,
-                                        attachment = pending.generated.attachment,
-                                        turnId = responseTurnId,
-                                        kind = pending.generated.kind,
-                                        speakerRoomId = pending.speakerRoomId
-                                    )
-                                    messageIds[event.bubbleIndex] = message.id
-                                    groupBuffer.append(message)
-                                    publishGroupResponse(requestBinding, groupBuffer)
-                                    persist(id, requestWorldlineId, groupBuffer.messages)
-                                }
-                                is GroupReplyEvent.ApplyReaction -> {
-                                    val messageId = messageIds[event.bubbleIndex] ?: continue
-                                    val messageIndex = groupBuffer.messages.indexOfFirst { it.id == messageId }
-                                    if (messageIndex >= 0) {
-                                        val current = groupBuffer.messages[messageIndex]
-                                        val reaction = MessageReaction(event.reaction.participantRoomId, event.reaction.emoji)
-                                        if (reaction !in current.reactions) {
-                                            groupBuffer.replace(messageIndex, current.copy(reactions = current.reactions + reaction))
-                                            publishGroupResponse(requestBinding, groupBuffer)
-                                            persist(id, requestWorldlineId, groupBuffer.messages)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _typingParticipantIds.value = emptySet()
-                    }
+                    // 통로를 닫으면 재생 쪽이 "더 올 말풍선이 없다"를 압니다. 남은 것을 다
+                    // 보여주고 입력 표시를 내린 뒤에 끝납니다.
+                    bubbleChannel?.close()
+                    playback?.join()
                     // API에는 갈라지기 전 원문을 한 번만 보냅니다. 턴의 첫 말풍선에 담아 둡니다.
                     val responseMessages = groupBuffer?.messages ?: _messages.value
                     val firstIndex = responseMessages.indexOfFirst { it.turnId == responseTurnId }
@@ -394,12 +512,17 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 } catch (e: CancellationException) {
                     // 사용자가 멈춘 것은 실패가 아닙니다. 표시를 남기지 않습니다.
+                    bubbleChannel?.close()
                     persistPartialGroupCanonical(groupBuffer, responseTurnId, groupRawText.toString(), requestBinding)
                     _isTyping.value = false
-                    _typingParticipantIds.value = emptySet()
+                    clearTyping()
                     _isResponding.value = false
                     throw e
                 } catch (e: Exception) {
+                    // 재생 쪽이 통로를 기다리며 남아 있지 않게 먼저 닫습니다. 닫지 않으면
+                    // 이 코루틴이 자식을 기다리느라 끝나지 않습니다.
+                    bubbleChannel?.close()
+                    playback?.join()
                     // 말풍선이 이미 하나라도 붙었으면 다시 보낼 수 없습니다.
                     // 처음부터 다시 받으면 앞부분이 두 번 나옵니다.
                     val alreadyShown = (groupBuffer?.messages ?: _messages.value).any { it.turnId == responseTurnId }
@@ -416,7 +539,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                         continue
                     }
                     _isTyping.value = false
-                    _typingParticipantIds.value = emptySet()
+                    clearTyping()
                     _isResponding.value = false
                     _errorMessage.value = e.message ?: "요청을 처리하지 못했습니다."
                     // 답변자 쪽에 오류 말풍선을 남기지 않습니다. 카카오톡처럼

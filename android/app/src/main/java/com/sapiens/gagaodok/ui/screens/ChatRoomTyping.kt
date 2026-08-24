@@ -6,7 +6,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +28,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.sapiens.gagaodok.ui.Metrics
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.components.kakaoBubbleBackground
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -42,6 +42,18 @@ internal fun TypingIndicator(
     botName: String,
     avatar: android.graphics.Bitmap?,
     onCancel: () -> Unit
+) = TypingIndicator(botName, listOf(avatar), onCancel)
+
+/// 답변을 기다릴 때의 "..." 표시입니다.
+///
+/// 단톡방에서는 응답이 오기 전까지 화자를 알 수 없습니다. 그때는 [botName]을 비우고
+/// 참여자 아바타를 여럿 넘깁니다. 이름 자리는 빈 채로 **높이를 그대로 유지**합니다.
+/// 글자만 지우고 자리를 접으면, 화자가 확정되는 순간 말풍선이 위아래로 튑니다.
+@Composable
+internal fun TypingIndicator(
+    botName: String?,
+    avatars: List<android.graphics.Bitmap?>,
+    onCancel: () -> Unit
 ) {
     val colors = KakaoTheme.colors
     // 말풍선과 같은 정렬 규칙을 씁니다. 위쪽 정렬이라야 아바타 위 끝이 이름 줄과 맞습니다.
@@ -51,9 +63,19 @@ internal fun TypingIndicator(
             .padding(horizontal = Metrics.roomPadding, vertical = Metrics.bubbleGap),
         verticalAlignment = Alignment.Top
     ) {
-        RoomAvatar(avatar, Metrics.bubbleAvatar)
+        val shown = avatars.take(2)
+        if (shown.size <= 1) {
+            RoomAvatar(shown.firstOrNull(), Metrics.bubbleAvatar)
+        } else {
+            Box(Modifier.width(Metrics.bubbleAvatar + 14.dp).height(Metrics.bubbleAvatar)) {
+                shown.forEachIndexed { index, avatar ->
+                    RoomAvatar(avatar, Metrics.bubbleAvatar, Modifier.offset(x = (index * 14).dp))
+                }
+            }
+        }
         Column(Modifier.padding(start = Metrics.bubbleAvatarGap)) {
-            Text(botName, style = KakaoText.senderName, color = colors.textPrimary)
+            // 이름이 없어도 줄 자체는 남깁니다. 줄바꿈 없는 공백이라 높이가 유지됩니다.
+            Text(botName ?: " ", style = KakaoText.senderName, color = colors.textPrimary)
             // 안쪽 여백과 글줄 높이를 말풍선과 똑같이 씁니다.
             // 다른 숫자를 쓰면 답변이 도착하는 순간 말풍선 높이가 튑니다.
             Row(
@@ -64,7 +86,7 @@ internal fun TypingIndicator(
                         isFirst = true,
                         isMine = false
                     )
-                    .clickable(onClick = onCancel)
+                    .clickableNoRipple(onClick = onCancel)
                     .padding(
                         horizontal = Metrics.bubblePaddingH,
                         vertical = Metrics.bubblePaddingV
@@ -84,37 +106,13 @@ internal fun TypingIndicator(
     }
 }
 
-@Composable
-internal fun GroupPreparingIndicator(
-    avatars: List<android.graphics.Bitmap?>,
-    onCancel: () -> Unit
-) {
-    val colors = KakaoTheme.colors
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = Metrics.roomPadding, vertical = Metrics.bubbleGap),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(Modifier.width(50.dp).height(Metrics.bubbleAvatar)) {
-            avatars.take(2).forEachIndexed { index, avatar ->
-                RoomAvatar(avatar, Metrics.bubbleAvatar, Modifier.offset(x = (index * 14).dp))
-            }
-        }
-        Column(Modifier.padding(start = Metrics.bubbleAvatarGap)) {
-            Text("대화를 준비하고 있어요.", style = KakaoText.senderName, color = colors.textSecondary)
-            Row(
-                Modifier.padding(top = Metrics.bubbleNameGap)
-                    .kakaoBubbleBackground(colors.bubbleTheirs, isFirst = true, isMine = false)
-                    .clickable(onClick = onCancel)
-                    .padding(horizontal = Metrics.bubblePaddingH, vertical = Metrics.bubblePaddingV),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                TypingDots(colors.textSecondary)
-                Text("· 눌러서 중지", style = KakaoText.timestamp, color = colors.textTertiary)
-            }
-        }
-    }
-}
+// 단톡방에서도 캐릭터 한 명의 `TypingIndicator`만 씁니다.
+//
+// 예전에는 응답을 기다리는 동안 아바타 두 개에 "대화를 준비하고 있어요."를 붙인 표시를
+// 따로 띄웠습니다. 그건 캐릭터가 아니라 **앱 사정**을 알리는 문장이었고, 화면에 가장 오래
+// 떠 있는 표시이기도 했습니다. 사용자는 캐릭터와 단톡을 하는 중이지 스케줄러를 구경하는
+// 중이 아닙니다. 지금은 화자를 모르는 동안에도 한 명을 골라 그 사람이 입력 중으로 보이게
+// 하고, 첫 말풍선이 도착하면 조용히 바꿉니다.
 
 /// 점 하나가 지금 얼마나 떠 있는지를 0(바닥)에서 1(꼭대기)로 돌려줍니다.
 ///

@@ -32,7 +32,14 @@ data class RequestObservation(
     val outputTokens: Int,
     val estimatedPromptTokens: Int,
     val unreported: Boolean = false,
-    val prompt: PromptTokenBreakdown = PromptTokenBreakdown()
+    val prompt: PromptTokenBreakdown = PromptTokenBreakdown(),
+    /// 요청을 보낸 뒤 **첫 글자가 오기까지** 걸린 시간입니다.
+    val ttftMillis: Long = 0,
+    /// 요청을 보낸 뒤 스트림이 끝나기까지 걸린 시간입니다.
+    val totalMillis: Long = 0,
+    /// 모델이 답을 쓰기 전에 생각하는 데 쓴 토큰입니다. 요금은 출력에 합산되지만,
+    /// 느린 이유를 가리려면 따로 봐야 합니다.
+    val thoughtsTokens: Int = 0
 )
 
 @Serializable
@@ -68,7 +75,20 @@ data class MeasurementRequests(
     val estimatedPromptTokens: Long = 0,
     val unreportedRequests: Int = 0,
     val cacheHitRequests: Int = 0,
-    val prompt: PromptTokenBreakdown = PromptTokenBreakdown()
+    val prompt: PromptTokenBreakdown = PromptTokenBreakdown(),
+    /// 응답이 느린 이유를 가리기 위한 시간입니다.
+    ///
+    /// 합계뿐 아니라 **최댓값**을 함께 둡니다. 23초짜리 한 건이 3초짜리 열 건에 섞이면
+    /// 평균은 5초로 보여서, 정작 문제가 된 그 한 건이 숫자에서 사라집니다.
+    val ttftMillisTotal: Long = 0,
+    val ttftMillisMax: Long = 0,
+    val totalMillisTotal: Long = 0,
+    val totalMillisMax: Long = 0,
+    /// 요청 하나가 쓴 최대 입력 토큰입니다. 대화가 길어질수록 느려지는지를 봅니다.
+    val inputTokensMax: Int = 0,
+    /// 사고 토큰입니다. 요금 계산에서는 출력에 합산되지만 여기서는 따로 셉니다.
+    val thoughtsTokens: Long = 0,
+    val thoughtsTokensMax: Int = 0
 )
 
 @Serializable
@@ -136,7 +156,14 @@ class OptimizationMeasurementStore internal constructor(
             estimatedPromptTokens = old.estimatedPromptTokens + observation.estimatedPromptTokens.coerceAtLeast(0),
             unreportedRequests = old.unreportedRequests + if (observation.unreported) 1 else 0,
             cacheHitRequests = old.cacheHitRequests + if (observation.cachedInputTokens > 0) 1 else 0,
-            prompt = old.prompt.adding(observation.prompt)
+            prompt = old.prompt.adding(observation.prompt),
+            ttftMillisTotal = old.ttftMillisTotal + observation.ttftMillis.coerceAtLeast(0),
+            ttftMillisMax = maxOf(old.ttftMillisMax, observation.ttftMillis),
+            totalMillisTotal = old.totalMillisTotal + observation.totalMillis.coerceAtLeast(0),
+            totalMillisMax = maxOf(old.totalMillisMax, observation.totalMillis),
+            inputTokensMax = maxOf(old.inputTokensMax, observation.inputTokens),
+            thoughtsTokens = old.thoughtsTokens + observation.thoughtsTokens.coerceAtLeast(0),
+            thoughtsTokensMax = maxOf(old.thoughtsTokensMax, observation.thoughtsTokens)
         )
         val rooms = run.roomRequestCounts +
             (observation.roomKey to (run.roomRequestCounts[observation.roomKey] ?: 0) + 1)
