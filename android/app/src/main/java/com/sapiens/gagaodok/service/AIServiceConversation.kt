@@ -34,6 +34,8 @@ internal suspend fun AIService.sendGeminiRequest(
     mode: ChatMode,
     roleplayInProgress: Boolean,
     repetitionAdvice: RepetitionAdvice?,
+    systemPromptOverride: String?,
+    onRawText: suspend (String) -> Unit,
     onBubble: suspend (GeneratedMessageBubble) -> Unit
 ): String {
     val model = AIModel.GEMINI_37_FLASH
@@ -50,7 +52,7 @@ internal suspend fun AIService.sendGeminiRequest(
     plan.digestText?.let { contents = digestPreamble(it) + contents }
     var requestContents = buildGeminiContents(plan.verbatimTurns.withRepetitionGuidance(repetitionAdvice))
     plan.digestText?.let { requestContents = digestPreamble(it) + requestContents }
-    val system = systemPrompt(botName, persona, mode)
+    val system = systemPromptOverride ?: systemPrompt(botName, persona, mode)
     val stableSystemTokens = TokenEstimator.textTokens(mode.stableSystemPrompt)
     val systemTokens = TokenEstimator.textTokens(system)
     val digestTokens = plan.digestText?.let(TokenEstimator::textTokens) ?: 0
@@ -87,7 +89,10 @@ internal suspend fun AIService.sendGeminiRequest(
     // 손에 있습니다. 그걸 버리지 않고 적습니다.
     val outcome = StreamOutcome()
     try {
-        streamGemini(outcome, requestContents, system, cache, apiKey, model, mode) { sink.consume(it) }
+        streamGemini(outcome, requestContents, system, cache, apiKey, model, mode) {
+            onRawText(it)
+            sink.consume(it)
+        }
         sink.finish()
     } finally {
         val reported = outcome.usage

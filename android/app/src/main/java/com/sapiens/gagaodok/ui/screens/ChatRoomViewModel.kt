@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.GagaodokApp
+import com.sapiens.gagaodok.data.ConversationScope
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.model.ChatMessage
@@ -15,6 +16,7 @@ import com.sapiens.gagaodok.model.ConversationTurn
 import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.service.AIService
 import com.sapiens.gagaodok.service.AIServiceException
+import com.sapiens.gagaodok.service.GroupConversationProtocol
 import com.sapiens.gagaodok.service.RoleplayParser
 import com.sapiens.gagaodok.service.repetitionAdviceFromConversation
 import kotlinx.coroutines.CancellationException
@@ -25,6 +27,30 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import java.util.UUID
+
+internal data class ConversationBinding(val roomId: UUID, val worldlineId: UUID?) {
+    fun matches(roomId: UUID?, worldlineId: UUID?): Boolean =
+        this.roomId == roomId && this.worldlineId == worldlineId
+}
+
+internal class GroupResponseBuffer(history: List<ChatMessage>) {
+    var messages: List<ChatMessage> = history.toList()
+        private set
+
+    fun append(message: ChatMessage) { messages = messages + message }
+
+    fun replace(index: Int, message: ChatMessage) {
+        messages = messages.toMutableList().also { it[index] = message }
+    }
+
+    fun preserveCanonical(turnId: UUID, rawText: String): Boolean {
+        if (rawText.isBlank()) return false
+        val firstIndex = messages.indexOfFirst { it.turnId == turnId }
+        if (firstIndex < 0) return false
+        replace(firstIndex, messages[firstIndex].copy(canonicalText = rawText))
+        return true
+    }
+}
 
 /// 대화방 하나의 상태입니다.
 ///
@@ -38,38 +64,67 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
     private val ai = AIService.get(app)
 
     private var roomId: UUID? = null
+    private var boundWorldlineId: UUID? = null
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages
 
+    private val _loadedBinding = MutableStateFlow<ConversationBinding?>(null)
+    internal val loadedBinding: StateFlow<ConversationBinding?> = _loadedBinding
+
     private val _isTyping = MutableStateFlow(false)
     val isTyping: StateFlow<Boolean> = _isTyping
+
+    private val _isResponding = MutableStateFlow(false)
+    val isResponding: StateFlow<Boolean> = _isResponding
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage
 
     private var responseJob: Job? = null
+    private var bindJob: Job? = null
 
     fun bind(id: UUID) {
-        if (roomId == id) return
+        val worldlineId = store.room(id)?.groupChat?.activeWorldlineId
+        if (roomId == id && boundWorldlineId == worldlineId) return
         roomId = id
-        viewModelScope.launch {
-            _messages.value = withContext(Dispatchers.IO) { store.loadMessages(id) }
+        boundWorldlineId = worldlineId
+        val binding = ConversationBinding(id, worldlineId)
+        responseJob?.cancel()
+        responseJob = null
+        _isTyping.value = false
+        _isResponding.value = false
+        bindJob?.cancel()
+        bindJob = viewModelScope.launch {
+            val loaded = store.loadMessagesFresh(ConversationScope(id, worldlineId))
+            if (binding.matches(roomId, boundWorldlineId)) {
+                _messages.value = loaded
+                _loadedBinding.value = binding
+            }
         }
     }
 
     fun clearError() { _errorMessage.value = null }
 
-    private fun persist() {
-        roomId?.let { store.saveMessages(it, _messages.value) }
+    private fun persist(worldlineId: UUID? = boundWorldlineId) {
+        roomId?.let { persist(it, worldlineId, _messages.value) }
+    }
+
+    private fun persist(id: UUID, worldlineId: UUID?, messages: List<ChatMessage>) {
+        if (worldlineId == null) store.saveMessages(id, messages)
+        else store.saveMessages(id, worldlineId, messages)
+    }
+
+    private fun publishGroupResponse(binding: ConversationBinding, buffer: GroupResponseBuffer) {
+        if (binding.matches(roomId, boundWorldlineId)) _messages.value = buffer.messages
     }
 
     // MARK: - 보내기
 
-    fun send(text: String, attachment: ChatAttachment?, room: ChatRoom, model: AIModel) {
-        if (_isTyping.value) return
+    fun send(text: String, attachment: ChatAttachment?, room: ChatRoom, model: AIModel): Boolean {
+        if (_isResponding.value || !_loadedBinding.value.matchesCurrent()) return false
         val trimmed = text.trim()
-        if (trimmed.isEmpty() && attachment == null) return
+        if (trimmed.isEmpty() && attachment == null) return false
 
         val turnId = UUID.randomUUID()
         val mine = ChatMessage(
@@ -82,7 +137,9 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         _messages.value = _messages.value + mine
         persist()
         _isTyping.value = true
+        _isResponding.value = true
         respond(_messages.value, room, model, failingMessageId = mine.id)
+        return true
     }
 
     /// 실패한 메시지를 다시 보냅니다. 그 메시지까지의 이력으로 다시 요청하므로
@@ -103,7 +160,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         room: ChatRoom,
         model: AIModel
     ) {
-        if (_isTyping.value) return
+        if (_isResponding.value || !_loadedBinding.value.matchesCurrent()) return
         if (replacementText != null && replacementText.isBlank()) return
         val current = _messages.value
         val truncated = MessageResendLogic.truncateFrom(current, message.id, replacementText)
@@ -111,18 +168,24 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         _messages.value = truncated
         persist()
         _isTyping.value = true
+        _isResponding.value = true
         respond(truncated, room, model, failingMessageId = message.id)
     }
 
     fun delete(message: ChatMessage) {
+        if (_isResponding.value || !_loadedBinding.value.matchesCurrent()) return
         _messages.value = _messages.value.filterNot { it.id == message.id }
         persist()
     }
+
+    private fun ConversationBinding?.matchesCurrent(): Boolean =
+        this?.matches(roomId, boundWorldlineId) == true
 
     fun cancelResponse() {
         responseJob?.cancel()
         responseJob = null
         _isTyping.value = false
+        _isResponding.value = false
     }
 
     private fun respond(
@@ -131,14 +194,44 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         model: AIModel,
         failingMessageId: UUID?
     ) {
-        val id = roomId ?: return
+        val id = roomId ?: run {
+            _isResponding.value = false
+            return
+        }
         val conversation: List<ConversationTurn> = ConversationTurn.from(history)
+        val group = room.groupChat
+        val participantRooms = group?.participantRoomIds?.mapNotNull(store::room).orEmpty()
+        if (group != null && participantRooms.size != group.participantRoomIds.size) {
+            _isTyping.value = false
+            _isResponding.value = false
+            _errorMessage.value = "참여자 정보를 찾을 수 없습니다."
+            val failIndex = _messages.value.indexOfFirst { it.id == failingMessageId }
+            if (failIndex >= 0) {
+                _messages.value = _messages.value.toMutableList().also {
+                    it[failIndex] = it[failIndex].copy(deliveryFailed = true)
+                }
+                persist()
+            }
+            return
+        }
+        val protocol = group?.let {
+            GroupConversationProtocol(participantRooms)
+        }
+        val requestWorldlineId = group?.activeWorldlineId
+        val requestBinding = ConversationBinding(id, requestWorldlineId)
+        val requestConversationId = requestWorldlineId ?: id
+        val requestMode = if (protocol == null) room.resolvedMode else ChatMode.COMPANION
+        val requestModel = if (protocol == null) model else AIModel.GEMINI_37_FLASH
+        val requestPersona = protocol?.persona ?: room.profile.persona.takeIf { it.isEnabled }
+        val requestBotName = if (protocol == null) room.profile.name else room.title
+        val suppressedExpressions = protocol?.persona?.suppressedExpressions
+            ?: room.profile.persona.suppressedExpressions
+        val systemPromptOverride = protocol?.systemPrompt(room.title)
         // 스트리밍은 문단이 완성되는 대로 화면에 붙으므로, 첫 문단을 붙이는 시점에는
         // 그 턴에 따옴표 대사가 나올지 아직 모릅니다. 앞 턴이 상황극이었다면 알려 줍니다.
         val wasRoleplaying = RoleplayParser.roleplayInProgress(history)
-        val mode = room.resolvedMode
-        val repeatControl = if (!BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
-            repetitionAdviceFromConversation(conversation, room.profile.persona.suppressedExpressions)
+        val repeatControl = if (!BuildConfig.TABLET_MENTOR && requestMode == ChatMode.COMPANION) {
+            repetitionAdviceFromConversation(conversation, suppressedExpressions)
         } else {
             null
         }
@@ -146,73 +239,127 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         responseJob?.cancel()
         responseJob = viewModelScope.launch {
             val responseTurnId = UUID.randomUUID()
+            val groupBuffer = protocol?.let { GroupResponseBuffer(history) }
+            val groupRawText = StringBuilder()
+            var previousSpeakerId: UUID? = null
             var attempt = 0
             while (true) {
                 try {
                     val rawText = ai.streamResponse(
                         conversation = conversation,
-                        botName = room.profile.name,
-                        roomId = id,
-                        model = model,
-                        persona = room.profile.persona.takeIf { it.isEnabled },
-                        mode = mode,
+                        botName = requestBotName,
+                        roomId = requestConversationId,
+                        model = requestModel,
+                        persona = requestPersona,
+                        mode = requestMode,
                         roleplayInProgress = wasRoleplaying,
-                        repetitionAdvice = repeatControl
+                        repetitionAdvice = repeatControl,
+                        systemPromptOverride = systemPromptOverride,
+                        onRawText = { piece -> if (protocol != null) groupRawText.append(piece) }
                     ) { bubble ->
+                        val parsed = protocol?.parseBubble(bubble.text, bubble.kind, previousSpeakerId)
+                        if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) {
+                            previousSpeakerId = parsed?.speakerRoomId ?: previousSpeakerId
+                        }
+                        val visibleText = parsed?.visibleText ?: bubble.text
+                        if (visibleText.isEmpty() && bubble.attachment == null) return@streamResponse
                         // 첫 말풍선이 붙는 순간 타이핑 표시를 끕니다.
                         _isTyping.value = false
-                        _messages.value = _messages.value + ChatMessage(
+                        val message = ChatMessage(
                             sender = MessageSender.SAPIENS,
-                            text = bubble.text,
+                            text = visibleText,
                             attachment = bubble.attachment,
                             turnId = responseTurnId,
-                            kind = bubble.kind
+                            kind = bubble.kind,
+                            speakerRoomId = if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) parsed?.speakerRoomId else null
                         )
-                        persist()
+                        if (groupBuffer == null) {
+                            _messages.value = _messages.value + message
+                            persist(requestWorldlineId)
+                        } else {
+                            groupBuffer.append(message)
+                            publishGroupResponse(requestBinding, groupBuffer)
+                            persist(id, requestWorldlineId, groupBuffer.messages)
+                        }
                     }
 
                     _isTyping.value = false
                     // API에는 갈라지기 전 원문을 한 번만 보냅니다. 턴의 첫 말풍선에 담아 둡니다.
-                    val firstIndex = _messages.value.indexOfFirst { it.turnId == responseTurnId }
+                    val responseMessages = groupBuffer?.messages ?: _messages.value
+                    val firstIndex = responseMessages.indexOfFirst { it.turnId == responseTurnId }
                     if (firstIndex >= 0) {
-                        _messages.value = _messages.value.toMutableList().also {
-                            it[firstIndex] = it[firstIndex].copy(canonicalText = rawText)
+                        val canonical = responseMessages[firstIndex].copy(canonicalText = rawText)
+                        if (groupBuffer == null) {
+                            _messages.value = _messages.value.toMutableList().also { it[firstIndex] = canonical }
+                            persist(requestWorldlineId)
+                        } else {
+                            groupBuffer.replace(firstIndex, canonical)
+                            publishGroupResponse(requestBinding, groupBuffer)
+                            persist(id, requestWorldlineId, groupBuffer.messages)
                         }
-                        persist()
                     }
+                    if (protocol != null && requestWorldlineId != null) {
+                        protocol.heartDeltas(rawText).forEach { (participantRoomId, delta) ->
+                            store.adjustWorldlineHeart(id, requestWorldlineId, participantRoomId, delta)
+                        }
+                    }
+                    _isResponding.value = false
                     return@launch
                 } catch (e: CancellationException) {
                     // 사용자가 멈춘 것은 실패가 아닙니다. 표시를 남기지 않습니다.
+                    persistPartialGroupCanonical(groupBuffer, responseTurnId, groupRawText.toString(), requestBinding)
                     _isTyping.value = false
+                    _isResponding.value = false
                     throw e
                 } catch (e: Exception) {
                     // 말풍선이 이미 하나라도 붙었으면 다시 보낼 수 없습니다.
                     // 처음부터 다시 받으면 앞부분이 두 번 나옵니다.
-                    val alreadyShown = _messages.value.any { it.turnId == responseTurnId }
+                    val alreadyShown = (groupBuffer?.messages ?: _messages.value).any { it.turnId == responseTurnId }
+                    if (alreadyShown) {
+                        persistPartialGroupCanonical(groupBuffer, responseTurnId, groupRawText.toString(), requestBinding)
+                    }
                     // **다시 보내도 소용없는 실패는 다시 보내지 않습니다.**
                     // 키가 틀렸거나 요청이 잘못됐으면 세 번을 보내도 똑같이 실패하고,
                     // 그 두 번은 화면에 아무것도 남기지 않은 채 요금만 냈습니다.
                     // 서비스가 아닌 곳에서 온 예외(주로 네트워크)는 다시 시도합니다.
                     val retryable = (e as? AIServiceException)?.retryable ?: true
-                    if (!alreadyShown && retryable && attempt < SILENT_RETRIES) {
+                    if (protocol == null && !alreadyShown && retryable && attempt < SILENT_RETRIES) {
                         attempt += 1
                         continue
                     }
                     _isTyping.value = false
+                    _isResponding.value = false
                     _errorMessage.value = e.message ?: "요청을 처리하지 못했습니다."
                     // 답변자 쪽에 오류 말풍선을 남기지 않습니다. 카카오톡처럼
                     // 내 말풍선에 표시를 달아 재전송하거나 지울 수 있게 합니다.
-                    val failIndex = _messages.value.indexOfFirst { it.id == failingMessageId }
+                    val failureMessages = groupBuffer?.messages ?: _messages.value
+                    val failIndex = failureMessages.indexOfFirst { it.id == failingMessageId }
                     if (failIndex >= 0) {
-                        _messages.value = _messages.value.toMutableList().also {
-                            it[failIndex] = it[failIndex].copy(deliveryFailed = true)
+                        val failed = failureMessages[failIndex].copy(deliveryFailed = true)
+                        if (groupBuffer == null) {
+                            _messages.value = _messages.value.toMutableList().also { it[failIndex] = failed }
+                            persist(requestWorldlineId)
+                        } else {
+                            groupBuffer.replace(failIndex, failed)
+                            publishGroupResponse(requestBinding, groupBuffer)
+                            persist(id, requestWorldlineId, groupBuffer.messages)
                         }
-                        persist()
                     }
                     return@launch
                 }
             }
         }
+    }
+
+    private fun persistPartialGroupCanonical(
+        buffer: GroupResponseBuffer?,
+        turnId: UUID,
+        rawText: String,
+        binding: ConversationBinding
+    ) {
+        if (buffer == null || !buffer.preserveCanonical(turnId, rawText)) return
+        publishGroupResponse(binding, buffer)
+        persist(binding.roomId, binding.worldlineId, buffer.messages)
     }
 
     override fun onCleared() {

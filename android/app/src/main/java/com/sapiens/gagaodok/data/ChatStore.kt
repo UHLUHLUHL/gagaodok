@@ -15,15 +15,13 @@ import com.sapiens.gagaodok.model.RoomProfile
 import com.sapiens.gagaodok.service.ConversationDigest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.util.UUID
@@ -38,13 +36,17 @@ class ChatStore private constructor(context: Context) {
     private val dir: File = File(context.applicationContext.filesDir, "KakaoSapiens").apply {
         if (!exists()) mkdirs()
     }
+    private val conversationFiles = ConversationFiles(dir)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = Mutex()
+    private val conversationWrites = ScopedWriteCoordinator(scope)
 
     private val roomsListFile get() = File(dir, "rooms_list.json")
-    fun messagesFile(roomId: UUID) = File(dir, "room_${roomId.toString().uppercase()}_messages.json")
-    fun digestFile(roomId: UUID) = File(dir, "room_${roomId.toString().uppercase()}_digest.json")
+    fun messagesFile(roomId: UUID) = conversationFiles.messageFile(ConversationScope(roomId))
+    fun messagesFile(scope: ConversationScope) = conversationFiles.messageFile(scope)
+    fun digestFile(roomId: UUID) = conversationFiles.digestFile(ConversationScope(roomId))
+    fun digestFile(scope: ConversationScope) = conversationFiles.digestFile(scope)
     fun avatarFile(roomId: UUID) = File(dir, "avatar_${roomId.toString().uppercase()}.png")
 
     private val _rooms = MutableStateFlow<List<ChatRoom>>(emptyList())
@@ -78,18 +80,27 @@ class ChatStore private constructor(context: Context) {
 
     fun hasConversation(roomId: UUID): Boolean = roomId in _roomsWithConversation.value
 
+    private fun activeScope(room: ChatRoom): ConversationScope = ConversationScope(
+        room.id,
+        room.groupChat?.activeWorldlineId
+    )
+
+    private fun scopeFor(roomId: UUID, worldlineId: UUID? = null): ConversationScope {
+        val room = room(roomId)
+        return ConversationScope(roomId, worldlineId ?: room?.groupChat?.activeWorldlineId)
+    }
+
     private fun refreshConversationIndex() {
         // 빈 배열("[]")만 있는 파일은 대화가 없는 것으로 봅니다.
         _roomsWithConversation.value = _rooms.value
-            .filter { messagesFile(it.id).let { f -> f.exists() && f.length() > 4 } }
+            .filter { messagesFile(activeScope(it)).let { f -> f.exists() && f.length() > 4 } }
             .map { it.id }
             .toSet()
     }
 
     /// 채팅 탭에 보여줄 방입니다. 고정한 방이 먼저, 그 뒤는 최근 대화 순입니다.
     fun conversationRooms(all: List<ChatRoom>, withConversation: Set<UUID>): List<ChatRoom> =
-        all.filter { it.id in withConversation }
-            .sortedWith(compareByDescending<ChatRoom> { it.isPinned }.thenByDescending { it.lastMessageTime })
+        conversationRoomsForDisplay(all, withConversation)
 
     fun createRoom(name: String, status: String = "수학 학습 코치"): ChatRoom {
         val room = ChatRoom(
@@ -104,17 +115,39 @@ class ChatStore private constructor(context: Context) {
         return room
     }
 
+    fun createGroupRoom(
+        title: String,
+        participants: List<ChatRoom>,
+        initialWorldlineId: UUID = UUID.randomUUID(),
+        createdAt: Long = System.currentTimeMillis()
+    ): ChatRoom {
+        val room = createGroupChatRoom(title, participants, initialWorldlineId, createdAt)
+        conversationFiles.initialize(activeScope(room))
+        _rooms.value = listOf(room) + _rooms.value
+        persistRooms()
+        return room
+    }
+
     fun deleteRoom(id: UUID) {
+        val room = room(id)
+        if (room?.groupChat == null && groupsReferencingParticipant(id).isNotEmpty()) return
+        val roomScopes = room?.groupChat?.worldlines?.map { ConversationScope(id, it.id) }
+            ?: listOf(ConversationScope(id))
+        conversationWrites.closeAndRun(roomScopes) {
+            if (room?.groupChat == null) conversationFiles.delete(ConversationScope(id))
+            else conversationFiles.deleteWorldlines(id)
+        }
         _rooms.value = _rooms.value.filterNot { it.id == id }
         _roomsWithConversation.value = _roomsWithConversation.value - id
         // 대화 기록과 아바타 파일도 같이 정리합니다.
-        messagesFile(id).delete()
-        digestFile(id).delete()
         avatarFile(id).delete()
         avatarCache.remove(id.toString())
-        searchIndex.remove(id)
+        searchIndex.keys.removeAll { it.roomId == id }
         persistRooms()
     }
+
+    fun groupsReferencingParticipant(participantRoomId: UUID): List<ChatRoom> =
+        _rooms.value.filter { participantRoomId in it.groupChat?.participantRoomIds.orEmpty() }
 
     private fun update(roomId: UUID, transform: (ChatRoom) -> ChatRoom) {
         val list = _rooms.value
@@ -195,7 +228,14 @@ class ChatStore private constructor(context: Context) {
     // MARK: - 대화 내용
 
     fun loadMessages(roomId: UUID): List<ChatMessage> {
-        val file = messagesFile(roomId)
+        return loadMessages(scopeFor(roomId))
+    }
+
+    fun loadMessages(roomId: UUID, worldlineId: UUID): List<ChatMessage> =
+        loadMessages(ConversationScope(roomId, worldlineId))
+
+    fun loadMessages(scope: ConversationScope): List<ChatMessage> {
+        val file = messagesFile(scope)
         if (!file.exists()) return emptyList()
         val raw = runCatching {
             Codec.json.decodeFromString<List<ChatMessage>>(file.readText())
@@ -206,51 +246,49 @@ class ChatStore private constructor(context: Context) {
         return migrated.first
     }
 
+    suspend fun loadMessagesFresh(scope: ConversationScope): List<ChatMessage> =
+        withContext(Dispatchers.IO) {
+            conversationWrites.flushAndRunSuspending(scope) { loadMessages(scope) }
+        }
+
     // 답변은 말풍선 단위로 붙습니다. 그때마다 대화 전체를 인코딩해 쓰면
     // 첨부 이미지의 base64까지 매번 직렬화되어 디스크가 계속 들썩입니다.
     // 마지막 호출로부터 잠깐 조용해진 뒤 한 번만 저장하도록 모읍니다.
-    private val pendingSaves = mutableMapOf<UUID, Pair<Job, List<ChatMessage>>>()
     private val saveCoalescingMillis = 700L
 
     fun saveMessages(roomId: UUID, messages: List<ChatMessage>) {
+        saveMessages(scopeFor(roomId), messages)
+    }
+
+    fun saveMessages(roomId: UUID, worldlineId: UUID, messages: List<ChatMessage>) {
+        saveMessages(ConversationScope(roomId, worldlineId), messages)
+    }
+
+    fun saveMessages(scope: ConversationScope, messages: List<ChatMessage>) {
         // 대화가 바뀌면 검색 색인도 다시 만들어야 합니다.
-        searchIndex[roomId] = messages.filter { it.text.isNotEmpty() }
+        searchIndex[scope] = messages.filter { it.text.isNotEmpty() }
             .map { SearchEntry(it.id, it.text, it.text.lowercase()) }
 
-        synchronized(pendingSaves) {
-            pendingSaves[roomId]?.first?.cancel()
-            val job = scope.launch {
-                delay(saveCoalescingMillis)
-                writeLock.withLock { writeMessages(messagesFile(roomId), messages) }
-                synchronized(pendingSaves) { pendingSaves.remove(roomId) }
-            }
-            pendingSaves[roomId] = job to messages
+        conversationWrites.schedule(scope, ScopedWriteKind.MESSAGE, saveCoalescingMillis) {
+            writeMessages(messagesFile(scope), messages)
         }
 
         // 첫 메시지가 오는 순간 이 방이 채팅 목록에 나타나야 합니다.
         _roomsWithConversation.value = if (messages.isEmpty()) {
-            _roomsWithConversation.value - roomId
+            _roomsWithConversation.value - scope.roomId
         } else {
-            _roomsWithConversation.value + roomId
+            _roomsWithConversation.value + scope.roomId
         }
 
         val last = messages.lastOrNull() ?: return
         val preview = if (last.text.isEmpty()) "사진/파일 전송됨" else last.text
-        update(roomId) { it.copy(lastMessageText = preview, lastMessageTime = last.timestamp) }
+        update(scope.roomId) { it.copy(lastMessageText = preview, lastMessageTime = last.timestamp) }
     }
 
     /// 앱이 내려가기 전에 아직 기다리고 있는 저장을 즉시 처리합니다.
     /// 저장을 0.7초 모아서 하기 때문에, 이게 없으면 마지막 말풍선이 유실될 수 있습니다.
     fun flushPendingSaves() {
-        val pending = synchronized(pendingSaves) {
-            pendingSaves.toMap().also { pendingSaves.clear() }
-        }
-        runBlocking {
-            for ((roomId, entry) in pending) {
-                entry.first.cancel()
-                writeLock.withLock { writeMessages(messagesFile(roomId), entry.second) }
-            }
-        }
+        conversationWrites.flushAll()
     }
 
     private fun writeMessages(file: File, messages: List<ChatMessage>) {
@@ -261,10 +299,25 @@ class ChatStore private constructor(context: Context) {
         }
     }
 
+    private fun writeDigest(file: File, digest: ConversationDigest) {
+        runCatching {
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(Codec.json.encodeToString(digest))
+            tmp.renameTo(file)
+        }
+    }
+
     // MARK: - 구간 요약
 
     fun loadDigest(roomId: UUID): ConversationDigest {
-        val file = digestFile(roomId)
+        return loadDigest(scopeForAiConversation(roomId))
+    }
+
+    fun loadDigest(roomId: UUID, worldlineId: UUID): ConversationDigest =
+        loadDigest(ConversationScope(roomId, worldlineId))
+
+    fun loadDigest(scope: ConversationScope): ConversationDigest {
+        val file = digestFile(scope)
         if (!file.exists()) return ConversationDigest()
         return runCatching {
             Codec.json.decodeFromString<ConversationDigest>(file.readText())
@@ -272,9 +325,63 @@ class ChatStore private constructor(context: Context) {
     }
 
     fun saveDigest(roomId: UUID, digest: ConversationDigest) {
-        scope.launch {
-            runCatching { digestFile(roomId).writeText(Codec.json.encodeToString(digest)) }
+        saveDigest(scopeForAiConversation(roomId), digest)
+    }
+
+    fun saveDigest(roomId: UUID, worldlineId: UUID, digest: ConversationDigest) {
+        saveDigest(ConversationScope(roomId, worldlineId), digest)
+    }
+
+    fun saveDigest(scope: ConversationScope, digest: ConversationDigest) {
+        conversationWrites.schedule(scope, ScopedWriteKind.DIGEST) {
+            writeDigest(digestFile(scope), digest)
         }
+    }
+
+    private fun scopeForAiConversation(aiConversationId: UUID): ConversationScope {
+        _rooms.value.forEach { room ->
+            room.groupChat?.worldlines?.firstOrNull { it.id == aiConversationId }?.let {
+                return ConversationScope(room.id, it.id)
+            }
+        }
+        return ConversationScope(aiConversationId)
+    }
+
+    suspend fun branchWorldline(roomId: UUID, newWorldlineId: UUID, name: String, createdAt: Long) =
+        withContext(Dispatchers.IO) {
+            val room = room(roomId) ?: return@withContext
+            val group = room.groupChat ?: return@withContext
+            val source = ConversationScope(roomId, group.activeWorldlineId)
+            val destination = ConversationScope(roomId, newWorldlineId)
+            conversationWrites.flushAndRunSuspending(source) {
+                conversationFiles.branch(source, destination)
+            }
+            update(roomId) { latestRoom ->
+                val latestGroup = latestRoom.groupChat ?: return@update latestRoom
+                latestRoom.copy(
+                    groupChat = latestGroup.branchActiveWorldline(newWorldlineId, name, createdAt)
+                )
+            }
+            refreshConversationIndex()
+        }
+
+    fun switchWorldline(roomId: UUID, worldlineId: UUID) {
+        val room = room(roomId) ?: return
+        val group = room.groupChat ?: return
+        update(roomId) { it.copy(groupChat = group.switchWorldline(worldlineId)) }
+        refreshConversationIndex()
+    }
+
+    fun adjustWorldlineHeart(roomId: UUID, participantRoomId: UUID, delta: Int) {
+        val room = room(roomId) ?: return
+        val group = room.groupChat ?: return
+        update(roomId) { it.copy(groupChat = group.adjustActiveHeart(participantRoomId, delta)) }
+    }
+
+    fun adjustWorldlineHeart(roomId: UUID, worldlineId: UUID, participantRoomId: UUID, delta: Int) {
+        val room = room(roomId) ?: return
+        val group = room.groupChat ?: return
+        update(roomId) { it.copy(groupChat = group.adjustHeart(worldlineId, participantRoomId, delta)) }
     }
 
     // MARK: - 대화 내용 검색 색인
@@ -283,11 +390,14 @@ class ChatStore private constructor(context: Context) {
     // 타자마다 읽을 수는 없으므로 글자만 뽑아 방마다 한 번씩 담아 둡니다.
     private data class SearchEntry(val id: UUID, val text: String, val lowercased: String)
 
-    private val searchIndex = mutableMapOf<UUID, List<SearchEntry>>()
+    private val searchIndex = mutableMapOf<ConversationScope, List<SearchEntry>>()
 
     private fun searchEntries(roomId: UUID): List<SearchEntry> =
-        searchIndex.getOrPut(roomId) {
-            loadMessages(roomId).filter { it.text.isNotEmpty() }
+        searchEntries(scopeFor(roomId))
+
+    private fun searchEntries(scope: ConversationScope): List<SearchEntry> =
+        searchIndex.getOrPut(scope) {
+            loadMessages(scope).filter { it.text.isNotEmpty() }
                 .map { SearchEntry(it.id, it.text, it.text.lowercase()) }
         }
 
@@ -359,6 +469,10 @@ class ChatStore private constructor(context: Context) {
     }
 
     companion object {
+        fun conversationRoomsForDisplay(all: List<ChatRoom>, withConversation: Set<UUID>): List<ChatRoom> =
+            all.filter { it.id in withConversation || it.groupChat != null }
+                .sortedWith(compareByDescending<ChatRoom> { it.isPinned }.thenByDescending { it.lastMessageTime })
+
         @Volatile
         private var instance: ChatStore? = null
 

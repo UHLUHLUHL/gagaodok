@@ -86,15 +86,19 @@ class AIService private constructor(internal val appContext: Context) {
         mode: ChatMode,
         roleplayInProgress: Boolean,
         repetitionAdvice: RepetitionAdvice? = null,
+        systemPromptOverride: String? = null,
+        onRawText: suspend (String) -> Unit = {},
         onBubble: suspend (GeneratedMessageBubble) -> Unit
     ): String = withContext(Dispatchers.IO) {
         when (model) {
             AIModel.GEMINI_37_FLASH -> sendGeminiRequest(
-                conversation, botName, roomId, persona, mode, roleplayInProgress, repetitionAdvice, onBubble
+                conversation, botName, roomId, persona, mode, roleplayInProgress,
+                repetitionAdvice, systemPromptOverride, onRawText, onBubble
             )
             AIModel.GPT_56_LUNA -> {
                 // Luna는 스트리밍하지 않습니다. 한 번에 받아 말풍선으로 갈라 내보냅니다.
                 val raw = sendOpenAIRequest(conversation, botName, roomId, persona, mode, repetitionAdvice)
+                onRawText(raw)
                 parseResponseIntoBubbles(
                     raw, botName,
                     mode == ChatMode.COMPANION && roleplayInProgress,

@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.ui.Metrics
@@ -41,6 +43,8 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @Composable
 fun ChatsScreen(
@@ -52,6 +56,7 @@ fun ChatsScreen(
     val app = context.applicationContext as GagaodokApp
     val store = app.chatStore
     val colors = KakaoTheme.colors
+    val coroutineScope = rememberCoroutineScope()
 
     val rooms by store.rooms.collectAsState()
     val withConversation by store.roomsWithConversation.collectAsState()
@@ -59,6 +64,7 @@ fun ChatsScreen(
     var searchVisible by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
     var addingFriend by remember { mutableStateOf(false) }
+    var creatingGroup by remember { mutableStateOf(false) }
     var editingRoom by remember { mutableStateOf<ChatRoom?>(null) }
     val menu = LocalKakaoMenu.current
 
@@ -69,7 +75,10 @@ fun ChatsScreen(
         KakaoMenuItem(if (room.isPinned) "상단 고정 해제" else "상단 고정") {
             menu.dismiss(); store.togglePinned(room.id)
         },
-        KakaoMenuItem("채팅방 나가기") { menu.dismiss(); store.deleteRoom(room.id) }
+        KakaoMenuItem("채팅방 나가기") {
+            menu.dismiss()
+            coroutineScope.launch(Dispatchers.IO) { store.deleteRoom(room.id) }
+        }
     )
 
     val query = searchText.trim()
@@ -101,7 +110,16 @@ fun ChatsScreen(
             actionIcon = {
                 ComposeChatIcon(colors.textPrimary, Modifier.size(Metrics.headerIcon))
             },
-            onAction = { addingFriend = true }
+            onAction = {
+                if (BuildConfig.TABLET_MENTOR) {
+                    addingFriend = true
+                } else {
+                    menu.show(
+                        KakaoMenuItem("새 대화 상대") { menu.dismiss(); addingFriend = true },
+                        KakaoMenuItem("새 단톡방") { menu.dismiss(); creatingGroup = true }
+                    )
+                }
+            }
         )
 
         if (listed.isEmpty()) {
@@ -138,6 +156,19 @@ fun ChatsScreen(
                 val room = store.createRoom(result.name, result.statusMessage)
                 if (result.didChangeImage) store.updateAvatar(room.id, result.image)
                 addingFriend = false
+            }
+        )
+    }
+
+    if (creatingGroup) {
+        GroupChatCreationSheet(
+            rooms = rooms,
+            avatarFor = { store.avatar(it.id, it.profile) },
+            onDismiss = { creatingGroup = false },
+            onCreate = { title, participants ->
+                val room = store.createGroupRoom(title, participants)
+                creatingGroup = false
+                onOpenRoom(room.id)
             }
         )
     }

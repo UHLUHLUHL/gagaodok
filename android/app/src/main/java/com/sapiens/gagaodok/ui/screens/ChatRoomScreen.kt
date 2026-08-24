@@ -11,6 +11,8 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -85,6 +87,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private data class CameraCaptureTarget(val file: File, val uri: Uri)
+private data class ConversationPane(
+    val binding: ConversationBinding?,
+    val messages: List<ChatMessage>
+)
 
 private fun createCameraCaptureTarget(context: android.content.Context): CameraCaptureTarget? = runCatching {
     val directory = File(context.cacheDir, "camera-captures").apply { mkdirs() }
@@ -110,13 +116,13 @@ fun ChatRoomScreen(
     val vm: ChatRoomViewModel = viewModel()
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(roomId) { vm.bind(roomId) }
-
     val rooms by app.chatStore.rooms.collectAsState()
     val room = rooms.firstOrNull { it.id == roomId }
     val globalModel by app.settings.selectedModel.collectAsState()
     val messages by vm.messages.collectAsState()
     val isTyping by vm.isTyping.collectAsState()
+    val isResponding by vm.isResponding.collectAsState()
+    val loadedBinding by vm.loadedBinding.collectAsState()
     val error by vm.errorMessage.collectAsState()
 
     var inputText by remember { mutableStateOf("") }
@@ -136,6 +142,9 @@ fun ChatRoomScreen(
     var searchText by remember { mutableStateOf("") }
     var searchIndex by remember { mutableIntStateOf(0) }
     var viewingImage by remember { mutableStateOf<ChatAttachment?>(null) }
+    var groupUiState by remember(roomId) { mutableStateOf(GroupChatUiState()) }
+    var branchDialogVisible by remember(roomId) { mutableStateOf(false) }
+    var branchInProgress by remember(roomId) { mutableStateOf(false) }
     val menu = LocalKakaoMenu.current
     val inkDocuments by app.inkStore.documents.collectAsState()
     val dropReceiver = remember(context) {
@@ -169,9 +178,25 @@ fun ChatRoomScreen(
         return
     }
 
+    LaunchedEffect(roomId, room.groupChat?.activeWorldlineId) { vm.bind(roomId) }
+
     val activeModel = room.resolvedModel(globalModel)
     val activeMode = room.resolvedMode
     val avatar = app.chatStore.avatar(room.id, room.profile)
+    val group = room.groupChat
+    val participantRooms = group?.participantRoomIds.orEmpty().mapNotNull { participantId ->
+        rooms.firstOrNull { it.id == participantId }
+    }
+    val activeWorldline = group?.activeWorldline()
+    val conversationReady = loadedBinding?.matches(room.id, activeWorldline?.id) == true
+    val heartsByParticipant = activeWorldline?.participantHearts.orEmpty().associate { it.participantRoomId to it.value }
+    val groupParticipants = participantRooms.map { participant ->
+        GroupParticipantUi(
+            room = participant,
+            heart = heartsByParticipant[participant.id] ?: participant.profile.baseAffection,
+            avatar = app.chatStore.avatar(participant.id, participant.profile)
+        )
+    }
 
     val listState = rememberLazyListState()
     val rendered = remember(messages) { buildRows(messages) }
@@ -294,6 +319,15 @@ fun ChatRoomScreen(
         )
     )
 
+    fun openGroupHeaderMenu() = menu.show(listOf(
+        KakaoMenuSection(
+            title = "단톡방 응답 설정",
+            items = listOf(
+                KakaoMenuItem("Gemini 3.7 Flash · 챗봇 모드", checked = true) { menu.dismiss() }
+            )
+        )
+    ))
+
     // 말풍선을 길게 눌렀을 때 나오는 메뉴입니다.
     fun openMessageMenu(target: ChatMessage) {
         val suppressPhrase = if (
@@ -345,57 +379,120 @@ fun ChatRoomScreen(
             // 키보드 아래에 깔립니다. 안드로이드 채팅 앱에서 가장 흔한 실패 지점입니다.
             .imePadding()
     ) {
-        ChatHeader(
-            title = room.profile.name,
-            personaOn = room.profile.persona.isEnabled,
-            searchVisible = searchVisible,
-            searchText = searchText,
-            hitCount = hits.size,
-            hitIndex = searchIndex,
-            onBack = onBack,
-            onToggleSearch = {
-                searchVisible = !searchVisible
-                if (!searchVisible) searchText = ""
-                searchIndex = 0
-            },
-            onSearchTextChange = { searchText = it; searchIndex = 0 },
-            onMoveSearch = { step ->
-                if (hits.isNotEmpty()) {
-                    searchIndex = ((searchIndex + step) % hits.size + hits.size) % hits.size
-                }
-            },
-            onOpenMenu = { openHeaderMenu() }
-        )
+        val toggleSearch = {
+            searchVisible = !searchVisible
+            if (!searchVisible) searchText = ""
+            searchIndex = 0
+        }
+        val moveSearch: (Int) -> Unit = { step ->
+            if (hits.isNotEmpty()) {
+                searchIndex = ((searchIndex + step) % hits.size + hits.size) % hits.size
+            }
+        }
+        if (group != null && activeWorldline != null) {
+            GroupChatHeader(
+                title = room.profile.name,
+                worldlineName = activeWorldline.name,
+                participants = groupParticipants,
+                searchVisible = searchVisible,
+                searchText = searchText,
+                hitCount = hits.size,
+                hitIndex = searchIndex,
+                onBack = onBack,
+                onToggleSearch = toggleSearch,
+                onSearchTextChange = { searchText = it; searchIndex = 0 },
+                onMoveSearch = moveSearch,
+                onOpenMenu = { openGroupHeaderMenu() },
+                onOpenWorldlines = { groupUiState = groupUiState.showWorldlines() }
+            )
+        } else {
+            ChatHeader(
+                title = room.profile.name,
+                personaOn = room.profile.persona.isEnabled,
+                searchVisible = searchVisible,
+                searchText = searchText,
+                hitCount = hits.size,
+                hitIndex = searchIndex,
+                onBack = onBack,
+                onToggleSearch = toggleSearch,
+                onSearchTextChange = { searchText = it; searchIndex = 0 },
+                onMoveSearch = moveSearch,
+                onOpenMenu = { openHeaderMenu() }
+            )
+        }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth()
-        ) {
-            items(rendered.size) { index ->
-                when (val row = rendered[index]) {
-                    is Row.DateDivider -> DateDividerView(row.timestamp)
-                    is Row.Bubble -> MessageBubble(
-                        message = row.message,
-                        isFirstInGroup = row.isFirstInGroup,
-                        isLastInGroup = row.isLastInGroup,
-                        botName = room.profile.name,
-                        avatar = avatar,
-                        searchQuery = if (searchVisible) searchText.trim() else "",
-                        isCurrentSearchHit = row.message.id == currentHitId,
-                        onImageTapped = { viewingImage = it },
-                        onLongPress = { openMessageMenu(it) },
-                        // 상대 프로필 사진을 누르면 프로필이 열립니다. 카카오톡과 같습니다.
-                        onAvatarTapped = onOpenProfile,
-                        onResend = { vm.resend(it, room, activeModel) }
+        AnimatedContent(
+            targetState = ConversationPane(loadedBinding, messages),
+            contentKey = { it.binding?.worldlineId },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            transitionSpec = {
+                if (group == null) {
+                    fadeIn(tween(120)) togetherWith fadeOut(tween(90))
+                } else {
+                    (slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 7 } + fadeIn(tween(220))) togetherWith
+                        (slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 7 } + fadeOut(tween(160)))
+                }
+            },
+            label = "세계선 콘텐츠"
+        ) { pane ->
+            val displayedBinding = pane.binding
+            val displayedRows = buildRows(pane.messages)
+            val displayedWorldline = group?.worldlines?.firstOrNull { it.id == displayedBinding?.worldlineId }
+            val displayedHearts = displayedWorldline?.participantHearts.orEmpty()
+                .associate { it.participantRoomId to it.value }
+            val displayedParticipants = participantRooms.map { participant ->
+                GroupParticipantUi(
+                    room = participant,
+                    heart = displayedHearts[participant.id] ?: participant.profile.baseAffection,
+                    avatar = app.chatStore.avatar(participant.id, participant.profile)
+                )
+            }
+            Column(Modifier.fillMaxSize()) {
+                if (displayedWorldline != null) {
+                    HeartGaugePanel(
+                        participants = displayedParticipants,
+                        expanded = groupUiState.heartExpanded,
+                        onToggle = { groupUiState = groupUiState.toggleHeart() }
                     )
+                    WorldlinePill(displayedWorldline) { groupUiState = groupUiState.showWorldlines() }
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                ) {
+                    items(displayedRows.size) { index ->
+                        when (val row = displayedRows[index]) {
+                            is Row.DateDivider -> DateDividerView(row.timestamp)
+                            is Row.Bubble -> {
+                                val speakerRoom = if (group == null) null else {
+                                    row.message.speakerRoomId?.let { speakerId ->
+                                        participantRooms.firstOrNull { it.id == speakerId }
+                                    }
+                                }
+                                MessageBubble(
+                                    message = row.message,
+                                    isFirstInGroup = row.isFirstInGroup,
+                                    isLastInGroup = row.isLastInGroup,
+                                    botName = speakerRoom?.profile?.name ?: room.profile.name,
+                                    avatar = speakerRoom?.let { app.chatStore.avatar(it.id, it.profile) } ?: avatar,
+                                    searchQuery = if (searchVisible) searchText.trim() else "",
+                                    isCurrentSearchHit = row.message.id == currentHitId,
+                                    onImageTapped = { viewingImage = it },
+                                    onLongPress = { openMessageMenu(it) },
+                                    onAvatarTapped = onOpenProfile,
+                                    onResend = { vm.resend(it, room, activeModel) }
+                                )
+                            }
+                        }
+                    }
+                    if (isTyping) {
+                        item("typing") {
+                            TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
+                        }
+                    }
+                    item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }
                 }
             }
-            if (isTyping) {
-                item("typing") {
-                    TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
-                }
-            }
-            item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }
         }
 
         error?.let {
@@ -444,7 +541,7 @@ fun ChatRoomScreen(
                 ChatInputBar(
                     text = inputText,
                     attachment = pendingAttachment,
-                    enabled = !isTyping,
+                    enabled = !isResponding && conversationReady,
                     enhancedAttachments = tabletLayout,
                     onTextChange = { inputText = it },
                     onPickImage = {
@@ -455,9 +552,10 @@ fun ChatRoomScreen(
                     onOpenInk = { openNewInk() },
                     onClearAttachment = { pendingAttachment = null },
                     onSend = {
-                        vm.send(inputText, pendingAttachment, room, activeModel)
-                        inputText = ""
-                        pendingAttachment = null
+                        if (vm.send(inputText, pendingAttachment, room, activeModel)) {
+                            inputText = ""
+                            pendingAttachment = null
+                        }
                     }
                 )
             } else {
@@ -531,6 +629,40 @@ fun ChatRoomScreen(
         )
     }
     viewingImage?.let { ImageViewerDialog(it) { viewingImage = null } }
+    if (group != null && activeWorldline != null && groupUiState.worldlinePickerVisible) {
+        WorldlineSwitcherSheet(
+            worldlines = group.worldlines,
+            activeWorldlineId = group.activeWorldlineId,
+            branchEnabled = !isResponding && conversationReady && !branchInProgress,
+            onSelect = { selected ->
+                app.chatStore.switchWorldline(room.id, selected.id)
+                groupUiState = groupUiState.hideWorldlines()
+            },
+            onBranch = {
+                groupUiState = groupUiState.hideWorldlines()
+                branchDialogVisible = true
+            },
+            onDismiss = { groupUiState = groupUiState.hideWorldlines() }
+        )
+    }
+    if (group != null && activeWorldline != null && branchDialogVisible) {
+        BranchWorldlineDialog(
+            currentWorldline = activeWorldline,
+            participants = groupParticipants,
+            inProgress = branchInProgress,
+            onDismiss = { if (!branchInProgress) branchDialogVisible = false },
+            onConfirm = { name ->
+                if (!branchInProgress) coroutineScope.launch {
+                    branchInProgress = true
+                    runCatching {
+                        app.chatStore.branchWorldline(room.id, UUID.randomUUID(), name, System.currentTimeMillis())
+                    }.onFailure { attachmentNotice = it.message ?: "세계선을 나누지 못했어요." }
+                    branchInProgress = false
+                    branchDialogVisible = false
+                }
+            }
+        )
+    }
 }
 
 // MARK: - 목록에 놓을 줄
@@ -566,12 +698,12 @@ private fun buildRows(messages: List<ChatMessage>): List<Row> {
         val previous = messages.getOrNull(index - 1)
         val next = messages.getOrNull(index + 1)
         val sameAsPrevious = previous != null &&
-            previous.sender == message.sender &&
+            sameBubbleAuthor(previous, message) &&
             previous.kind == message.kind &&
             dayOf(previous.timestamp) == day &&
             sameMinute(previous.timestamp, message.timestamp)
         val sameAsNext = next != null &&
-            next.sender == message.sender &&
+            sameBubbleAuthor(message, next) &&
             next.kind == message.kind &&
             dayOf(next.timestamp) == day &&
             sameMinute(next.timestamp, message.timestamp)

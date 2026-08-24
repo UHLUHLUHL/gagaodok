@@ -23,6 +23,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +41,8 @@ import com.sapiens.gagaodok.ui.icons.AddFriendIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /// 친구 탭입니다.
 ///
@@ -56,6 +59,7 @@ fun FriendsScreen(
     val app = context.applicationContext as GagaodokApp
     val store = app.chatStore
     val colors = KakaoTheme.colors
+    val coroutineScope = rememberCoroutineScope()
 
     val rooms by store.rooms.collectAsState()
     val myProfile by app.myProfile.profile.collectAsState()
@@ -79,15 +83,25 @@ fun FriendsScreen(
     val favorites = rooms.filter { it.isPinned }.sortedBy { it.profile.name }.filter(::matches)
     val others = rooms.filterNot { it.isPinned }.sortedBy { it.profile.name }.filter(::matches)
 
-    fun openMenu(room: ChatRoom) = menu.show(
-        KakaoMenuItem("대화 시작") { menu.dismiss(); onOpenRoom(room.id) },
-        KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile(room.id) },
-        KakaoMenuItem("프로필 편집") { menu.dismiss(); editingRoom = room },
-        KakaoMenuItem(if (room.isPinned) "즐겨찾기 해제" else "즐겨찾기") {
-            menu.dismiss(); store.togglePinned(room.id)
-        },
-        KakaoMenuItem("삭제") { menu.dismiss(); store.deleteRoom(room.id) }
-    )
+    fun openMenu(room: ChatRoom) {
+        val referencingGroups = store.groupsReferencingParticipant(room.id)
+        menu.show(*(buildList {
+            add(KakaoMenuItem("대화 시작") { menu.dismiss(); onOpenRoom(room.id) })
+            add(KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile(room.id) })
+            add(KakaoMenuItem("프로필 편집") { menu.dismiss(); editingRoom = room })
+            add(KakaoMenuItem(if (room.isPinned) "즐겨찾기 해제" else "즐겨찾기") {
+                menu.dismiss(); store.togglePinned(room.id)
+            })
+            if (referencingGroups.isEmpty()) {
+                add(KakaoMenuItem("삭제") {
+                    menu.dismiss()
+                    coroutineScope.launch(Dispatchers.IO) { store.deleteRoom(room.id) }
+                })
+            } else {
+                add(KakaoMenuItem("단톡방 ${referencingGroups.size}개에서 사용 중") { menu.dismiss() })
+            }
+        }).toTypedArray())
+    }
 
     Column(Modifier.fillMaxSize().background(colors.surface)) {
         ListTopBar(

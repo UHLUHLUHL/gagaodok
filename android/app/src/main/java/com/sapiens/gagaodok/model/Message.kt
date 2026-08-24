@@ -66,7 +66,10 @@ data class ChatMessage(
     // 답변을 받지 못한 내 메시지에만 씁니다.
     val deliveryFailed: Boolean = false,
     // 상황극에서만 갈립니다. 예전 기록에는 없으므로 없으면 대사로 읽습니다.
-    val kind: MessageKind = MessageKind.SPEECH
+    val kind: MessageKind = MessageKind.SPEECH,
+    /// 단톡방 대사의 실제 화자입니다. 개인방과 나레이션 기록에는 없습니다.
+    @Serializable(with = UuidSerializer::class)
+    val speakerRoomId: UUID? = null
 ) {
     val formattedTime: String
         get() = SimpleDateFormat("a h:mm", Locale.KOREA).format(Date(timestamp))

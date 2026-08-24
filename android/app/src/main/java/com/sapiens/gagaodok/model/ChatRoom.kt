@@ -126,7 +126,10 @@ data class RoomProfile(
     val musicTitle: String = "",
     val musicArtist: String = "",
     val avatarImageFileName: String? = null,
-    val persona: PersonaStyle = PersonaStyle()
+    val persona: PersonaStyle = PersonaStyle(),
+    /// 개인방에서 쌓이는 기본 호감도입니다. 단톡방을 만들 때 이 값을 복사해 시작하고,
+    /// 이후 단톡방 세계선의 하트 변화는 이 값에 역으로 반영하지 않습니다.
+    val baseAffection: Int = 50
 )
 
 @Serializable
@@ -150,7 +153,9 @@ data class ChatRoom(
     /// 이 방이 수학 멘토인지 챗봇인지입니다. 비어 있으면 수학 멘토입니다.
     ///
     /// 예전에 저장된 방에는 이 값이 없으므로, 없으면 지금까지와 똑같이 멘토로 동작합니다.
-    val modeIdentifier: String? = null
+    val modeIdentifier: String? = null,
+    /// 비어 있으면 기존 개인방, 값이 있으면 개인방과 완전히 분리된 단톡방입니다.
+    val groupChat: GroupChatState? = null
 ) {
     /// 이 방이 실제로 쓸 모델입니다. 아직 고른 적이 없으면 전역 기본값입니다.
     fun resolvedModel(fallback: AIModel): AIModel =
