@@ -6,6 +6,8 @@ import com.sapiens.gagaodok.model.MessageKind
 import com.sapiens.gagaodok.model.PersonaStyle
 import java.util.UUID
 
+data class PlannedReaction(val participantRoomId: UUID, val emoji: String)
+
 /** Converts group-only transport metadata into display-safe bubbles. */
 class GroupConversationProtocol(participants: List<ChatRoom>) {
     private val participants = participants.distinctBy { it.id }
@@ -31,13 +33,21 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
         }
         append("위 대사들은 말투를 보여주는 견본일 뿐이다. 문장을 그대로 복사하지 않고 지금 상황에 맞는 말을 새로 만든다.\n")
         append("\n# 단톡방 출력 규약\n")
+        append("모든 참여자는 매 턴 대사 또는 반응으로 참여한다. 보통은 모두 한 번씩 말하되, 말이 부자연스러운 참여자는 반응만 남길 수 있다. ")
+        append("각 참여자는 앞서 보낸 말에 답하거나 반응해 서로 대화한다. 사용자에게 독립적인 독백을 나란히 하지 않는다. ")
+        append("참여자마다 기본 한 문단, 자연스러운 짧은 후속 말이 꼭 필요할 때만 한 문단을 더 쓴다. 적어도 한 명은 말한다.\n")
         append("모든 대사 문단은 완전히 따옴표로 감싸고, 따옴표 안의 첫 글자부터 [[speaker:<ROOM_UUID>]]로 시작한다. ")
         append("나레이션은 빈 줄로 분리한 강조 문단이며 speaker 표식이 없다. ")
-        append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 둔다. ")
+        append("말하지 않는 참여자의 반응은 대상 대사 문단 안에 [[react:<ROOM_UUID>:<EMOJI>]]로 한 번 둔다. ")
+        append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
         append("목록에 있는 참여자 UUID만 사용한다. 표식은 설명할 텍스트가 아닌 전송 메타데이터다.")
     }
 
-    data class ParsedBubble(val visibleText: String, val speakerRoomId: UUID?)
+    data class ParsedBubble(
+        val visibleText: String,
+        val speakerRoomId: UUID?,
+        val reactions: List<PlannedReaction> = emptyList()
+    )
 
     fun parseBubble(text: String, kind: MessageKind, previousSpeakerId: UUID?): ParsedBubble {
         val visibleText = markerRegex.replace(text, "").trim()
@@ -46,7 +56,17 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
         val markedSpeaker = speakerRegex.findAll(text)
             .mapNotNull { match -> match.groupValues[1].toUuidOrNull() }
             .firstOrNull { it in allowedIds }
-        return ParsedBubble(visibleText, markedSpeaker ?: previousSpeakerId?.takeIf { it in allowedIds } ?: participants.first().id)
+        val reactions = reactionRegex.findAll(text).mapNotNull { match ->
+            val id = match.groupValues[1].toUuidOrNull()?.takeIf { it in allowedIds } ?: return@mapNotNull null
+            val emoji = match.groupValues[2].trim().takeIf { it.isNotEmpty() && it.codePointCount(0, it.length) <= 8 }
+                ?: return@mapNotNull null
+            PlannedReaction(id, emoji)
+        }.distinct().toList()
+        return ParsedBubble(
+            visibleText,
+            markedSpeaker ?: previousSpeakerId?.takeIf { it in allowedIds } ?: participants.first().id,
+            reactions
+        )
     }
 
     fun heartDeltas(rawText: String): Map<UUID, Int> = buildMap {
@@ -55,7 +75,7 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
             val delta = match.groupValues[2].toIntOrNull() ?: return@forEach
             if (id in allowedIds) merge(id, delta, ::saturatedAdd)
         }
-    }
+    }.mapValues { (_, delta) -> delta.coerceIn(-3, 3) }
 
     private fun compositePersona(rooms: List<ChatRoom>): PersonaStyle {
         val descriptions = rooms.joinToString("\n") { room ->
@@ -75,7 +95,8 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
                 if (styleGuides.isNotEmpty()) append(styleGuides.joinToString("\n")).append('\n')
                 append("모든 대사 문단은 완전히 따옴표로 감싸고, 따옴표 안의 첫 글자부터 [[speaker:<ROOM_UUID>]]로 시작한다. ")
                 append("나레이션은 빈 줄로 분리한 강조 문단이며 speaker 표식이 없다. ")
-                append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 둔다. ")
+                append("모든 참여자는 대사 또는 [[react:<ROOM_UUID>:<EMOJI>]] 반응으로 참여하고 앞서 보낸 말에 이어서 답한다. ")
+                append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
                 append("목록에 있는 참여자 UUID만 사용한다. 표식은 설명할 텍스트가 아닌 전송 메타데이터다.")
             },
             samples = samples,
@@ -92,9 +113,10 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
     }
 
     companion object {
-        private val markerRegex = Regex("\\[\\[(?:speaker|heart):[^]]+]]")
+        private val markerRegex = Regex("\\[\\[(?:speaker|heart|react):[^]]+]]")
         private val speakerRegex = Regex("\\[\\[speaker:([0-9a-fA-F-]{36})]]")
         private val heartRegex = Regex("\\[\\[heart:([0-9a-fA-F-]{36}):([+-]\\d+)]]")
+        private val reactionRegex = Regex("\\[\\[react:([0-9a-fA-F-]{36}):([^]]+)]]")
 
         fun personaFor(participants: List<ChatRoom>): PersonaStyle = GroupConversationProtocol(participants).persona
 

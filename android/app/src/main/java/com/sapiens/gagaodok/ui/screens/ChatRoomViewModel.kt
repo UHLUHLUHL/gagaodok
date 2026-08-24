@@ -2,6 +2,7 @@ package com.sapiens.gagaodok.ui.screens
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sapiens.gagaodok.BuildConfig
@@ -13,14 +14,22 @@ import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.ConversationTurn
+import com.sapiens.gagaodok.model.MessageReaction
 import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.service.AIService
 import com.sapiens.gagaodok.service.AIServiceException
+import com.sapiens.gagaodok.service.GeneratedMessageBubble
 import com.sapiens.gagaodok.service.GroupConversationProtocol
+import com.sapiens.gagaodok.service.GroupReplyBubble
+import com.sapiens.gagaodok.service.GroupReplyEvent
+import com.sapiens.gagaodok.service.GroupReplyScheduler
+import com.sapiens.gagaodok.service.PersonalAffectionProtocol
+import com.sapiens.gagaodok.service.PlannedReaction
 import com.sapiens.gagaodok.service.RoleplayParser
 import com.sapiens.gagaodok.service.repetitionAdviceFromConversation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -52,6 +61,13 @@ internal class GroupResponseBuffer(history: List<ChatMessage>) {
     }
 }
 
+private data class PendingGroupBubble(
+    val generated: GeneratedMessageBubble,
+    val visibleText: String,
+    val speakerRoomId: UUID?,
+    val reactions: List<PlannedReaction>
+)
+
 /// 대화방 하나의 상태입니다.
 ///
 /// 맥 판은 뷰 안의 `@State`로 들고 있었지만 안드로이드에서는 그러면 안 됩니다.
@@ -75,6 +91,9 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
     private val _isTyping = MutableStateFlow(false)
     val isTyping: StateFlow<Boolean> = _isTyping
 
+    private val _typingParticipantIds = MutableStateFlow<Set<UUID>>(emptySet())
+    val typingParticipantIds: StateFlow<Set<UUID>> = _typingParticipantIds
+
     private val _isResponding = MutableStateFlow(false)
     val isResponding: StateFlow<Boolean> = _isResponding
 
@@ -93,6 +112,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         responseJob?.cancel()
         responseJob = null
         _isTyping.value = false
+        _typingParticipantIds.value = emptySet()
         _isResponding.value = false
         bindJob?.cancel()
         bindJob = viewModelScope.launch {
@@ -185,6 +205,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         responseJob?.cancel()
         responseJob = null
         _isTyping.value = false
+        _typingParticipantIds.value = emptySet()
         _isResponding.value = false
     }
 
@@ -203,6 +224,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         val participantRooms = group?.participantRoomIds?.mapNotNull(store::room).orEmpty()
         if (group != null && participantRooms.size != group.participantRoomIds.size) {
             _isTyping.value = false
+            _typingParticipantIds.value = emptySet()
             _isResponding.value = false
             _errorMessage.value = "참여자 정보를 찾을 수 없습니다."
             val failIndex = _messages.value.indexOfFirst { it.id == failingMessageId }
@@ -226,7 +248,11 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         val requestBotName = if (protocol == null) room.profile.name else room.title
         val suppressedExpressions = protocol?.persona?.suppressedExpressions
             ?: room.profile.persona.suppressedExpressions
-        val systemPromptOverride = protocol?.systemPrompt(room.title)
+        val personalAffectionEnabled = protocol == null && requestMode == ChatMode.COMPANION &&
+            requestModel == AIModel.GEMINI_37_FLASH && !BuildConfig.TABLET_MENTOR
+        val systemPromptOverride = protocol?.systemPrompt(room.title) ?: if (personalAffectionEnabled) {
+            PersonalAffectionProtocol.systemPrompt(ai.systemPrompt(requestBotName, requestPersona, requestMode))
+        } else null
         // 스트리밍은 문단이 완성되는 대로 화면에 붙으므로, 첫 문단을 붙이는 시점에는
         // 그 턴에 따옴표 대사가 나올지 아직 모릅니다. 앞 턴이 상황극이었다면 알려 줍니다.
         val wasRoleplaying = RoleplayParser.roleplayInProgress(history)
@@ -241,6 +267,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
             val responseTurnId = UUID.randomUUID()
             val groupBuffer = protocol?.let { GroupResponseBuffer(history) }
             val groupRawText = StringBuilder()
+            val pendingGroupBubbles = mutableListOf<PendingGroupBubble>()
             var previousSpeakerId: UUID? = null
             var attempt = 0
             while (true) {
@@ -261,34 +288,92 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                         if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) {
                             previousSpeakerId = parsed?.speakerRoomId ?: previousSpeakerId
                         }
-                        val visibleText = parsed?.visibleText ?: bubble.text
+                        val visibleText = parsed?.visibleText ?: if (personalAffectionEnabled) {
+                            PersonalAffectionProtocol.visibleText(bubble.text)
+                        } else bubble.text
                         if (visibleText.isEmpty() && bubble.attachment == null) return@streamResponse
-                        // 첫 말풍선이 붙는 순간 타이핑 표시를 끕니다.
-                        _isTyping.value = false
-                        val message = ChatMessage(
-                            sender = MessageSender.SAPIENS,
-                            text = visibleText,
-                            attachment = bubble.attachment,
-                            turnId = responseTurnId,
-                            kind = bubble.kind,
-                            speakerRoomId = if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) parsed?.speakerRoomId else null
-                        )
                         if (groupBuffer == null) {
+                            _isTyping.value = false
+                            val message = ChatMessage(
+                                sender = MessageSender.SAPIENS,
+                                text = visibleText,
+                                attachment = bubble.attachment,
+                                turnId = responseTurnId,
+                                kind = bubble.kind
+                            )
                             _messages.value = _messages.value + message
                             persist(requestWorldlineId)
                         } else {
-                            groupBuffer.append(message)
-                            publishGroupResponse(requestBinding, groupBuffer)
-                            persist(id, requestWorldlineId, groupBuffer.messages)
+                            pendingGroupBubbles += PendingGroupBubble(
+                                generated = bubble,
+                                visibleText = visibleText,
+                                speakerRoomId = if (bubble.kind == com.sapiens.gagaodok.model.MessageKind.SPEECH) parsed?.speakerRoomId else null,
+                                reactions = parsed?.reactions.orEmpty()
+                            )
                         }
                     }
 
                     _isTyping.value = false
+                    if (groupBuffer != null) {
+                        val scheduled = pendingGroupBubbles.mapIndexed { index, pending ->
+                            GroupReplyBubble(
+                                index = index,
+                                visibleText = pending.visibleText,
+                                kind = pending.generated.kind,
+                                speakerRoomId = pending.speakerRoomId,
+                                reactions = pending.reactions
+                            )
+                        }
+                        val startedAt = SystemClock.elapsedRealtime()
+                        val messageIds = mutableMapOf<Int, UUID>()
+                        for (event in GroupReplyScheduler.plan(responseTurnId, scheduled)) {
+                            val remaining = event.atMillis - (SystemClock.elapsedRealtime() - startedAt)
+                            if (remaining > 0) delay(remaining)
+                            when (event) {
+                                is GroupReplyEvent.TypingStarted -> {
+                                    _typingParticipantIds.value = _typingParticipantIds.value + event.participantRoomId
+                                }
+                                is GroupReplyEvent.TypingStopped -> {
+                                    _typingParticipantIds.value = _typingParticipantIds.value - event.participantRoomId
+                                }
+                                is GroupReplyEvent.RevealBubble -> {
+                                    val pending = pendingGroupBubbles[event.bubbleIndex]
+                                    val message = ChatMessage(
+                                        sender = MessageSender.SAPIENS,
+                                        text = pending.visibleText,
+                                        attachment = pending.generated.attachment,
+                                        turnId = responseTurnId,
+                                        kind = pending.generated.kind,
+                                        speakerRoomId = pending.speakerRoomId
+                                    )
+                                    messageIds[event.bubbleIndex] = message.id
+                                    groupBuffer.append(message)
+                                    publishGroupResponse(requestBinding, groupBuffer)
+                                    persist(id, requestWorldlineId, groupBuffer.messages)
+                                }
+                                is GroupReplyEvent.ApplyReaction -> {
+                                    val messageId = messageIds[event.bubbleIndex] ?: continue
+                                    val messageIndex = groupBuffer.messages.indexOfFirst { it.id == messageId }
+                                    if (messageIndex >= 0) {
+                                        val current = groupBuffer.messages[messageIndex]
+                                        val reaction = MessageReaction(event.reaction.participantRoomId, event.reaction.emoji)
+                                        if (reaction !in current.reactions) {
+                                            groupBuffer.replace(messageIndex, current.copy(reactions = current.reactions + reaction))
+                                            publishGroupResponse(requestBinding, groupBuffer)
+                                            persist(id, requestWorldlineId, groupBuffer.messages)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _typingParticipantIds.value = emptySet()
+                    }
                     // API에는 갈라지기 전 원문을 한 번만 보냅니다. 턴의 첫 말풍선에 담아 둡니다.
                     val responseMessages = groupBuffer?.messages ?: _messages.value
                     val firstIndex = responseMessages.indexOfFirst { it.turnId == responseTurnId }
                     if (firstIndex >= 0) {
-                        val canonical = responseMessages[firstIndex].copy(canonicalText = rawText)
+                        val canonicalText = if (personalAffectionEnabled) PersonalAffectionProtocol.visibleText(rawText) else rawText
+                        val canonical = responseMessages[firstIndex].copy(canonicalText = canonicalText)
                         if (groupBuffer == null) {
                             _messages.value = _messages.value.toMutableList().also { it[firstIndex] = canonical }
                             persist(requestWorldlineId)
@@ -302,6 +387,8 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                         protocol.heartDeltas(rawText).forEach { (participantRoomId, delta) ->
                             store.adjustWorldlineHeart(id, requestWorldlineId, participantRoomId, delta)
                         }
+                    } else if (personalAffectionEnabled) {
+                        store.adjustBaseAffection(id, PersonalAffectionProtocol.delta(rawText))
                     }
                     _isResponding.value = false
                     return@launch
@@ -309,6 +396,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                     // 사용자가 멈춘 것은 실패가 아닙니다. 표시를 남기지 않습니다.
                     persistPartialGroupCanonical(groupBuffer, responseTurnId, groupRawText.toString(), requestBinding)
                     _isTyping.value = false
+                    _typingParticipantIds.value = emptySet()
                     _isResponding.value = false
                     throw e
                 } catch (e: Exception) {
@@ -328,6 +416,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                         continue
                     }
                     _isTyping.value = false
+                    _typingParticipantIds.value = emptySet()
                     _isResponding.value = false
                     _errorMessage.value = e.message ?: "요청을 처리하지 못했습니다."
                     // 답변자 쪽에 오류 말풍선을 남기지 않습니다. 카카오톡처럼

@@ -49,6 +49,13 @@ data class ChatAttachment(
 }
 
 @Serializable
+data class MessageReaction(
+    @Serializable(with = UuidSerializer::class)
+    val participantRoomId: UUID,
+    val emoji: String
+)
+
+@Serializable
 data class ChatMessage(
     @Serializable(with = UuidSerializer::class)
     val id: UUID = UUID.randomUUID(),
@@ -69,7 +76,9 @@ data class ChatMessage(
     val kind: MessageKind = MessageKind.SPEECH,
     /// 단톡방 대사의 실제 화자입니다. 개인방과 나레이션 기록에는 없습니다.
     @Serializable(with = UuidSerializer::class)
-    val speakerRoomId: UUID? = null
+    val speakerRoomId: UUID? = null,
+    /// 단톡방 참여자가 이 말풍선에 남긴 반응입니다. 예전 기록은 빈 목록으로 읽습니다.
+    val reactions: List<MessageReaction> = emptyList()
 ) {
     val formattedTime: String
         get() = SimpleDateFormat("a h:mm", Locale.KOREA).format(Date(timestamp))

@@ -46,6 +46,19 @@ class GroupConversationProtocolTest {
     }
 
     @Test
+    fun `reaction-only participant stays invisible in text and attaches to target bubble`() {
+        val parsed = protocol.parseBubble(
+            "[[speaker:$firstId]] 반가워. [[react:$secondId:❤️]]",
+            MessageKind.SPEECH,
+            null
+        )
+
+        assertEquals("반가워.", parsed.visibleText)
+        assertEquals(firstId, parsed.speakerRoomId)
+        assertEquals(listOf(com.sapiens.gagaodok.service.PlannedReaction(secondId, "❤️")), parsed.reactions)
+    }
+
+    @Test
     fun `unmarked speech inherits and first speech falls back while foreign ids stay hidden`() {
         val inherited = protocol.parseBubble("계속 말할게.", MessageKind.SPEECH, secondId)
         val fallback = protocol.parseBubble("처음이야.", MessageKind.SPEECH, null)
@@ -63,6 +76,14 @@ class GroupConversationProtocolTest {
         assertEquals(
             mapOf(firstId to -1, secondId to 3),
             protocol.heartDeltas("[[heart:$firstId:+2]][[heart:$firstId:-3]][[heart:$secondId:+3]]")
+        )
+    }
+
+    @Test
+    fun `heart changes are bounded per participant per turn`() {
+        assertEquals(
+            mapOf(firstId to 3, secondId to -3),
+            protocol.heartDeltas("[[heart:$firstId:+99]][[heart:$secondId:-20]]")
         )
     }
 
@@ -104,6 +125,9 @@ class GroupConversationProtocolTest {
         assertTrue(prompt.contains(firstId.toString()))
         assertTrue(prompt.contains(secondId.toString()))
         assertTrue(prompt.contains("[[speaker:<ROOM_UUID>]]"))
+        assertTrue(prompt.contains("모든 참여자"))
+        assertTrue(prompt.contains("반응만"))
+        assertTrue(prompt.contains("앞서 보낸 말"))
         assertFalse(prompt.contains("이 대화에서 당신의 이름은"))
         assertFalse(prompt.contains("는 아래 인물이다"))
     }

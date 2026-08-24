@@ -14,8 +14,8 @@ android {
         create("phone") {
             dimension = "device"
             applicationId = "com.sapiens.gagaodok"
-            versionCode = 7
-            versionName = "1.6-phone"
+            versionCode = 8
+            versionName = "1.7-phone"
             buildConfigField("boolean", "TABLET_MENTOR", "false")
         }
         create("tabletMentor") {
@@ -37,6 +37,7 @@ android {
         // 1.4: 입력창 곡률, 프로필 화면, 메뉴 카드 통일, 말투 편집 손질, 요금 장부의 빈 곳을 메웠습니다.
         // 1.5: 챗봇 모드 사고량을 낮추고, 사진을 타일 기준으로 줄여 보냅니다.
         // 1.6: 안 쓸 캐시를 안 만들고, 키 저장소가 안 죽고, 요약 지침이 모드를 따릅니다.
+        // 1.7: 개인·세계선 호감도, 자연스러운 단톡 응답 일정, 반응 칩과 하트 모션을 더했습니다.
     }
 
     buildTypes {

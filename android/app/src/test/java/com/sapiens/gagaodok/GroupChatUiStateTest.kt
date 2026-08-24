@@ -12,6 +12,7 @@ import com.sapiens.gagaodok.ui.screens.GroupChatUiState
 import com.sapiens.gagaodok.ui.screens.activeHeartAverage
 import com.sapiens.gagaodok.ui.screens.defaultGroupTitle
 import com.sapiens.gagaodok.ui.screens.sameBubbleAuthor
+import com.sapiens.gagaodok.ui.screens.shouldShowRelationshipGauge
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -95,5 +96,18 @@ class GroupChatUiStateTest {
             listOf(quietGroup.id),
             ChatStore.conversationRoomsForDisplay(listOf(first, quietGroup), emptySet()).map { it.id }
         )
+    }
+
+    @Test
+    fun existingPersonalCompanionRoomShowsRelationshipGaugeFromBaseAffection() {
+        val personal = ChatRoom(
+            id = firstId,
+            profile = RoomProfile(name = "현우진", baseAffection = 50),
+            modeIdentifier = com.sapiens.gagaodok.model.ChatMode.COMPANION.rawValue
+        )
+
+        assertTrue(shouldShowRelationshipGauge(personal, tabletLayout = false))
+        assertFalse(shouldShowRelationshipGauge(personal, tabletLayout = true))
+        assertEquals(50, personal.profile.baseAffection)
     }
 }

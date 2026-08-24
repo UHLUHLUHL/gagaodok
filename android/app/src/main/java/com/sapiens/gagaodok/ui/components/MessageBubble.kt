@@ -3,6 +3,7 @@ package com.sapiens.gagaodok.ui.components
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -214,7 +215,31 @@ private fun SpeechRow(
                             )
                         }
                     }
+                    if (message.reactions.isNotEmpty()) {
+                        ReactionChips(message)
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReactionChips(message: ChatMessage) {
+    val colors = KakaoTheme.colors
+    val counts = message.reactions.groupingBy { it.emoji }.eachCount()
+    Row(
+        Modifier.padding(top = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        counts.forEach { (emoji, count) ->
+            Row(
+                Modifier.clip(RoundedCornerShape(10.dp)).background(colors.surface)
+                    .border(1.dp, colors.border, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("$emoji $count", style = KakaoText.timestamp, color = colors.textSecondary)
             }
         }
     }

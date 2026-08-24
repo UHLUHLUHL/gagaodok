@@ -3,6 +3,7 @@ package com.sapiens.gagaodok.ui.screens
 import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.MessageSender
+import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.WorldlineState
 import java.util.UUID
 
@@ -42,3 +43,6 @@ internal fun activeHeartAverage(worldline: WorldlineState): Int {
 internal fun sameBubbleAuthor(first: ChatMessage, second: ChatMessage): Boolean =
     first.sender == second.sender &&
         (first.sender != MessageSender.SAPIENS || first.speakerRoomId == second.speakerRoomId)
+
+internal fun shouldShowRelationshipGauge(room: ChatRoom, tabletLayout: Boolean): Boolean =
+    !tabletLayout && room.resolvedMode == ChatMode.COMPANION

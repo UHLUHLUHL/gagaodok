@@ -75,9 +75,9 @@ internal fun GroupChatCreationSheet(
             }
 
             Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 20.dp)) {
-                Text("함께할 캐릭터를 골라줘", style = KakaoText.screenTitle, color = colors.textPrimary)
+                Text("함께할 캐릭터를 골라주세요", style = KakaoText.screenTitle, color = colors.textPrimary)
                 Text(
-                    "개인방에 있는 캐릭터만 초대할 수 있어. 각 방의 호감도와 대화는 서로 섞이지 않아.",
+                    "개인방에 있는 캐릭터만 초대할 수 있어요. 각 방의 호감도와 대화는 서로 섞이지 않아요.",
                     style = KakaoText.body,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(top = 8.dp)

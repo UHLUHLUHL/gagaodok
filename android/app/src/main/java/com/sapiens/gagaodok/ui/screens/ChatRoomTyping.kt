@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -78,6 +79,38 @@ internal fun TypingIndicator(
                     color = colors.textTertiary,
                     modifier = Modifier.padding(start = 4.dp)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun GroupPreparingIndicator(
+    avatars: List<android.graphics.Bitmap?>,
+    onCancel: () -> Unit
+) {
+    val colors = KakaoTheme.colors
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = Metrics.roomPadding, vertical = Metrics.bubbleGap),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(Modifier.width(50.dp).height(Metrics.bubbleAvatar)) {
+            avatars.take(2).forEachIndexed { index, avatar ->
+                RoomAvatar(avatar, Metrics.bubbleAvatar, Modifier.offset(x = (index * 14).dp))
+            }
+        }
+        Column(Modifier.padding(start = Metrics.bubbleAvatarGap)) {
+            Text("대화를 준비하고 있어요.", style = KakaoText.senderName, color = colors.textSecondary)
+            Row(
+                Modifier.padding(top = Metrics.bubbleNameGap)
+                    .kakaoBubbleBackground(colors.bubbleTheirs, isFirst = true, isMine = false)
+                    .clickable(onClick = onCancel)
+                    .padding(horizontal = Metrics.bubblePaddingH, vertical = Metrics.bubblePaddingV),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                TypingDots(colors.textSecondary)
+                Text("· 눌러서 중지", style = KakaoText.timestamp, color = colors.textTertiary)
             }
         }
     }

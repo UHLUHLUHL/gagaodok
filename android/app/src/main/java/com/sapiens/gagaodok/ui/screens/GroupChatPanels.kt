@@ -1,10 +1,12 @@
 package com.sapiens.gagaodok.ui.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -12,6 +14,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -35,9 +39,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -50,6 +51,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +78,8 @@ private object HeartGaugeTokens {
     val heart = Color(0xFFFF5C7A)
     val soft = Color(0xFF3B2028)
 }
+
+private val RelationshipMotionEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
 internal data class GroupParticipantUi(
     val room: ChatRoom,
@@ -148,7 +156,7 @@ internal fun GroupChatHeader(
             MagnifierIcon(colors.onChatHeader, Modifier.size(22.dp))
         }
         IconButton(onClick = onOpenWorldlines) {
-            Icon(Icons.Filled.AccountTree, "세계선", tint = WorldlineTokens.accent, modifier = Modifier.size(22.dp))
+            WorldlineIcon(WorldlineTokens.accent, Modifier.size(22.dp))
         }
     }
 }
@@ -157,90 +165,156 @@ internal fun GroupChatHeader(
 internal fun HeartGaugePanel(
     participants: List<GroupParticipantUi>,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val colors = KakaoTheme.colors
     val average = if (participants.isEmpty()) 0 else participants.sumOf { it.heart } / participants.size
-    Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.TopCenter) {
-        Column(
-            Modifier
-                .then(if (expanded) Modifier.fillMaxWidth().padding(horizontal = 12.dp) else Modifier.width(116.dp))
-                .clip(if (expanded) RoundedCornerShape(20.dp) else CircleShape)
-                .background(HeartGaugeTokens.soft)
-                .border(1.dp, colors.border, if (expanded) RoundedCornerShape(20.dp) else CircleShape)
+    val transition = updateTransition(expanded, label = "호감도 카드")
+    val width by transition.animateDp(
+        transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "너비"
+    ) { if (it) 336.dp else 84.dp }
+    val height by transition.animateDp(
+        transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "높이"
+    ) { if (it) (if (participants.size > 2) 192.dp else 154.dp) else 36.dp }
+    val radius by transition.animateDp(
+        transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "모서리"
+    ) { if (it) 16.dp else 18.dp }
+    val detailsAlpha by transition.animateFloat(
+        transitionSpec = { tween(if (targetState) 260 else 120, delayMillis = if (targetState) 80 else 0) },
+        label = "상세 내용"
+    ) { if (it) 1f else 0f }
+    val compactAlpha by transition.animateFloat(
+        transitionSpec = { tween(140) }, label = "접힌 점수"
+    ) { if (it) 0f else 1f }
+    val heartX by transition.animateDp(
+        transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "하트 위치 X"
+    ) { if (it) 16.dp else 10.dp }
+    val heartY by transition.animateDp(
+        transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "하트 위치 Y"
+    ) { if (it) 14.dp else 8.dp }
+    val chevronProgress by transition.animateFloat(
+        transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "펼침 화살표"
+    ) { if (it) 1f else 0f }
+    val shape = RoundedCornerShape(radius)
+
+    Box(modifier.fillMaxWidth().height(if (participants.size > 2) 212.dp else 174.dp).padding(top = 12.dp), contentAlignment = Alignment.TopCenter) {
+        Box(
+            Modifier.width(width).height(height).shadow(if (expanded) 12.dp else 0.dp, shape, clip = false)
+                .clip(shape).background(colors.bubbleTheirs).border(1.dp, colors.border, shape)
                 .clickable(onClick = onToggle)
-                .animateContentSize(tween(300, easing = FastOutSlowInEasing))
-                .padding(horizontal = if (expanded) 14.dp else 10.dp, vertical = 8.dp)
         ) {
-            AnimatedContent(
-                targetState = expanded,
-                transitionSpec = {
-                    (fadeIn(tween(220)) togetherWith fadeOut(tween(160)))
-                        .using(SizeTransform(clip = false) { _, _ -> tween(300, easing = FastOutSlowInEasing) })
-                },
-                label = "하트게이지"
-            ) { isExpanded ->
-                if (!isExpanded) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Favorite, null, tint = HeartGaugeTokens.heart, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.weight(1f))
-                        Text("$average", style = KakaoText.body, color = HeartGaugeTokens.heart)
-                        Icon(Icons.Filled.ExpandMore, "펼치기", tint = colors.onChatHeader, modifier = Modifier.size(18.dp))
-                    }
-                } else {
-                    Column(Modifier.fillMaxWidth()) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Favorite, null, tint = HeartGaugeTokens.heart, modifier = Modifier.size(20.dp))
-                            Text("하트게이지", style = KakaoText.sectionHeader, color = colors.textPrimary, modifier = Modifier.padding(start = 8.dp))
-                            Spacer(Modifier.weight(1f))
-                            Text("평균 $average", style = KakaoText.caption, color = HeartGaugeTokens.heart)
-                            Icon(Icons.Filled.ExpandLess, "접기", tint = colors.textSecondary, modifier = Modifier.size(18.dp))
-                        }
-                        participants.forEach { participant ->
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RoomAvatar(participant.avatar, 30.dp)
-                                Text(
-                                    participant.room.profile.name,
-                                    style = KakaoText.senderName,
-                                    color = colors.textPrimary,
-                                    modifier = Modifier.weight(1f).padding(start = 8.dp)
+            Row(
+                Modifier.fillMaxSize().graphicsLayer { alpha = compactAlpha }.padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(Modifier.width(20.dp))
+                Spacer(Modifier.weight(1f))
+                Text("$average", style = KakaoText.body, color = HeartGaugeTokens.heart)
+                Spacer(Modifier.width(16.dp))
+            }
+            Column(
+                Modifier.fillMaxSize().graphicsLayer { alpha = detailsAlpha }
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(20.dp))
+                    Text(
+                        if (participants.size == 1) "호감도" else "이 세계선의 호감도",
+                        style = KakaoText.sectionHeader,
+                        color = colors.textPrimary,
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (participants.size > 1) Text("평균 $average", style = KakaoText.caption, color = colors.textSecondary)
+                    Spacer(Modifier.width(16.dp))
+                }
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp).height(1.dp).background(colors.border))
+                participants.take(3).forEach { participant ->
+                    Row(
+                        Modifier.fillMaxWidth().height(38.dp).padding(top = 6.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        RoomAvatar(participant.avatar, 28.dp)
+                        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                            Row(Modifier.fillMaxWidth()) {
+                                Text(participant.room.profile.name, style = KakaoText.senderName, color = colors.textPrimary)
+                                Spacer(Modifier.weight(1f))
+                                Text("${participant.heart}", style = KakaoText.senderName, color = HeartGaugeTokens.heart)
+                            }
+                            Box(Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp).clip(CircleShape).background(HeartGaugeTokens.soft)) {
+                                Box(
+                                    Modifier.fillMaxWidth((participant.heart.coerceIn(0, 100) / 100f).coerceAtLeast(0.01f))
+                                        .height(4.dp).background(HeartGaugeTokens.heart, CircleShape)
                                 )
-                                Text("♥ ${participant.heart}", style = KakaoText.senderName, color = HeartGaugeTokens.heart)
                             }
                         }
                     }
                 }
+                if (participants.size <= 3) {
+                    Text(
+                        if (participants.size == 1) "앞으로의 대화에 따라 변화합니다."
+                        else "기본 호감도를 이어받아 이 세계선에서 변화합니다.",
+                        style = KakaoText.timestamp,
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
             }
+            RelationshipHeart(Modifier.offset(x = heartX, y = heartY).size(20.dp))
+            RelationshipChevron(
+                chevronProgress,
+                colors.textSecondary,
+                Modifier.align(Alignment.TopEnd).padding(top = 11.dp, end = 8.dp).size(14.dp)
+            )
         }
     }
 }
 
 @Composable
-internal fun WorldlinePill(worldline: WorldlineState, onClick: () -> Unit) {
-    Row(
-        Modifier.padding(start = 12.dp, top = 10.dp).clip(CircleShape).background(WorldlineTokens.soft)
-            .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.size(6.dp).background(WorldlineTokens.accent, CircleShape))
-        AnimatedContent(
-            targetState = worldline,
-            transitionSpec = {
-                (slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 6 } + fadeIn(tween(220))) togetherWith
-                    (slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { -it / 6 } + fadeOut(tween(160)))
-            },
-            label = "활성 세계선"
-        ) { targetWorldline ->
-            Text(
-                "${targetWorldline.name} · 하트 평균 ${activeHeartAverage(targetWorldline)}",
-                style = KakaoText.caption,
-                color = WorldlineTokens.accent,
-                modifier = Modifier.padding(start = 6.dp)
-            )
+private fun RelationshipHeart(modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val sx = size.width / 20f
+        val sy = size.height / 20f
+        val path = Path().apply {
+            moveTo(10f * sx, 17.1f * sy)
+            lineTo(3.2f * sx, 10.5f * sy)
+            cubicTo(1.4f * sx, 8.8f * sy, 1.5f * sx, 5.9f * sy, 3.4f * sx, 4.3f * sy)
+            cubicTo(5.2f * sx, 2.8f * sy, 7.8f * sx, 3.1f * sy, 9.3f * sx, 4.8f * sy)
+            lineTo(10f * sx, 5.6f * sy)
+            lineTo(10.7f * sx, 4.8f * sy)
+            cubicTo(12.2f * sx, 3.1f * sy, 14.8f * sx, 2.8f * sy, 16.6f * sx, 4.3f * sy)
+            cubicTo(18.5f * sx, 5.9f * sy, 18.6f * sx, 8.8f * sy, 16.8f * sx, 10.5f * sy)
+            close()
         }
+        drawPath(path, HeartGaugeTokens.heart)
+    }
+}
+
+@Composable
+private fun RelationshipChevron(progress: Float, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.graphicsLayer { rotationZ = progress * 180f }) {
+        val strokeWidth = 1.4.dp.toPx()
+        drawLine(color, start = androidx.compose.ui.geometry.Offset(size.width * 0.28f, size.height * 0.42f), end = androidx.compose.ui.geometry.Offset(size.width * 0.5f, size.height * 0.64f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+        drawLine(color, start = androidx.compose.ui.geometry.Offset(size.width * 0.5f, size.height * 0.64f), end = androidx.compose.ui.geometry.Offset(size.width * 0.72f, size.height * 0.42f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun WorldlineIcon(color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
+        val p = Path().apply {
+            moveTo(size.width * 0.27f, size.height * 0.32f)
+            cubicTo(size.width * 0.27f, size.height * 0.55f, size.width * 0.58f, size.height * 0.48f, size.width * 0.73f, size.height * 0.73f)
+            moveTo(size.width * 0.27f, size.height * 0.32f)
+            lineTo(size.width * 0.27f, size.height * 0.73f)
+        }
+        drawPath(p, color, style = stroke)
+        drawCircle(color, size.width * 0.09f, androidx.compose.ui.geometry.Offset(size.width * 0.27f, size.height * 0.23f))
+        drawCircle(color, size.width * 0.09f, androidx.compose.ui.geometry.Offset(size.width * 0.27f, size.height * 0.82f))
+        drawCircle(color, size.width * 0.09f, androidx.compose.ui.geometry.Offset(size.width * 0.77f, size.height * 0.82f))
     }
 }
 
@@ -265,7 +339,7 @@ internal fun WorldlineSwitcherSheet(
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("세계선", style = KakaoText.screenTitle, color = colors.textPrimary)
-                    Text("같은 시작에서 갈라진 대화를 골라 이어가.", style = KakaoText.caption, color = colors.textSecondary)
+                    Text("같은 시작에서 갈라진 대화를 선택해 이어가세요.", style = KakaoText.caption, color = colors.textSecondary)
                 }
                 Row(
                     Modifier.clip(CircleShape).background(WorldlineTokens.soft)
@@ -293,7 +367,7 @@ internal fun WorldlineSwitcherSheet(
                 }
             }
             Text(
-                "분기하면 현재 대화와 하트를 상속하고, 이후 값은 이 세계선에서만 변해.",
+                "분기하면 현재 대화와 하트를 상속하고, 이후 값은 이 세계선에서만 변합니다.",
                 style = KakaoText.caption,
                 color = colors.textTertiary,
                 modifier = Modifier.padding(top = 12.dp, bottom = 20.dp)
@@ -343,9 +417,9 @@ internal fun BranchWorldlineDialog(
             Box(Modifier.size(44.dp).background(WorldlineTokens.soft, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(Icons.Filled.AccountTree, null, tint = WorldlineTokens.accent, modifier = Modifier.size(24.dp))
             }
-            Text("여기서 세계선을 나눌까?", style = KakaoText.screenTitle, color = colors.textPrimary)
+            Text("여기서 세계선을 나누시겠어요?", style = KakaoText.screenTitle, color = colors.textPrimary)
             Text(
-                "현재 대화와 각 캐릭터의 하트 값을 그대로 복사해. 이후의 대화와 하트 변화는 새 세계선에만 남아.",
+                "현재 대화와 각 캐릭터의 하트 값을 그대로 복사합니다. 이후의 대화와 하트 변화는 새 세계선에만 남습니다.",
                 style = KakaoText.body,
                 color = colors.textSecondary
             )

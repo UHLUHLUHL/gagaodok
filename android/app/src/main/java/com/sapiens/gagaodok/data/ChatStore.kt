@@ -384,6 +384,13 @@ class ChatStore private constructor(context: Context) {
         update(roomId) { it.copy(groupChat = group.adjustHeart(worldlineId, participantRoomId, delta)) }
     }
 
+    fun adjustBaseAffection(roomId: UUID, delta: Int) {
+        update(roomId) { room ->
+            val value = (room.profile.baseAffection.toLong() + delta.toLong()).coerceIn(0L, 100L).toInt()
+            room.copy(profile = room.profile.copy(baseAffection = value))
+        }
+    }
+
     // MARK: - 대화 내용 검색 색인
     //
     // 메시지 파일에는 사진이 base64로 함께 들어 있어 통째로 읽으면 수 MB입니다.

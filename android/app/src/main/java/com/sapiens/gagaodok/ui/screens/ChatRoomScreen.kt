@@ -21,6 +21,7 @@ import androidx.compose.foundation.content.ReceiveContentListener
 import androidx.compose.foundation.content.TransferableContent
 import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -121,6 +123,7 @@ fun ChatRoomScreen(
     val globalModel by app.settings.selectedModel.collectAsState()
     val messages by vm.messages.collectAsState()
     val isTyping by vm.isTyping.collectAsState()
+    val typingParticipantIds by vm.typingParticipantIds.collectAsState()
     val isResponding by vm.isResponding.collectAsState()
     val loadedBinding by vm.loadedBinding.collectAsState()
     val error by vm.errorMessage.collectAsState()
@@ -214,7 +217,7 @@ fun ChatRoomScreen(
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
     // 새 말풍선이 붙거나 키보드가 오르내리면 맨 아래로 따라갑니다.
-    LaunchedEffect(rendered.size, isTyping, imeVisible) {
+    LaunchedEffect(rendered.size, isTyping, typingParticipantIds, imeVisible) {
         if (rendered.isNotEmpty()) listState.animateScrollToItem(rendered.size)
     }
     LaunchedEffect(currentHitId) {
@@ -447,18 +450,16 @@ fun ChatRoomScreen(
                     avatar = app.chatStore.avatar(participant.id, participant.profile)
                 )
             }
-            Column(Modifier.fillMaxSize()) {
-                if (displayedWorldline != null) {
-                    HeartGaugePanel(
-                        participants = displayedParticipants,
-                        expanded = groupUiState.heartExpanded,
-                        onToggle = { groupUiState = groupUiState.toggleHeart() }
-                    )
-                    WorldlinePill(displayedWorldline) { groupUiState = groupUiState.showWorldlines() }
-                }
+            val relationshipParticipants = if (displayedWorldline != null) displayedParticipants else if (
+                shouldShowRelationshipGauge(room, tabletLayout)
+            ) {
+                listOf(GroupParticipantUi(room, room.profile.baseAffection, avatar))
+            } else emptyList()
+            Box(Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth()
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = if (relationshipParticipants.isEmpty()) 0.dp else 56.dp)
                 ) {
                     items(displayedRows.size) { index ->
                         when (val row = displayedRows[index]) {
@@ -485,12 +486,34 @@ fun ChatRoomScreen(
                             }
                         }
                     }
-                    if (isTyping) {
+                    if (group != null && typingParticipantIds.isNotEmpty()) {
+                        typingParticipantIds.forEach { participantId ->
+                            val participant = participantRooms.firstOrNull { it.id == participantId } ?: return@forEach
+                            item("typing-$participantId") {
+                                TypingIndicator(
+                                    botName = participant.profile.name,
+                                    avatar = app.chatStore.avatar(participant.id, participant.profile)
+                                ) { vm.cancelResponse() }
+                            }
+                        }
+                    } else if (group != null && isTyping) {
+                        item("group-preparing") {
+                            GroupPreparingIndicator(displayedParticipants.map { it.avatar }) { vm.cancelResponse() }
+                        }
+                    } else if (isTyping) {
                         item("typing") {
                             TypingIndicator(botName = room.profile.name, avatar = avatar) { vm.cancelResponse() }
                         }
                     }
                     item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }
+                }
+                if (relationshipParticipants.isNotEmpty()) {
+                    HeartGaugePanel(
+                        participants = relationshipParticipants,
+                        expanded = groupUiState.heartExpanded,
+                        onToggle = { groupUiState = groupUiState.toggleHeart() },
+                        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
+                    )
                 }
             }
         }
