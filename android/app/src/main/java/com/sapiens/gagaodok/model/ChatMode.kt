@@ -57,7 +57,22 @@ enum class ChatMode(val rawValue: String) {
     /// 멘토는 계산이 틀리면 그대로 틀린 것을 가르치게 되므로 생각할 값어치가 있습니다.
     /// 챗봇은 다릅니다. 여기서 필요한 것은 정답이 아니라 그 인물다운 말씨와 빠른 대꾸이고,
     /// 그건 오래 생각한다고 좋아지는 종류가 아닙니다. 오히려 답이 늦어집니다.
+    /// 챗봇 방은 아예 끕니다.
+    ///
+    /// 낮음으로도 사고 토큰은 계속 나갔고, 그 시간이 첫 글자까지의 대기에 그대로 얹힙니다.
+    /// 잡담의 말씨는 오래 생각한다고 좋아지지 않으므로 여기서는 잃을 것이 거의 없습니다.
+    ///
+    /// `off`를 Gemini가 받아 주지 않으면 [fallbackThinkingLevel]로 물러납니다.
+    /// 값이 맞는지는 실제 요청을 보내 봐야 알 수 있어서, 거부당해도 대화가 끊기지 않게
+    /// 되물러나는 길을 열어 뒀습니다.
     val geminiThinkingLevel: String
+        get() = when (this) {
+            MATH_MENTOR -> "medium"
+            COMPANION -> "off"
+        }
+
+    /// 위 값이 거부당했을 때 대신 보낼 값입니다. 예전에 쓰던 값입니다.
+    val fallbackThinkingLevel: String
         get() = when (this) {
             MATH_MENTOR -> "medium"
             COMPANION -> "low"

@@ -194,6 +194,49 @@ class GroupConversationProtocolTest {
         assertEquals(firstId, protocol.guessFirstSpeaker(history, "다들 어때?"))
     }
 
+    /// 숫자만으로는 "왜 변했는지"를 화면에 보여줄 수 없습니다. 이유가 같이 와야 합니다.
+    @Test
+    fun `호감도 표식에서 변화량과 이유를 함께 읽는다`() {
+        val raw = """
+            "[[speaker:$firstId]][[heart:$firstId:+2:솔직하게 답해줘서]] 고마워."
+
+            "[[speaker:$secondId]][[heart:$secondId:-1:끼어들어서 말을 끊었어]] 흥."
+        """.trimIndent()
+        val changes = protocol.heartChanges(raw)
+
+        assertEquals(2, changes.size)
+        assertEquals(firstId, changes[0].participantRoomId)
+        assertEquals(2, changes[0].delta)
+        assertEquals("솔직하게 답해줘서", changes[0].reason)
+        assertEquals(-1, changes[1].delta)
+        assertEquals("끼어들어서 말을 끊었어", changes[1].reason)
+        // 화면에는 표식이 한 글자도 남으면 안 됩니다.
+        assertFalse(protocol.parseBubble(raw, MessageKind.SPEECH, null).visibleText.contains("heart:"))
+    }
+
+    /// 이유가 없는 예전 기록과 이유를 안 적은 응답이 그대로 읽혀야 합니다.
+    @Test
+    fun `이유가 없어도 변화량은 읽는다`() {
+        val changes = protocol.heartChanges("\"[[speaker:$firstId]][[heart:$firstId:+1]] 응.\"")
+
+        assertEquals(1, changes.size)
+        assertEquals(1, changes[0].delta)
+        assertEquals("", changes[0].reason)
+        assertEquals(mapOf(firstId to 1), protocol.heartDeltas("[[heart:$firstId:+1]]"))
+    }
+
+    /// 한 턴에 같은 사람이 여러 번 나오면 변화량은 더하고, 이유는 그 턴의 첫 사건을 씁니다.
+    @Test
+    fun `같은 사람이 여러 번 나오면 합치고 첫 이유를 쓴다`() {
+        val raw = "[[heart:$firstId:+2:솔직해서]] [[heart:$firstId:+3:그리고 웃겨서]]"
+        val changes = protocol.heartChanges(raw)
+
+        assertEquals(1, changes.size)
+        // 한 턴 변화는 -3부터 +3까지로 묶습니다.
+        assertEquals(3, changes[0].delta)
+        assertEquals("솔직해서", changes[0].reason)
+    }
+
     private fun room(id: UUID, name: String) = ChatRoom(
         id = id,
         profile = RoomProfile(

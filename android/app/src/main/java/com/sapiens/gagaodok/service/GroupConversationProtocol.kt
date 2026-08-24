@@ -10,6 +10,17 @@ import java.util.UUID
 
 data class PlannedReaction(val participantRoomId: UUID, val emoji: String)
 
+/// 이 턴에 한 사람의 호감도가 얼마나, 왜 변했는지입니다.
+data class HeartChange(
+    val participantRoomId: UUID,
+    val delta: Int,
+    /// 모델이 적어 준 짧은 이유입니다. 예전 기록이나 모델이 안 적은 경우 빈 문자열입니다.
+    val reason: String = ""
+)
+
+/// 화면 한 줄에 들어가야 하므로 이유를 이 길이로 자릅니다.
+private const val REASON_MAX_CHARS = 24
+
 /** Converts group-only transport metadata into display-safe bubbles. */
 class GroupConversationProtocol(participants: List<ChatRoom>) {
     private val participants = participants.distinctBy { it.id }
@@ -41,7 +52,9 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
         append("모든 대사 문단은 완전히 따옴표로 감싸고, 따옴표 안의 첫 글자부터 [[speaker:<ROOM_UUID>]]로 시작한다. ")
         append("나레이션은 빈 줄로 분리한 강조 문단이며 speaker 표식이 없다. ")
         append("말하지 않는 참여자의 반응은 대상 대사 문단 안에 [[react:<ROOM_UUID>:<EMOJI>]]로 한 번 둔다. ")
-        append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
+        append("선택적으로 [[heart:<ROOM_UUID>:+N|-N:이유]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
+        append("이유는 왜 그렇게 느꼈는지를 그 인물의 시선에서 20자 안쪽 한 구절로 적고 대괄호와 콜론은 쓰지 않는다. ")
+        append("예: [[heart:<ROOM_UUID>:+2:솔직하게 답해줘서]] ")
         append("목록에 있는 참여자 UUID만 사용한다. 표식은 설명할 텍스트가 아닌 전송 메타데이터다.")
     }
 
@@ -92,13 +105,35 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
         )
     }
 
-    fun heartDeltas(rawText: String): Map<UUID, Int> = buildMap {
+    fun heartDeltas(rawText: String): Map<UUID, Int> =
+        heartChanges(rawText).associate { it.participantRoomId to it.delta }
+
+    /// 호감도가 얼마나, **왜** 변했는지입니다.
+    ///
+    /// 예전에는 숫자만 받았습니다. 그러면 화면에서 "왜 변했는지"를 보여줄 방법이 없어,
+    /// 사용자는 게이지가 움직인 것만 보고 이유를 짐작해야 했습니다.
+    ///
+    /// 한 턴에 같은 사람이 여러 번 나오면 변화량은 더하고 이유는 처음 것을 씁니다.
+    /// 이유를 이어 붙이면 한 줄에 안 들어가고, 대개 첫 이유가 그 턴의 사건입니다.
+    fun heartChanges(rawText: String): List<HeartChange> {
+        val order = mutableListOf<UUID>()
+        val deltas = mutableMapOf<UUID, Int>()
+        val reasons = mutableMapOf<UUID, String>()
         heartRegex.findAll(rawText).forEach { match ->
             val id = match.groupValues[1].toUuidOrNull() ?: return@forEach
+            if (id !in allowedIds) return@forEach
             val delta = match.groupValues[2].toIntOrNull() ?: return@forEach
-            if (id in allowedIds) merge(id, delta, ::saturatedAdd)
+            if (id !in deltas) order += id
+            deltas[id] = saturatedAdd(deltas[id] ?: 0, delta)
+            val reason = match.groupValues.getOrNull(3)?.trim().orEmpty()
+            if (reason.isNotEmpty() && reasons[id].isNullOrEmpty()) {
+                reasons[id] = reason.take(REASON_MAX_CHARS)
+            }
         }
-    }.mapValues { (_, delta) -> delta.coerceIn(-3, 3) }
+        return order.map { id ->
+            HeartChange(id, deltas.getValue(id).coerceIn(-3, 3), reasons[id].orEmpty())
+        }
+    }
 
     private fun compositePersona(rooms: List<ChatRoom>): PersonaStyle {
         val descriptions = rooms.joinToString("\n") { room ->
@@ -138,7 +173,8 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
     companion object {
         private val markerRegex = Regex("\\[\\[(?:speaker|heart|react):[^]]+]]")
         private val speakerRegex = Regex("\\[\\[speaker:([0-9a-fA-F-]{36})]]")
-        private val heartRegex = Regex("\\[\\[heart:([0-9a-fA-F-]{36}):([+-]\\d+)]]")
+        // 이유는 없을 수도 있습니다. 예전 기록과 이유를 안 적은 응답이 그대로 읽혀야 합니다.
+        private val heartRegex = Regex("\\[\\[heart:([0-9a-fA-F-]{36}):([+-]\\d+)(?::([^\\]]{1,60}))?]]")
         private val reactionRegex = Regex("\\[\\[react:([0-9a-fA-F-]{36}):([^]]+)]]")
 
         fun personaFor(participants: List<ChatRoom>): PersonaStyle = GroupConversationProtocol(participants).persona

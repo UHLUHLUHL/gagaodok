@@ -97,10 +97,25 @@ internal suspend fun AIService.sendGeminiRequest(
     val requestStartedAt = SystemClock.elapsedRealtime()
     var firstTokenAt = 0L
     try {
-        streamGemini(outcome, requestContents, system, cache, apiKey, model, mode) {
+        val consume: suspend (String) -> Unit = {
             if (firstTokenAt == 0L) firstTokenAt = SystemClock.elapsedRealtime()
             onRawText(it)
             sink.consume(it)
+        }
+        try {
+            streamGemini(outcome, requestContents, system, cache, apiKey, model, mode, onText = consume)
+        } catch (e: AIServiceException) {
+            // 사고 끄기를 서버가 거부하면 예전 값으로 물러납니다.
+            //
+            // `thinkingLevel`이 어떤 값을 받는지는 요청을 보내 봐야 알 수 있습니다. 거부는
+            // 본문을 한 글자도 받기 전(HTTP 오류)에 나므로, 여기서 다시 보내도 말풍선이
+            // 두 번 나오지 않습니다. 한 번 물러나면 프로세스가 사는 동안 기억합니다.
+            if (!rejectsThinkingOff(e, mode)) throw e
+            geminiThinkingOffSupported = false
+            streamGemini(
+                outcome, requestContents, system, cache, apiKey, model, mode,
+                thinkingLevel = mode.fallbackThinkingLevel, onText = consume
+            )
         }
         sink.finish()
     } finally {
@@ -188,10 +203,11 @@ internal suspend fun AIService.streamGemini(
     apiKey: String,
     model: AIModel,
     mode: ChatMode,
+    thinkingLevel: String = resolvedThinkingLevel(mode),
     onText: suspend (String) -> Unit
 ) {
     val url = "$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse"
-    val body = requestBody(contents, system, cache, mode).toString()
+    val body = requestBody(contents, system, cache, mode, thinkingLevel).toString()
 
     val request = Request.Builder()
         .url(url)
@@ -239,18 +255,19 @@ internal fun AIService.requestBody(
     contents: List<JSONObject>,
     system: String,
     cache: PrefixCache?,
-    mode: ChatMode
+    mode: ChatMode,
+    thinkingLevel: String = resolvedThinkingLevel(mode)
 ): JSONObject {
     // Gemini 3.x는 temperature·topP·topK·candidateCount를 받지 않고,
-    // 사고량은 thinking_budget 숫자가 아니라 thinkingLevel 문자열(low/medium/high)로 지정합니다.
+    // 사고량은 thinking_budget 숫자가 아니라 thinkingLevel 문자열로 지정합니다.
     val body = JSONObject().put(
         "generationConfig",
         JSONObject()
             .put("maxOutputTokens", GEMINI_MAX_OUTPUT_TOKENS)
             // 사고량은 모드가 정합니다(`ChatMode.geminiThinkingLevel`).
-            // 챗봇 방에서는 낮음입니다. 안 보이는 사고 토큰이 출력 단가로
-            // 붙는데, 잡담의 말씨는 오래 생각한다고 좋아지지 않습니다.
-            .put("thinkingConfig", JSONObject().put("thinkingLevel", mode.geminiThinkingLevel))
+            // 챗봇 방에서는 끕니다. 안 보이는 사고 토큰이 출력 단가로 붙는 데다,
+            // 그 시간이 첫 글자까지의 대기에 그대로 얹힙니다.
+            .put("thinkingConfig", JSONObject().put("thinkingLevel", thinkingLevel))
     )
 
     // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.

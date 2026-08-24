@@ -14,6 +14,7 @@ import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.ConversationTurn
+import com.sapiens.gagaodok.model.MessageHeartChange
 import com.sapiens.gagaodok.model.MessageReaction
 import com.sapiens.gagaodok.model.MessageSender
 import com.sapiens.gagaodok.service.AIService
@@ -61,6 +62,15 @@ internal class GroupResponseBuffer(history: List<ChatMessage>) {
         return true
     }
 }
+
+/// 방금 끝난 턴에서 일어난 호감도 변화입니다.
+data class AffectionCue(val turnId: UUID, val changes: List<MessageHeartChange>)
+
+/// 호감도 카드가 스스로 펼쳐져 있는 시간입니다.
+///
+/// 지나면 접습니다. 사용자가 스크롤하거나 입력을 시작하면 이 시간을 기다리지 않고 바로
+/// 접습니다. 읽는 데 걸리는 시간과 대화를 가리는 시간 사이의 타협이라 **짐작입니다.**
+internal const val AFFECTION_CUE_MILLIS = 4_000L
 
 /// 단톡방에서 지금 누가 입력 중으로 보이는지입니다.
 sealed interface GroupTypingState {
@@ -134,6 +144,17 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _isResponding = MutableStateFlow(false)
     val isResponding: StateFlow<Boolean> = _isResponding
+
+    /// 방금 일어난 호감도 변화입니다. 카드가 스스로 펼쳐져 이유를 보여줄 신호입니다.
+    ///
+    /// 비어 있으면 평소 상태입니다. 화면이 다 보여준 뒤 [clearAffectionCue]로 지웁니다.
+    private val _affectionCue = MutableStateFlow<AffectionCue?>(null)
+    val affectionCue: StateFlow<AffectionCue?> = _affectionCue
+
+    /// 자동으로 접히거나, 사용자가 스크롤·입력으로 먼저 물릴 때 호출합니다.
+    fun clearAffectionCue() {
+        if (_affectionCue.value != null) _affectionCue.value = null
+    }
 
     private fun clearTyping() {
         if (_groupTyping.value != GroupTypingState.Idle) _groupTyping.value = GroupTypingState.Idle
@@ -502,8 +523,26 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     if (protocol != null && requestWorldlineId != null) {
-                        protocol.heartDeltas(rawText).forEach { (participantRoomId, delta) ->
-                            store.adjustWorldlineHeart(id, requestWorldlineId, participantRoomId, delta)
+                        val changes = protocol.heartChanges(rawText).filter { it.delta != 0 }
+                        changes.forEach { change ->
+                            store.adjustWorldlineHeart(id, requestWorldlineId, change.participantRoomId, change.delta)
+                        }
+                        if (changes.isNotEmpty() && groupBuffer != null) {
+                            // 변화를 **턴의 마지막 말풍선**에 붙여 둡니다. 나중에 대화를 거슬러
+                            // 올라가도 "이때 왜 변했는지"가 그 자리에 남습니다.
+                            val stored = changes.map {
+                                MessageHeartChange(it.participantRoomId, it.delta, it.reason)
+                            }
+                            val lastIndex = groupBuffer.messages.indexOfLast { it.turnId == responseTurnId }
+                            if (lastIndex >= 0) {
+                                groupBuffer.replace(lastIndex, groupBuffer.messages[lastIndex].copy(heartChanges = stored))
+                                publishGroupResponse(requestBinding, groupBuffer)
+                                persist(id, requestWorldlineId, groupBuffer.messages)
+                            }
+                            // 마지막 말풍선이 뜬 **뒤**에 카드를 펼칩니다. 중간에 펼치면 대화를 가립니다.
+                            if (requestBinding.matches(roomId, boundWorldlineId)) {
+                                _affectionCue.value = AffectionCue(responseTurnId, stored)
+                            }
                         }
                     } else if (personalAffectionEnabled) {
                         store.adjustBaseAffection(id, PersonalAffectionProtocol.delta(rawText))

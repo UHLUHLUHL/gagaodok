@@ -3,6 +3,7 @@ package com.sapiens.gagaodok.service
 import android.util.Base64
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatAttachment
+import com.sapiens.gagaodok.model.ChatMode
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -188,3 +189,25 @@ internal fun AIService.emptyResponseMessage(finishReason: String?): String = whe
 internal fun AIService.decodeText(attachment: ChatAttachment): String? = runCatching {
     String(Base64.decode(attachment.dataBase64, Base64.DEFAULT), Charsets.UTF_8)
 }.getOrNull()
+
+/// Gemini가 `thinkingLevel: "off"`를 받아 주는지입니다.
+///
+/// 어떤 값을 받는지는 실제 요청을 보내 봐야 알 수 있어서, 한 번 거부당하면 여기에 적어 두고
+/// 그 뒤로는 예전 값으로 보냅니다. 프로세스가 사는 동안만 기억합니다 — 모델이 바뀌어 지원이
+/// 생기면 앱을 다시 켜는 것만으로 다시 시도합니다.
+@Volatile
+internal var geminiThinkingOffSupported = true
+
+internal fun resolvedThinkingLevel(mode: ChatMode): String =
+    if (geminiThinkingOffSupported) mode.geminiThinkingLevel else mode.fallbackThinkingLevel
+
+/// 이 실패가 "사고 끄기를 못 알아들었다"인지입니다.
+///
+/// 값이 잘못됐다는 응답은 400으로 오고 본문에 그 필드 이름이 담깁니다. 네트워크 오류나
+/// 키 문제까지 여기서 삼키면 진짜 원인을 덮게 되므로, 지금 끄기를 시도한 경우로 좁힙니다.
+internal fun rejectsThinkingOff(e: AIServiceException, mode: ChatMode): Boolean {
+    if (!geminiThinkingOffSupported) return false
+    if (mode.geminiThinkingLevel == mode.fallbackThinkingLevel) return false
+    val message = e.message.orEmpty().lowercase()
+    return message.contains("thinking") || message.contains("thinking_level")
+}

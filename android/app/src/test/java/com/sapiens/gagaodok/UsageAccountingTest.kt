@@ -73,8 +73,17 @@ class ThinkingLevelTest {
         // 사고 토큰은 화면에 안 보이지만 출력 단가(입력의 5배)로 청구됩니다.
         // 챗봇에 필요한 것은 정답이 아니라 그 인물다운 말씨와 빠른 대꾸라
         // 오래 생각한다고 좋아지지 않습니다. 멘토는 계산이 틀리면 틀린 것을 가르칩니다.
-        assertEquals("low", ChatMode.COMPANION.geminiThinkingLevel)
+        //
+        // 챗봇은 아예 끕니다. 낮음으로도 사고 토큰은 계속 나갔고, 그 시간이 첫 글자까지의
+        // 대기에 그대로 얹혔습니다. 서버가 끄기를 거부하면 예전 값으로 물러납니다.
+        assertEquals("off", ChatMode.COMPANION.geminiThinkingLevel)
+        assertEquals("low", ChatMode.COMPANION.fallbackThinkingLevel)
         assertEquals("medium", ChatMode.MATH_MENTOR.geminiThinkingLevel)
+        // 멘토는 물러날 곳이 없어야 합니다. 값이 같으면 되물러나기가 아예 켜지지 않습니다.
+        assertEquals(
+            ChatMode.MATH_MENTOR.geminiThinkingLevel,
+            ChatMode.MATH_MENTOR.fallbackThinkingLevel
+        )
     }
 }
 

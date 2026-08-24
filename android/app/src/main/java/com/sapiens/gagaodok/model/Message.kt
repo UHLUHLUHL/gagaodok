@@ -55,6 +55,18 @@ data class MessageReaction(
     val emoji: String
 )
 
+/// 이 턴에 호감도가 얼마나, 왜 변했는지입니다.
+///
+/// 턴의 **마지막** 말풍선에 붙입니다. 그래야 나중에 대화를 거슬러 올라가도 "이때 왜
+/// 변했는지"가 그 자리에 남아 있습니다. 최종 값만 저장하면 언제 왜 변했는지가 사라집니다.
+@Serializable
+data class MessageHeartChange(
+    @Serializable(with = UuidSerializer::class)
+    val participantRoomId: UUID,
+    val delta: Int,
+    val reason: String = ""
+)
+
 @Serializable
 data class ChatMessage(
     @Serializable(with = UuidSerializer::class)
@@ -78,7 +90,9 @@ data class ChatMessage(
     @Serializable(with = UuidSerializer::class)
     val speakerRoomId: UUID? = null,
     /// 단톡방 참여자가 이 말풍선에 남긴 반응입니다. 예전 기록은 빈 목록으로 읽습니다.
-    val reactions: List<MessageReaction> = emptyList()
+    val reactions: List<MessageReaction> = emptyList(),
+    /// 이 턴에 일어난 호감도 변화입니다. 턴의 마지막 말풍선에만 담깁니다.
+    val heartChanges: List<MessageHeartChange> = emptyList()
 ) {
     val formattedTime: String
         get() = SimpleDateFormat("a h:mm", Locale.KOREA).format(Date(timestamp))

@@ -85,6 +85,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -124,6 +125,7 @@ fun ChatRoomScreen(
     val messages by vm.messages.collectAsState()
     val isTyping by vm.isTyping.collectAsState()
     val groupTyping by vm.groupTyping.collectAsState()
+    val affectionCue by vm.affectionCue.collectAsState()
     val isResponding by vm.isResponding.collectAsState()
     val loadedBinding by vm.loadedBinding.collectAsState()
     val error by vm.errorMessage.collectAsState()
@@ -212,6 +214,18 @@ fun ChatRoomScreen(
     // 키보드가 올라오면 화면이 그만큼 줄어듭니다. 그때 맨 아래로 따라가지 않으면
     // 방금 쓰던 대화가 키보드 뒤로 밀려 올라가 버립니다.
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
+    // 변화 표시는 스스로 접힙니다.
+    LaunchedEffect(affectionCue) {
+        if (affectionCue == null) return@LaunchedEffect
+        delay(AFFECTION_CUE_MILLIS)
+        vm.clearAffectionCue()
+    }
+    // 사용자가 읽기를 시작했으면 기다리지 않고 물러납니다. 카드는 대화를 가리고 있습니다.
+    LaunchedEffect(affectionCue, inputText, imeVisible) {
+        if (affectionCue == null) return@LaunchedEffect
+        if (inputText.isNotEmpty() || imeVisible) vm.clearAffectionCue()
+    }
 
     // 검색 중이면 뒤로가기가 먼저 검색을 닫습니다.
     BackHandler(enabled = searchVisible) {
@@ -523,9 +537,14 @@ fun ChatRoomScreen(
                 if (relationshipParticipants.isNotEmpty()) {
                     HeartGaugePanel(
                         participants = relationshipParticipants,
-                        expanded = groupUiState.heartExpanded,
-                        onToggle = { groupUiState = groupUiState.toggleHeart() },
-                        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
+                        // 변화가 오면 사용자가 접어 뒀더라도 잠깐 펼쳐 보여줍니다.
+                        expanded = groupUiState.heartExpanded || affectionCue != null,
+                        onToggle = {
+                            vm.clearAffectionCue()
+                            groupUiState = groupUiState.toggleHeart()
+                        },
+                        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
+                        changes = affectionCue?.changes.orEmpty()
                     )
                 }
             }

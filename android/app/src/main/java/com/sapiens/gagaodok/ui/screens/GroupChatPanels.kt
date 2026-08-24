@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
@@ -61,7 +62,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.unit.Dp
 import com.sapiens.gagaodok.model.ChatRoom
+import com.sapiens.gagaodok.model.MessageHeartChange
 import com.sapiens.gagaodok.model.WorldlineState
 import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.components.RoomAvatar
@@ -77,6 +80,17 @@ internal object WorldlineTokens {
 private object HeartGaugeTokens {
     val heart = Color(0xFFFF5C7A)
     val soft = Color(0xFF3B2028)
+
+    /// 호감도가 **떨어졌을 때** 쓰는 색입니다.
+    ///
+    /// 빨강을 쓰지 않습니다. 카카오톡에서 빨강은 삭제·경고라, 호감도 하락에 쓰면
+    /// "잘못됐다"로 읽힙니다. 하락은 잘못이 아니라 사건이므로 차가운 쪽으로 갑니다.
+    /// 이 색은 **변화를 알리는 동안에만** 씁니다. 정착하면 평소 하트색으로 돌아옵니다.
+    /// 안 그러면 마지막에 한 번 떨어진 사람의 줄이 영영 다른 색으로 남습니다.
+    val down = Color(0xFF7E8AA0)
+    val downSoft = Color(0xFF232833)
+    val risePill = Color(0xFF4A2732)
+    val downPill = Color(0xFF26303D)
 }
 
 private val RelationshipMotionEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
@@ -100,6 +114,9 @@ private object HeartGaugeMetrics {
     /// 참여자 한 줄의 높이. 위 여백 6dp를 포함한 값입니다.
     val participantRow = 38.dp
 
+    /// 이유 한 줄이 붙은 줄의 높이입니다. **변화한 줄만** 이만큼 커집니다.
+    val changedRow = 48.dp
+
     /// 참여자 줄을 뺀 나머지(제목·구분선·안내문·상하 여백)의 합입니다.
     /// 실측 154dp에서 2줄(76dp)을 뺀 값이라 짐작이 아닙니다.
     val expandedChrome = 78.dp
@@ -108,6 +125,10 @@ private object HeartGaugeMetrics {
     const val maxRows = 4
 
     fun expandedHeight(rowCount: Int) = expandedChrome + participantRow * rowCount
+
+    /// 변화를 보여주는 동안의 높이입니다. 상속 안내문을 감추고 그 자리를 이유 줄이 씁니다.
+    fun changeHeight(rowCount: Int, changedCount: Int): Dp =
+        expandedChrome - 16.dp + participantRow * (rowCount - changedCount) + changedRow * changedCount
 }
 
 internal data class GroupParticipantUi(
@@ -195,7 +216,9 @@ internal fun HeartGaugePanel(
     participants: List<GroupParticipantUi>,
     expanded: Boolean,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /// 방금 일어난 변화입니다. 비어 있으면 평소 카드입니다.
+    changes: List<MessageHeartChange> = emptyList()
 ) {
     val colors = KakaoTheme.colors
     val average = if (participants.isEmpty()) 0 else participants.sumOf { it.heart } / participants.size
@@ -203,6 +226,9 @@ internal fun HeartGaugePanel(
     // 4명째부터는 카드에 흔적도 남지 않았습니다.
     val visibleParticipants = participants.take(HeartGaugeMetrics.maxRows)
     val hiddenCount = participants.size - visibleParticipants.size
+    val changeByRoom = remember(changes) { changes.associateBy { it.participantRoomId } }
+    val changedCount = visibleParticipants.count { changeByRoom.containsKey(it.room.id) }
+    val showingChange = changedCount > 0
     val transition = updateTransition(expanded, label = "호감도 카드")
     val width by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "너비"
@@ -210,8 +236,9 @@ internal fun HeartGaugePanel(
     val height by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "높이"
     ) {
-        if (it) HeartGaugeMetrics.expandedHeight(visibleParticipants.size)
-        else HeartGaugeMetrics.collapsedHeight
+        if (!it) HeartGaugeMetrics.collapsedHeight
+        else if (showingChange) HeartGaugeMetrics.changeHeight(visibleParticipants.size, changedCount)
+        else HeartGaugeMetrics.expandedHeight(visibleParticipants.size)
     }
     val radius by transition.animateDp(
         transitionSpec = { tween(380, easing = RelationshipMotionEasing) }, label = "모서리"
@@ -279,32 +306,60 @@ internal fun HeartGaugePanel(
                 }
                 Box(Modifier.fillMaxWidth().padding(top = 8.dp).height(1.dp).background(colors.border))
                 visibleParticipants.forEach { participant ->
+                    val change = changeByRoom[participant.room.id]
+                    val up = (change?.delta ?: 0) >= 0
+                    // 변화를 알리는 동안에만 색을 바꿉니다. 정착하면 평소 하트색으로 돌아옵니다.
+                    val tone = if (change == null || up) HeartGaugeTokens.heart else HeartGaugeTokens.down
+                    val trackTone = if (change == null || up) HeartGaugeTokens.soft else HeartGaugeTokens.downSoft
+                    // 게이지는 새 값까지 흘러갑니다. 툭 튀면 변화가 아니라 다시 그린 것으로 보입니다.
+                    val filled by animateFloatAsState(
+                        targetValue = participant.heart.coerceIn(0, 100) / 100f,
+                        animationSpec = tween(380, easing = RelationshipMotionEasing),
+                        label = "게이지"
+                    )
                     Row(
-                        Modifier.fillMaxWidth().height(HeartGaugeMetrics.participantRow).padding(top = 6.dp),
+                        Modifier.fillMaxWidth()
+                            .height(if (change != null) HeartGaugeMetrics.changedRow else HeartGaugeMetrics.participantRow)
+                            .padding(top = 6.dp),
                         verticalAlignment = Alignment.Top
                     ) {
                         RoomAvatar(participant.avatar, 28.dp)
                         Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                            Row(Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text(participant.room.profile.name, style = KakaoText.senderName, color = colors.textPrimary)
                                 Spacer(Modifier.weight(1f))
-                                Text("${participant.heart}", style = KakaoText.senderName, color = HeartGaugeTokens.heart)
+                                if (change != null) {
+                                    DeltaBadge(change.delta, up)
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text("${participant.heart}", style = KakaoText.senderName, color = tone)
                             }
-                            Box(Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp).clip(CircleShape).background(HeartGaugeTokens.soft)) {
+                            Box(Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp).clip(CircleShape).background(trackTone)) {
                                 // 0은 0으로 보여야 합니다. 예전에는 최소 1%를 채워 두어서
                                 // 호감도가 바닥난 순간을 화면에서 알아볼 수 없었습니다.
-                                val filled = participant.heart.coerceIn(0, 100) / 100f
                                 if (filled > 0f) {
                                     Box(
                                         Modifier.fillMaxWidth(filled)
-                                            .height(4.dp).background(HeartGaugeTokens.heart, CircleShape)
+                                            .height(4.dp).background(tone, CircleShape)
                                     )
                                 }
+                            }
+                            // 왜 변했는지. 모델이 안 적어 줬으면 줄을 만들지 않습니다.
+                            if (change != null && change.reason.isNotBlank()) {
+                                Text(
+                                    change.reason,
+                                    style = KakaoText.timestamp,
+                                    color = colors.textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
                             }
                         }
                     }
                 }
-                Text(
+                // 변화를 보여주는 동안에는 안내문을 감춥니다. 이유 줄이 그 자리를 대신합니다.
+                if (!showingChange) Text(
                     when {
                         hiddenCount > 0 -> "외 ${hiddenCount}명은 이 카드에 표시하지 않았습니다."
                         participants.size == 1 -> "앞으로의 대화에 따라 변화합니다."
@@ -323,6 +378,27 @@ internal fun HeartGaugePanel(
                 Modifier.align(Alignment.TopEnd).padding(top = 11.dp, end = 8.dp).size(14.dp)
             )
         }
+    }
+}
+
+/// 이번 턴에 얼마나 변했는지를 값 옆에 잠깐 붙입니다.
+///
+/// 값 자체는 바뀐 뒤의 숫자라 "얼마나" 움직였는지를 못 보여줍니다. 뱃지는 그 차이를
+/// 맡고, 잠시 뒤 사라집니다. 오래 남으면 그게 지금 상태인지 방금 변화인지 흐려집니다.
+@Composable
+private fun DeltaBadge(delta: Int, up: Boolean) {
+    // 하이픈이 아니라 진짜 빼기 기호를 씁니다. 하이픈은 숫자 옆에서 이음표로 읽힙니다.
+    val label = if (delta >= 0) "+$delta" else "−${-delta}"
+    Box(
+        Modifier.clip(CircleShape)
+            .background(if (up) HeartGaugeTokens.risePill else HeartGaugeTokens.downPill)
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+    ) {
+        Text(
+            label,
+            style = KakaoText.timestamp,
+            color = if (up) HeartGaugeTokens.heart else HeartGaugeTokens.down
+        )
     }
 }
 
