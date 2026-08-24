@@ -102,21 +102,17 @@ internal suspend fun AIService.sendGeminiRequest(
             onRawText(it)
             sink.consume(it)
         }
-        try {
-            streamGemini(outcome, requestContents, system, cache, apiKey, model, mode, onText = consume)
-        } catch (e: AIServiceException) {
-            // 사고 끄기를 서버가 거부하면 예전 값으로 물러납니다.
-            //
-            // `thinkingLevel`이 어떤 값을 받는지는 요청을 보내 봐야 알 수 있습니다. 거부는
-            // 본문을 한 글자도 받기 전(HTTP 오류)에 나므로, 여기서 다시 보내도 말풍선이
-            // 두 번 나오지 않습니다. 한 번 물러나면 프로세스가 사는 동안 기억합니다.
-            if (!rejectsThinkingOff(e, mode)) throw e
-            geminiThinkingOffSupported = false
-            streamGemini(
-                outcome, requestContents, system, cache, apiKey, model, mode,
-                thinkingLevel = mode.fallbackThinkingLevel, onText = consume
-            )
-        }
+        // 첫 글자가 늦으면 끊고 다시 거는 장치를 넣었다가 **뺐습니다.**
+        //
+        // 전제는 "오래 걸리는 연결을 버리고 새로 걸면 빠른 쪽에 붙는다"였습니다. 실기기에서
+        // 세 번 발동했는데 다시 건 요청도 똑같이 느렸습니다. 첫 글자만 늦은 것이 아니라
+        // 그 뒤 토큰까지 20 tok/s로 왔습니다(빠른 턴은 200 tok/s). 요금만 두 배 냈습니다.
+        //
+        // 실험 자체에도 결함이 있었습니다. [AIService.client]는 하나를 공유하고 연결 풀을
+        // 쓰므로, 다시 건 요청은 십중팔구 **이미 느려진 그 연결을 그대로 다시 탔습니다.**
+        // 그래서 이 결과는 "새 연결이 소용없다"의 증거가 아니라 "새 연결을 아예 못 얻었다"에
+        // 가깝습니다. 다시 시도한다면 연결을 먼저 버리게 만들어야 합니다.
+        streamGemini(outcome, requestContents, system, cache, apiKey, model, mode, onText = consume)
         sink.finish()
     } finally {
         val finishedAt = SystemClock.elapsedRealtime()
@@ -126,11 +122,21 @@ internal suspend fun AIService.sendGeminiRequest(
         val shouldMeasure = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
         if (reported != null) {
             // 사고 토큰은 요금에서는 출력에 합산되지만, 느린 이유를 가릴 때는 따로 봐야 합니다.
-            val thoughts = reported.optInt("thoughtsTokenCount")
+            //
+            // **"0"과 "안 알려줬다"를 구분합니다.** `optInt`는 키가 없어도 0을 돌려주므로,
+            // 사고를 정말 안 한 것인지 서버가 값을 안 준 것인지 구분할 수 없습니다.
+            // 그 둘을 섞으면 "사고를 껐다"는 결론이 근거 없이 서 버립니다.
+            val reportedThoughts = if (reported.has("thoughtsTokenCount")) reported.optInt("thoughtsTokenCount") else null
+            val thoughts = reportedThoughts ?: 0
             val output = reported.optInt("candidatesTokenCount") + thoughts
             val input = reported.optInt("promptTokenCount") + reported.optInt("toolUsePromptTokenCount")
             val cached = reported.optInt("cachedContentTokenCount")
-            logRequestTiming(mode, ttftMillis, totalMillis, input, cached, thoughts, output - thoughts)
+            logRequestTiming(
+                mode, ttftMillis, totalMillis, input, cached, reportedThoughts, output - thoughts,
+                thinkingLevel = mode.geminiThinkingLevel,
+                turns = conversation.size,
+                digestTurns = plan.digestText?.let { plan.verbatimTurns.size } ?: -1
+            )
             usage.recordUsage(
                 roomId, model,
                 // 검색 그라운딩을 쓰면 도구가 쓴 입력이 따로 옵니다. 이것도 청구됩니다.
@@ -148,7 +154,12 @@ internal suspend fun AIService.sendGeminiRequest(
             ))
         } else {
             // 한 조각도 못 받고 끊겼습니다. 숫자를 지어내지 않고 건수만 남깁니다.
-            logRequestTiming(mode, ttftMillis, totalMillis, 0, 0, 0, 0)
+            logRequestTiming(
+                mode, ttftMillis, totalMillis, 0, 0, null, 0,
+                thinkingLevel = mode.geminiThinkingLevel,
+                turns = conversation.size,
+                digestTurns = plan.digestText?.let { plan.verbatimTurns.size } ?: -1
+            )
             usage.recordUnreportedRequest(roomId, model)
             if (shouldMeasure) measurement.observeRequest(RequestObservation(
                 roomId.toString(), 0, 0, 0,
@@ -203,11 +214,10 @@ internal suspend fun AIService.streamGemini(
     apiKey: String,
     model: AIModel,
     mode: ChatMode,
-    thinkingLevel: String = resolvedThinkingLevel(mode),
     onText: suspend (String) -> Unit
 ) {
     val url = "$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse"
-    val body = requestBody(contents, system, cache, mode, thinkingLevel).toString()
+    val body = requestBody(contents, system, cache, mode).toString()
 
     val request = Request.Builder()
         .url(url)
@@ -255,8 +265,7 @@ internal fun AIService.requestBody(
     contents: List<JSONObject>,
     system: String,
     cache: PrefixCache?,
-    mode: ChatMode,
-    thinkingLevel: String = resolvedThinkingLevel(mode)
+    mode: ChatMode
 ): JSONObject {
     // Gemini 3.x는 temperature·topP·topK·candidateCount를 받지 않고,
     // 사고량은 thinking_budget 숫자가 아니라 thinkingLevel 문자열로 지정합니다.
@@ -267,7 +276,7 @@ internal fun AIService.requestBody(
             // 사고량은 모드가 정합니다(`ChatMode.geminiThinkingLevel`).
             // 챗봇 방에서는 끕니다. 안 보이는 사고 토큰이 출력 단가로 붙는 데다,
             // 그 시간이 첫 글자까지의 대기에 그대로 얹힙니다.
-            .put("thinkingConfig", JSONObject().put("thinkingLevel", thinkingLevel))
+            .put("thinkingConfig", JSONObject().put("thinkingLevel", mode.geminiThinkingLevel))
     )
 
     // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
@@ -351,12 +360,20 @@ private fun logRequestTiming(
     totalMillis: Long,
     inputTokens: Int,
     cachedTokens: Int,
-    thoughtsTokens: Int,
-    answerTokens: Int
+    /// 서버가 알려주지 않았으면 `null`입니다. 0과 구분해야 "사고를 껐다"를 말할 수 있습니다.
+    thoughtsTokens: Int?,
+    answerTokens: Int,
+    thinkingLevel: String,
+    turns: Int,
+    /// 압축이 걸렸으면 원문으로 나간 턴 수, 안 걸렸으면 -1입니다.
+    digestTurns: Int
 ) {
+    val thoughts = thoughtsTokens?.toString() ?: "n/a"
+    val compaction = if (digestTurns < 0) "none" else "verbatim=$digestTurns"
     Log.i(
         "GagaodokTiming",
         "$mode ttft=${ttftMillis}ms total=${totalMillis}ms " +
-            "input=$inputTokens(cached=$cachedTokens) thoughts=$thoughtsTokens answer=$answerTokens"
+            "input=$inputTokens(cached=$cachedTokens) thoughts=$thoughts answer=$answerTokens " +
+            "thinking=$thinkingLevel turns=$turns compaction=$compaction"
     )
 }

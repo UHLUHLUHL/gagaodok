@@ -83,6 +83,34 @@ object RoleplayParser {
         )
     }
 
+    /// 대사 덩어리가 빈 줄 없이 붙어 온 문단을 갈라 줍니다.
+    ///
+    /// 모델이 두 사람의 대사를 `"앞사람 말""뒷사람 말"`처럼 이어 붙여 보낼 때가 있습니다.
+    /// 그러면 [unwrappedDialogue]가 "안쪽에 따옴표가 또 있으니 한 덩어리 대사가 아니다"로
+    /// 판단해 문단 전체가 **나레이션**이 됩니다. 실기기에서 한 인물의 대사가 통째로 상황
+    /// 묘사 자리에 앉은 적이 있습니다.
+    ///
+    /// **문단이 처음부터 끝까지 따옴표 덩어리로만 이어져 있을 때만** 가릅니다.
+    /// `그는 "안녕" 하고 웃었다` 처럼 따옴표 밖에 글이 있으면 진짜 묘사이므로 건드리지
+    /// 않습니다. 그걸 갈랐다가는 묘사가 대사로 둔갑합니다.
+    fun splitAdjacentDialogue(paragraph: String): List<String> {
+        val text = paragraph.trim()
+        if (text.length < 4) return listOf(paragraph)
+        val pair = quotePairs.firstOrNull { it.first == text.first() } ?: return listOf(paragraph)
+
+        val parts = mutableListOf<String>()
+        var index = 0
+        while (index < text.length) {
+            if (text[index] != pair.first) return listOf(paragraph)
+            val close = text.indexOf(pair.second, index + 1)
+            if (close < 0) return listOf(paragraph)
+            parts += text.substring(index, close + 1)
+            index = close + 1
+            while (index < text.length && text[index].isWhitespace()) index++
+        }
+        return if (parts.size > 1) parts else listOf(paragraph)
+    }
+
     /// 이 문단을 보고 나서 "이 턴은 상황극이다"라고 말할 수 있는지 봅니다.
     fun establishesRoleplay(paragraph: String): Boolean =
         unwrappedDialogue(paragraph) != null || unwrappedEmphasis(paragraph) != null

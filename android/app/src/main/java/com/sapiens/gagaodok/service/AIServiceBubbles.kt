@@ -93,6 +93,9 @@ fun AIService.parseResponseIntoBubbles(
         val lines = clean.split("\n")
         if (lines.any { it.startsWith("$botName:") || it.startsWith("사피엔스:") }) paragraphs = lines
     }
+    // 모델이 두 사람의 대사를 빈 줄 없이 붙여 보내면 문단 하나에 대사가 둘 들어옵니다.
+    // 그대로 두면 나레이션으로 분류돼, 인물의 대사가 상황 묘사 자리에 앉습니다.
+    paragraphs = paragraphs.flatMap { RoleplayParser.splitAdjacentDialogue(it) }
 
     // 한 번에 받는 경로에서는 답변 전체가 여기 들어오므로, 뒤쪽 문단의 따옴표를
     // 보고 앞쪽 문단까지 제대로 가를 수 있습니다. 스트리밍 경로는 문단이 하나씩

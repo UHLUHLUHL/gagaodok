@@ -245,3 +245,37 @@ class GroupConversationProtocolTest {
         )
     )
 }
+
+/// 모델이 두 사람의 대사를 빈 줄 없이 붙여 보낼 때가 있습니다.
+///
+/// 실기기에서 한 인물의 대사가 통째로 나레이션(상황 묘사) 자리에 앉은 적이 있습니다.
+/// 원인은 `"앞사람 말""뒷사람 말"`처럼 붙어 온 문단이 "안쪽에 따옴표가 또 있으니 한 덩어리
+/// 대사가 아니다"로 걸러진 것이었습니다.
+class AdjacentDialogueTest {
+
+    @Test
+    fun `빈 줄 없이 붙은 두 대사를 갈라 각각 대사로 읽는다`() {
+        val glued = "\"둘이 그러고 있으니 못 봐주겠네.\"\"응? 나도 끼워줘!\""
+        val parts = RoleplayParser.splitAdjacentDialogue(glued)
+
+        assertEquals(2, parts.size)
+        parts.forEach {
+            assertEquals(MessageKind.SPEECH, RoleplayParser.classify(it, roleplayEstablished = true).kind)
+        }
+        assertEquals("둘이 그러고 있으니 못 봐주겠네.", RoleplayParser.classify(parts[0], true).text)
+        assertEquals("응? 나도 끼워줘!", RoleplayParser.classify(parts[1], true).text)
+    }
+
+    /// 따옴표 밖에 글이 있으면 진짜 묘사입니다. 여기까지 가르면 묘사가 대사로 둔갑합니다.
+    @Test
+    fun `따옴표 밖에 글이 있는 묘사는 가르지 않는다`() {
+        val narration = "\"안녕\" 하고 웃더니 \"잘 가\"라고 덧붙였다."
+        assertEquals(listOf(narration), RoleplayParser.splitAdjacentDialogue(narration))
+    }
+
+    @Test
+    fun `평범한 대사 한 덩어리는 그대로 둔다`() {
+        val single = "\"오늘은 좀 늦을 것 같아.\""
+        assertEquals(listOf(single), RoleplayParser.splitAdjacentDialogue(single))
+    }
+}
