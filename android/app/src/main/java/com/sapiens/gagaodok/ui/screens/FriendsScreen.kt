@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.ui.Metrics
@@ -239,7 +240,7 @@ private fun SectionHeader(title: String, count: Int, collapsed: Boolean, onToggl
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
+            .clickableNoRipple(onClick = onToggle)
             .padding(horizontal = Metrics.screenPadding)
             .padding(top = 16.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically

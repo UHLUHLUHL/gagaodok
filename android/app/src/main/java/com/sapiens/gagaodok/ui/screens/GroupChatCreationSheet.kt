@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -128,7 +129,7 @@ internal fun GroupChatCreationSheet(
                 Box(
                     Modifier.fillMaxWidth().padding(top = 16.dp).height(52.dp)
                         .clip(RoundedCornerShape(16.dp)).background(buttonColor)
-                        .clickable(enabled = state.canCreate) {
+                        .clickableNoRipple(enabled = state.canCreate) {
                             onCreate(defaultGroupTitle(state.selectedParticipantIds, personalRooms), selectedRooms)
                         },
                     contentAlignment = Alignment.Center
@@ -158,7 +159,7 @@ private fun CharacterSelectionRow(
     Row(
         Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(16.dp))
             .background(background).border(1.dp, border, RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
+            .clickableNoRipple(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RoomAvatar(avatar, 44.dp)

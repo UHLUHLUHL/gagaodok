@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.theme.KakaoText
@@ -133,7 +134,7 @@ fun ProfileEditSheet(
                     Modifier
                         .fillMaxWidth()
                         .background(colors.sunken, RoundedCornerShape(10.dp))
-                        .clickable(onClick = go)
+                        .clickableNoRipple(onClick = go)
                         .padding(horizontal = 14.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -227,7 +228,7 @@ internal fun SheetButton(
                 if (filled) colors.bubbleMine.copy(alpha = if (enabled) 1f else 0.4f) else colors.sunken,
                 RoundedCornerShape(10.dp)
             )
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickableNoRipple(enabled = enabled, onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {

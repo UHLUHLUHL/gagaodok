@@ -44,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.MeasurementPolicy
@@ -223,7 +224,7 @@ fun SettingsScreen() {
                 Column(
                 Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !isExporting) {
+                    .clickableNoRipple(enabled = !isExporting) {
                         isExporting = true
                         exportState = "통계를 만드는 중…"
                         scope.launch {
@@ -441,7 +442,7 @@ private fun ChoiceRow(title: String, subtitle: String?, selected: Boolean, onCli
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickableNoRipple(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

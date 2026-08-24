@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.GagaodokApp
 import com.sapiens.gagaodok.model.ChatMode
@@ -494,7 +495,7 @@ private fun PreviewExchange(
             Box(
                 Modifier
                     .background(colors.bubbleMine, RoundedCornerShape(12.dp))
-                    .clickable(enabled = enabled, onClick = onAsk)
+                    .clickableNoRipple(enabled = enabled, onClick = onAsk)
                     .padding(horizontal = 12.dp, vertical = 9.dp)
             ) {
                 Text(message, style = KakaoText.bubble, color = colors.bubbleMineText)

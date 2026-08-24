@@ -14,9 +14,12 @@ import androidx.compose.ui.Modifier
 ///
 /// 특히 누르는 대상이 카드처럼 크면 물결 원이 카드를 통째로 덮어 반투명한 회색 원이
 /// 퍼지는 것처럼 보입니다. 작은 아이콘에서는 반대로 물결이 아이콘보다 커서 어색합니다.
+/// [onClickLabel]은 화면 낭독기가 "무엇을 하는 단추인지" 읽어 주는 말입니다.
+/// 물결을 끄면서 이것까지 같이 떨어뜨리면 눈으로 못 보는 사용자에게는 이름 없는 단추가 됩니다.
 @Composable
 internal fun Modifier.clickableNoRipple(
     enabled: Boolean = true,
+    onClickLabel: String? = null,
     onClick: () -> Unit
 ): Modifier {
     val interaction = remember { MutableInteractionSource() }
@@ -24,6 +27,7 @@ internal fun Modifier.clickableNoRipple(
         interactionSource = interaction,
         indication = null,
         enabled = enabled,
+        onClickLabel = onClickLabel,
         onClick = onClick
     )
 }

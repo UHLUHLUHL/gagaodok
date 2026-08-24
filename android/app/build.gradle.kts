@@ -14,8 +14,8 @@ android {
         create("phone") {
             dimension = "device"
             applicationId = "com.sapiens.gagaodok"
-            versionCode = 12
-            versionName = "1.8-phone"
+            versionCode = 13
+            versionName = "1.9-phone"
             buildConfigField("boolean", "TABLET_MENTOR", "false")
         }
         create("tabletMentor") {
@@ -46,7 +46,9 @@ android {
         // 1.7.3: 대화방에 들어갈 때 화면이 멈추던 것을 고쳤습니다. 목록 상태 하나를 전환
         //        중인 두 화면이 나눠 쓰면서 측정이 끝나지 않던 문제입니다.
         // 1.8: 호감도가 왜 변했는지를 카드에 보여줍니다. 변화가 있는 턴에만 카드가 스스로
-        //      펼쳐지고 4초 뒤 접힙니다. 챗봇 사고를 끄고 압축 임계값을 80턴으로 내렸습니다.
+        //      펼쳐지고 4초 뒤 접힙니다. 사고량과 압축 임계값도 함께 손댔다가, 응답이
+        //      느린 원인이 아님을 측정으로 확인하고 둘 다 되돌렸습니다(사고 low, 150턴).
+        // 1.9: 머티리얼 물결을 앱 전체에서 걷어내고, 호감도 카드를 유리 재질로 바꿨습니다.
     }
 
     buildTypes {

@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.model.AttachmentType
 import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.service.ImageBudget
@@ -145,7 +146,7 @@ internal fun ChatInputBar(
                 Icon(
                     Icons.Filled.Close, "첨부 취소",
                     tint = colors.textSecondary,
-                    modifier = Modifier.size(16.dp).clickable(onClick = onClearAttachment)
+                    modifier = Modifier.size(16.dp).clickableNoRipple(onClick = onClearAttachment)
                 )
             }
         }
@@ -550,7 +551,7 @@ internal fun EditBar(
                         if (canConfirm) colors.editConfirm else colors.sunken,
                         CircleShape
                     )
-                    .clickable(
+                    .clickableNoRipple(
                         enabled = canConfirm,
                         onClickLabel = "수정 완료",
                         onClick = onConfirm

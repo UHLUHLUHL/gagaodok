@@ -90,6 +90,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.model.InkDocument
 import com.sapiens.gagaodok.model.InkPoint
 import com.sapiens.gagaodok.service.InkDefaults
@@ -223,7 +224,7 @@ internal fun InkFloatingPanel(
                             modifier = Modifier.size(20.dp)
                         )
                     }
-                    Box(Modifier.size(42.dp).clickable(onClick = onClose), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(42.dp).clickableNoRipple(onClick = onClose), contentAlignment = Alignment.Center) {
                         Icon(Icons.Filled.Close, "필기 닫기", tint = InkText, modifier = Modifier.size(20.dp))
                     }
                     // 오른쪽 위 모서리의 넓은 리사이즈 영역과 닫기 버튼이 겹치지 않게 둡니다.
@@ -472,7 +473,7 @@ private fun InkThicknessControl(
         Crossfade(targetState = expanded, animationSpec = tween(120), label = "필기 굵기 조절 내용") { isExpanded ->
             if (!isExpanded) {
                 Box(
-                    Modifier.fillMaxSize().clickable(onClick = onExpand),
+                    Modifier.fillMaxSize().clickableNoRipple(onClick = onExpand),
                     contentAlignment = Alignment.Center
                 ) {
                     ThicknessGlyph(penWidth, if (eraser) InkSecondary else penColor)
@@ -483,7 +484,7 @@ private fun InkThicknessControl(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
-                        Modifier.size(30.dp).clip(CircleShape).clickable(onClick = onCollapse),
+                        Modifier.size(30.dp).clip(CircleShape).clickableNoRipple(onClick = onCollapse),
                         contentAlignment = Alignment.Center
                     ) {
                         ThicknessGlyph(penWidth, if (eraser) InkSecondary else penColor)
@@ -536,7 +537,7 @@ private fun EraserMorphControl(
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .clickable(onClickLabel = "지우개 및 굵기 설정", onClick = onClick),
+                        .clickableNoRipple(onClickLabel = "지우개 및 굵기 설정", onClick = onClick),
                     contentAlignment = Alignment.Center
                 ) {
                     EraserGlyph(if (selected) InkText else InkSecondary)
@@ -547,7 +548,7 @@ private fun EraserMorphControl(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
-                        Modifier.size(30.dp).clip(CircleShape).clickable(onClick = onAdjustmentFinished),
+                        Modifier.size(30.dp).clip(CircleShape).clickableNoRipple(onClick = onAdjustmentFinished),
                         contentAlignment = Alignment.Center
                     ) {
                         EraserGlyph(InkText)
@@ -560,7 +561,7 @@ private fun EraserMorphControl(
                         modifier = Modifier.weight(1f)
                     )
                     Box(
-                        Modifier.size(34.dp).clip(CircleShape).clickable(onClick = onClear),
+                        Modifier.size(34.dp).clip(CircleShape).clickableNoRipple(onClick = onClear),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -678,7 +679,7 @@ private fun ThicknessGlyph(width: Float, color: Color) {
 @Composable
 private fun InkColorSwatch(color: Color, selected: Boolean, onClick: () -> Unit) {
     Box(
-        Modifier.size(34.dp).clip(CircleShape).clickable(onClick = onClick),
+        Modifier.size(34.dp).clip(CircleShape).clickableNoRipple(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -774,7 +775,7 @@ private fun InkColorPicker(initial: Color, onDismiss: () -> Unit, onRegister: (C
                     "취소",
                     style = KakaoText.body,
                     color = InkSecondary,
-                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onDismiss).padding(horizontal = 18.dp, vertical = 10.dp)
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickableNoRipple(onClick = onDismiss).padding(horizontal = 18.dp, vertical = 10.dp)
                 )
                 Text(
                     "등록",
@@ -1127,7 +1128,7 @@ internal fun InkHistoryDialog(
         ) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("필기 기록", style = KakaoText.roomTitle, color = colors.textPrimary, modifier = Modifier.weight(1f))
-                Icon(Icons.Filled.Close, "닫기", tint = colors.textPrimary, modifier = Modifier.size(20.dp).clickable(onClick = onDismiss))
+                Icon(Icons.Filled.Close, "닫기", tint = colors.textPrimary, modifier = Modifier.size(20.dp).clickableNoRipple(onClick = onDismiss))
             }
             Hairline()
             if (documents.isEmpty()) {

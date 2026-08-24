@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -193,7 +194,7 @@ private fun MenuRow(item: KakaoMenuItem) {
         Modifier
             .fillMaxWidth()
             .height(Metrics.sheetRowHeight)
-            .clickable(onClick = item.onClick)
+            .clickableNoRipple(onClick = item.onClick)
             .padding(horizontal = Metrics.sheetRowInset),
         verticalAlignment = Alignment.CenterVertically
     ) {

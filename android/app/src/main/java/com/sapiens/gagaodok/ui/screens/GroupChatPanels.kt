@@ -52,6 +52,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -62,12 +64,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import com.sapiens.gagaodok.model.ChatRoom
 import com.sapiens.gagaodok.model.MessageHeartChange
 import com.sapiens.gagaodok.model.WorldlineState
 import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.ui.components.RoomAvatar
+import com.sapiens.gagaodok.ui.components.LiquidGlassRegion
+import com.sapiens.gagaodok.ui.components.liquidGlassSupported
+import com.sapiens.gagaodok.ui.components.opaqueCardSurface
 import com.sapiens.gagaodok.ui.icons.MagnifierIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -218,7 +226,12 @@ internal fun HeartGaugePanel(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
     /// 방금 일어난 변화입니다. 비어 있으면 평소 카드입니다.
-    changes: List<MessageHeartChange> = emptyList()
+    changes: List<MessageHeartChange> = emptyList(),
+    /// 카드가 어디에 얼마만 한 크기로 앉았는지 알립니다.
+    ///
+    /// 유리는 **대화 목록 쪽에서** 만듭니다. 카드가 자기 자리를 알려주지 않으면 배경은
+    /// 어디를 휘어야 할지 모릅니다. 카드 자신이 유리를 그리면 자기 글자까지 휘어 버립니다.
+    onGlassBounds: ((LiquidGlassRegion?) -> Unit)? = null
 ) {
     val colors = KakaoTheme.colors
     val average = if (participants.isEmpty()) 0 else participants.sumOf { it.heart } / participants.size
@@ -273,10 +286,29 @@ internal fun HeartGaugePanel(
     // 바깥 상자는 카드가 차지하는 만큼만 잡습니다. 예전에는 접혀 있어도 174dp를 잡고 있어서,
     // 카드 아래 빈 자리가 목록 위에 얹힌 채로 남아 있었습니다.
     Box(modifier.fillMaxWidth().height(height + 12.dp).padding(top = 12.dp), contentAlignment = Alignment.TopCenter) {
+        val useGlass = onGlassBounds != null && liquidGlassSupported
+        val radiusPx = with(LocalDensity.current) { radius.toPx() }
         Box(
             Modifier.width(width).height(height)
-                .shadow(if (expanded) HeartGaugeMetrics.elevation else 0.dp, shape, clip = false)
-                .clip(shape).background(colors.bubbleTheirs).border(1.dp, colors.border, shape)
+                .then(
+                    if (useGlass) Modifier.onGloballyPositioned { coords ->
+                        // 배경 쪽 좌표계와 맞아야 하므로 창 기준 자리를 넘깁니다.
+                        onGlassBounds!!(LiquidGlassRegion(coords.boundsInWindow(), radiusPx))
+                    } else Modifier
+                )
+                .then(
+                    // 유리는 대화 목록 쪽에서 그립니다. 여기서는 테두리와 그림자만 얹습니다.
+                    if (useGlass) Modifier
+                        .shadow(HeartGaugeMetrics.elevation, shape, clip = false)
+                        .clip(shape)
+                        .border(1.dp, glassEdgeBrush(), shape)
+                    else Modifier.opaqueCardSurface(
+                        color = colors.bubbleTheirs,
+                        borderColor = colors.border,
+                        shape = shape,
+                        elevation = if (expanded) HeartGaugeMetrics.elevation else 0.dp
+                    )
+                )
                 .clickableNoRipple(onClick = onToggle)
         ) {
             Row(
@@ -401,6 +433,20 @@ private fun DeltaBadge(delta: Int, up: Boolean) {
         )
     }
 }
+
+/// 유리 가장자리의 빛입니다. 위가 밝고 가운데가 어두웠다가 아래에서 조금 살아납니다.
+///
+/// 유리 느낌의 상당 부분이 이 한 줄에서 나옵니다. 굴절만 있고 이 선이 없으면 배경이
+/// 뭉개진 것처럼 보이지, 무언가가 그 위에 얹혀 있다고 읽히지 않습니다.
+private fun glassEdgeBrush() = Brush.linearGradient(
+    colorStops = arrayOf(
+        0f to Color.White.copy(alpha = 0.55f),
+        0.5f to Color.White.copy(alpha = 0.12f),
+        1f to Color.White.copy(alpha = 0.28f)
+    ),
+    start = Offset.Zero,
+    end = Offset(0f, Float.POSITIVE_INFINITY)
+)
 
 @Composable
 private fun RelationshipHeart(modifier: Modifier = Modifier) {

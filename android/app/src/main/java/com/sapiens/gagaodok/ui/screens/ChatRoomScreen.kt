@@ -76,6 +76,10 @@ import com.sapiens.gagaodok.ui.components.LocalKakaoMenu
 import com.sapiens.gagaodok.ui.components.KakaoMenuItem
 import com.sapiens.gagaodok.ui.components.KakaoMenuSection
 import com.sapiens.gagaodok.ui.components.MessageBubble
+import com.sapiens.gagaodok.ui.components.LiquidGlassDefaults
+import com.sapiens.gagaodok.ui.components.LiquidGlassRegion
+import com.sapiens.gagaodok.ui.components.liquidGlassBackdrop
+import androidx.compose.ui.graphics.lerp
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.text.SimpleDateFormat
@@ -88,6 +92,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/// 유리 자체의 색입니다. **불투명 카드가 쓰던 색에서 출발합니다.**
+///
+/// 셰이더는 흐린 배경을 이 색 쪽으로 모읍니다. 그래서 이 값이 곧 글자가 놓일 바닥이 됩니다.
+/// 앞 판에서는 하트색을 10%만 얹었는데, 그러면 바닥은 여전히 배경 그대로라 흰 말풍선이
+/// 유리 아래를 지나갈 때 안내문이 통째로 사라졌습니다. 카드 색에서 시작하면 최악의
+/// 자리에서도 불투명 카드만큼은 읽힙니다. 하트색은 이 카드의 것임을 남길 만큼만 섞습니다.
+private fun HeartGlassTint(surface: Color): Color =
+    lerp(surface, Color(0xFFFF5C7A), 0.12f)
 
 private data class CameraCaptureTarget(val file: File, val uri: Uri)
 private data class ConversationPane(
@@ -118,6 +131,7 @@ fun ChatRoomScreen(
     val colors = KakaoTheme.colors
     val vm: ChatRoomViewModel = viewModel()
     val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
     val rooms by app.chatStore.rooms.collectAsState()
     val room = rooms.firstOrNull { it.id == roomId }
@@ -475,7 +489,29 @@ fun ChatRoomScreen(
                 if (index >= 0) paneListState.animateScrollToItem(index)
             }
 
+            // 호감도 카드가 앉은 자리입니다. 유리는 대화 목록 쪽에서 그 자리를 휘고 흐립니다.
+            var glassRegion by remember { mutableStateOf<LiquidGlassRegion?>(null) }
             Box(Modifier.fillMaxSize()) {
+                // 유리가 볼 바닥입니다. 대화 배경을 여기서 한 번 더 칠합니다.
+                //
+                // 앞 판에서는 목록에만 유리를 걸었는데, 목록 자체는 배경이 없어서 말풍선
+                // 사이가 **투명**이었습니다. 그 자리를 집으면 아무 색도 안 딸려 와서 카드가
+                // 얼룩덜룩해졌습니다. 배경과 목록을 한 상자에 담아야 유리 아래가 채워집니다.
+                Box(
+                    Modifier.fillMaxSize()
+                        .background(colors.chatBackground)
+                        .liquidGlassBackdrop(
+                            region = glassRegion,
+                            // 유리 색은 **불투명 카드가 쓰던 색 그대로**입니다. 배경을 이 색으로
+                            // 모으므로 글자가 놓일 바닥이 예전 카드와 같아지고, 읽기가 나빠지지
+                            // 않습니다. 하트색을 살짝만 섞어 이 카드의 것임을 남깁니다.
+                            tint = HeartGlassTint(colors.bubbleTheirs),
+                            blurRadiusPx = with(density) { LiquidGlassDefaults.blurRadius.toPx() },
+                            refractionPx = with(density) { LiquidGlassDefaults.refraction.toPx() },
+                            edgeBandPx = with(density) { LiquidGlassDefaults.edgeBand.toPx() },
+                            rimWidthPx = with(density) { LiquidGlassDefaults.rimWidth.toPx() }
+                        )
+                ) {
                 LazyColumn(
                     state = paneListState,
                     modifier = Modifier.fillMaxSize(),
@@ -534,6 +570,7 @@ fun ChatRoomScreen(
                     }
                     item("bottomSpacer") { Spacer(Modifier.height(6.dp)) }
                 }
+                }
                 if (relationshipParticipants.isNotEmpty()) {
                     HeartGaugePanel(
                         participants = relationshipParticipants,
@@ -544,7 +581,8 @@ fun ChatRoomScreen(
                             groupUiState = groupUiState.toggleHeart()
                         },
                         modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
-                        changes = affectionCue?.changes.orEmpty()
+                        changes = affectionCue?.changes.orEmpty(),
+                        onGlassBounds = { glassRegion = it }
                     )
                 }
             }
