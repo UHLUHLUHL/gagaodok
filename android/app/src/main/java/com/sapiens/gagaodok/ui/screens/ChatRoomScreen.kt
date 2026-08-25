@@ -78,7 +78,7 @@ import com.sapiens.gagaodok.ui.components.KakaoMenuSection
 import com.sapiens.gagaodok.ui.components.MessageBubble
 import com.sapiens.gagaodok.ui.components.LiquidGlassDefaults
 import com.sapiens.gagaodok.ui.components.LiquidGlassRegion
-import com.sapiens.gagaodok.ui.components.liquidGlassBackdrop
+import com.sapiens.gagaodok.ui.components.LiquidGlassBackdrop
 import androidx.compose.ui.graphics.lerp
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -492,25 +492,26 @@ fun ChatRoomScreen(
             // 호감도 카드가 앉은 자리입니다. 유리는 대화 목록 쪽에서 그 자리를 휘고 흐립니다.
             var glassRegion by remember { mutableStateOf<LiquidGlassRegion?>(null) }
             Box(Modifier.fillMaxSize()) {
-                // 유리가 볼 바닥입니다. 대화 배경을 여기서 한 번 더 칠합니다.
+                // 유리가 볼 바닥입니다.
                 //
-                // 앞 판에서는 목록에만 유리를 걸었는데, 목록 자체는 배경이 없어서 말풍선
-                // 사이가 **투명**이었습니다. 그 자리를 집으면 아무 색도 안 딸려 와서 카드가
-                // 얼룩덜룩해졌습니다. 배경과 목록을 한 상자에 담아야 유리 아래가 채워집니다.
-                Box(
-                    Modifier.fillMaxSize()
-                        .background(colors.chatBackground)
-                        .liquidGlassBackdrop(
-                            region = glassRegion,
-                            // 유리 색은 **불투명 카드가 쓰던 색 그대로**입니다. 배경을 이 색으로
-                            // 모으므로 글자가 놓일 바닥이 예전 카드와 같아지고, 읽기가 나빠지지
-                            // 않습니다. 하트색을 살짝만 섞어 이 카드의 것임을 남깁니다.
-                            tint = HeartGlassTint(colors.bubbleTheirs),
-                            blurRadiusPx = with(density) { LiquidGlassDefaults.blurRadius.toPx() },
-                            refractionPx = with(density) { LiquidGlassDefaults.refraction.toPx() },
-                            edgeBandPx = with(density) { LiquidGlassDefaults.edgeBand.toPx() },
-                            rimWidthPx = with(density) { LiquidGlassDefaults.rimWidth.toPx() }
-                        )
+                // 목록에만 유리를 걸면 말풍선 사이가 **투명**이라 유리가 그 자리에서 제 색만
+                // 내보입니다. 그렇다고 여기에 `Modifier.background`를 붙여도 소용없습니다 —
+                // 그건 유리보다 먼저 그려져서 기록에 안 들어갑니다. 배경색을 넘겨 주면
+                // 유리가 자기 기록 안에서 직접 칠합니다.
+                LiquidGlassBackdrop(
+                    region = glassRegion,
+                    backgroundColor = colors.chatBackground,
+                    // 유리 색은 **불투명 카드가 쓰던 색 그대로**입니다. 배경을 이 색으로
+                    // 모으므로 글자가 놓일 바닥이 예전 카드와 같아지고, 읽기가 나빠지지
+                    // 않습니다. 하트색을 살짝만 섞어 이 카드의 것임을 남깁니다.
+                    tint = HeartGlassTint(colors.bubbleTheirs),
+                    blurRadiusPx = with(density) { LiquidGlassDefaults.blurRadius.toPx() },
+                    refractionPx = with(density) { LiquidGlassDefaults.refraction.toPx() },
+                    edgeBandPx = with(density) { LiquidGlassDefaults.edgeBand.toPx() },
+                    rimWidthPx = with(density) { LiquidGlassDefaults.rimWidth.toPx() },
+                    // 카드가 쓰던 그림자 높이 그대로입니다. 카드가 아니라 유리 쪽에서 만듭니다.
+                    shadowElevation = HeartGaugeElevation,
+                    modifier = Modifier.fillMaxSize()
                 ) {
                 LazyColumn(
                     state = paneListState,

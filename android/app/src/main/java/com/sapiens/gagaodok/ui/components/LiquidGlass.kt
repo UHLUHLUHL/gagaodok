@@ -10,26 +10,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asComposeRenderEffect
-import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
@@ -42,16 +46,30 @@ import kotlin.math.roundToInt
 /// 앞 판은 셰이더 하나가 흐리기까지 다 했습니다. 표본을 40개 집어 평균 내는 방식이라
 /// 반경을 넓힐수록 흐려지는 게 아니라 **얼룩덜룩해집니다.** 그래서 반경을 20dp(밀도
 /// 3.75에서 75화소)까지밖에 못 올렸는데, 뒤에 있는 말풍선은 폭이 790화소입니다.
-/// **자기보다 열 배 큰 도형은 75화소로 흐려도 네모로 남습니다.** 카드 안에 보이던 상자가
-/// 이것이었습니다 — 셰이더 결함이 아니라, 유리 너머의 말풍선이 너무 또렷했던 것입니다.
+/// **자기보다 열 배 큰 도형은 75화소로 흐려도 네모로 남습니다.** 유리 너머에서 말풍선이
+/// 말풍선인 채로 비치면 재질이 아니라 반투명 판으로 읽힙니다.
 ///
 /// 지금은 배경을 한 번 기록해 두고 두 번 씁니다. 한 번은 그대로(선명한 대화), 한 번은
 /// **안드로이드가 만들어 주는 진짜 가우시안 블러**를 걸어 유리 자리에만 덧그립니다.
 /// 시스템 블러는 축소해서 흐리므로 40dp도 얼룩 없이 싸게 됩니다. 셰이더는 이제 흐리기를
 /// 안 하고 굴절과 빛만 맡습니다. 화소마다 돌던 40번 반복이 통째로 사라져 더 빠릅니다.
 ///
-/// 기록은 카드보다 블러 반경만큼 넓게 떠서, 가장자리에서 흐림이 바깥 그림을 제대로
-/// 끌어올 수 있게 합니다. 화면 전체를 흐리면 채팅 내내 그 비용을 무는데, 그럴 이유가 없습니다.
+/// 두 판은 **크기가 같고**, 유리 판은 **잘라내지 않고** 통째로 얹습니다. 모양은 셰이더가
+/// 알파로 냅니다. 옮기지도 자르지도 않으니 좌표가 어긋날 자리가 없습니다.
+/// 전면 블러 비용이 문제가 되면 그때 재서 줄입니다.
+///
+/// ## 카드 안의 네모 상자는 유리가 아니라 그림자였습니다
+///
+/// 오래 헤맨 결함이라 적어 둡니다. 카드 안쪽 **104화소** 자리에 1화소짜리 세로 이음매가
+/// 좌우 대칭으로 섰고, 밝기 차는 22%였습니다. 블러 반경을 절반으로 줄여도, 셰이더를
+/// 통째로 빼도, 클립을 빼도, 뒤 대화를 스크롤해도 **늘 같은 자리**였습니다.
+///
+/// 범인은 카드에 걸린 `Modifier.shadow`였습니다. 유리를 켜면 카드에 배경색이 없어서,
+/// 안드로이드가 그 카드를 "속이 안 비치는 판"으로 못 보고 그림자를 **카드 밑으로도**
+/// 그립니다. 가장자리에서 안으로 옅어지는 그 띠가 끝나는 자리에 경계가 섭니다.
+///
+/// 그래서 그림자는 여기서 따로 만듭니다 — 유리 밑에 카드 모양 판을 깔아 그림자만 받게
+/// 하고, 유리가 그 판을 통째로 덮습니다. 바깥으로 번진 그림자만 남습니다.
 ///
 /// ## 재질을 만드는 것은 굴절이지 반투명이 아니다
 ///
@@ -98,7 +116,14 @@ float2 surfaceNormal(float2 p, float2 halfSize, float r) {
 
 half4 main(float2 fragCoord) {
     float2 local = fragCoord - cardCenter;
-    float depth = max(-sdRoundRect(local, cardHalfSize, cornerRadius), 0.0);
+    float dist = sdRoundRect(local, cardHalfSize, cornerRadius);
+
+    // 카드 밖은 아예 안 그립니다. **자르는 일을 셰이더가 직접 합니다.**
+    // 캔버스로 잘라낼 일이 없으니 클립 경계에서 생길 수 있는 문제도 없고, 화면 대부분을
+    // 차지하는 바깥은 여기서 바로 돌려보내므로 비용도 안 듭니다.
+    if (dist > 1.0) return half4(0.0);
+
+    float depth = max(-dist, 0.0);
     float2 normal = surfaceNormal(local, cardHalfSize, cornerRadius);
 
     // 유리 두께가 만드는 렌즈입니다. 가장자리에서 가장 세게 꺾이고 안으로 갈수록 없어집니다.
@@ -132,7 +157,10 @@ half4 main(float2 fragCoord) {
     // 모서리 띠를 아주 살짝 눌러 두께를 만듭니다. 띠가 좁아야 상자로 안 보입니다.
     color *= 1.0 - 0.08 * (1.0 - t) * (1.0 - rim);
 
-    return half4(half3(clamp(color, 0.0, 1.0)), 1.0);
+    // 스킨은 미리 곱해진 색을 기대하므로 알파를 색에도 곱해서 내보냅니다.
+    // 경계 1화소만 부드럽게 이어 붙입니다.
+    float coverage = clamp(0.5 - dist, 0.0, 1.0);
+    return half4(half3(clamp(color, 0.0, 1.0) * coverage), half(coverage));
 }
 """
 
@@ -178,82 +206,109 @@ object LiquidGlassDefaults {
 /// [tint]는 유리 자체의 색입니다. 배경을 이 색 쪽으로 모으므로, 이 값이 곧 글자가 놓일
 /// 바닥이 됩니다. **카드가 불투명일 때 쓰던 색을 넣으면** 최악의 자리에서도 그때만큼은 읽힙니다.
 @Composable
-fun Modifier.liquidGlassBackdrop(
+fun LiquidGlassBackdrop(
     region: LiquidGlassRegion?,
+    backgroundColor: Color,
     tint: Color,
     blurRadiusPx: Float,
     refractionPx: Float,
     edgeBandPx: Float,
     rimWidthPx: Float,
+    shadowElevation: Dp,
+    modifier: Modifier = Modifier,
     backdrop: Float = LiquidGlassDefaults.backdrop,
     desaturation: Float = LiquidGlassDefaults.desaturation,
-    highlightRolloff: Float = LiquidGlassDefaults.highlightRolloff
-): Modifier {
+    highlightRolloff: Float = LiquidGlassDefaults.highlightRolloff,
+    content: @Composable BoxScope.() -> Unit
+) {
     // 카드는 **창 기준** 자리를 알려주는데, 그림은 이 요소의 **자기 좌표**로 그립니다.
     // 대화 목록은 앱바 아래에서 시작하므로 그 차이만큼 어긋납니다. 처음에 이걸 안 맞춰서
     // 유리가 화면 밖 엉뚱한 자리에 걸렸고, 아무 일도 안 일어나는 것처럼 보였습니다.
     var origin by remember { mutableStateOf(Offset.Zero) }
     val backdropLayer = rememberGraphicsLayer()
-    val glassLayer = rememberGraphicsLayer()
+    val usable = region != null && region.bounds.width > 1f && region.bounds.height > 1f &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
-    return this
-        .onGloballyPositioned { origin = it.boundsInWindow().topLeft }
-        .drawWithContent {
-            // 대화를 한 번만 기록해 두고 두 번 씁니다.
-            backdropLayer.record { this@drawWithContent.drawContent() }
-            drawLayer(backdropLayer)
+    Box(modifier.onGloballyPositioned { origin = it.boundsInWindow().topLeft }) {
+        Box(
+            Modifier.fillMaxSize().drawWithContent {
+                // 대화를 한 번만 기록해 두고 두 번 씁니다.
+                //
+                // **바닥은 여기서 칠해야 합니다.** `Modifier.background`를 앞에 붙이면 그건
+                // `drawContent()`보다 먼저 그려지므로 기록에 안 들어갑니다. 그래서 말풍선
+                // 사이 빈 자리가 투명인 채로 기록됐고, 유리가 그 자리에서 제 색만 냈습니다.
+                backdropLayer.record {
+                    drawRect(backgroundColor)
+                    this@drawWithContent.drawContent()
+                }
+                drawLayer(backdropLayer)
+            },
+            content = content
+        )
 
-            if (region == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@drawWithContent
-            val card = region.bounds.translate(-origin.x, -origin.y)
-            if (card.width <= 1f || card.height <= 1f) return@drawWithContent
-
-            // 카드보다 블러 반경만큼 넓게 떠야 가장자리에서 바깥 그림을 끌어옵니다.
-            // 좁게 뜨면 흐림이 제 자리에서 끊겨 테두리를 따라 띠가 생깁니다.
-            val pad = blurRadiusPx * 1.5f
-            val patch = Rect(card.left - pad, card.top - pad, card.right + pad, card.bottom + pad)
-            val pw = patch.width.roundToInt()
-            val ph = patch.height.roundToInt()
-            if (pw <= 0 || ph <= 0) return@drawWithContent
-
-            val shader = RuntimeShader(LIQUID_GLASS_SHADER)
-            shader.setFloatUniform("resolution", pw.toFloat(), ph.toFloat())
-            shader.setFloatUniform("cardCenter", card.center.x - patch.left, card.center.y - patch.top)
-            shader.setFloatUniform("cardHalfSize", card.width / 2f, card.height / 2f)
-            shader.setFloatUniform("cornerRadius", region.cornerRadiusPx)
-            shader.setFloatUniform("edgeBand", edgeBandPx)
-            shader.setFloatUniform("refraction", refractionPx)
-            shader.setFloatUniform("rimWidth", rimWidthPx)
-            shader.setFloatUniform("tint", tint.red, tint.green, tint.blue, tint.alpha)
-            shader.setFloatUniform("backdrop", backdrop)
-            shader.setFloatUniform("desaturation", desaturation)
-            shader.setFloatUniform("highlightRolloff", highlightRolloff)
-
-            // 흐린 다음에 휩니다. 실제 유리도 서린 빛이 모서리에서 꺾입니다.
-            // `createChainEffect`는 **뒤 인자가 먼저** 걸립니다.
-            glassLayer.renderEffect = RenderEffect.createChainEffect(
-                RenderEffect.createRuntimeShaderEffect(shader, "contents"),
-                RenderEffect.createBlurEffect(
-                    blurRadiusPx, blurRadiusPx, android.graphics.Shader.TileMode.CLAMP
-                )
-            ).asComposeRenderEffect()
-
-            glassLayer.record(IntSize(pw, ph)) {
-                translate(-patch.left, -patch.top) { drawLayer(backdropLayer) }
-            }
-
-            val local = Path().apply {
-                addRoundRect(
-                    RoundRect(
-                        Rect(card.left - patch.left, card.top - patch.top,
-                            card.right - patch.left, card.bottom - patch.top),
-                        CornerRadius(region.cornerRadiusPx)
+        // 그림자만 받는 판입니다. 유리가 이 판을 통째로 덮으므로 판 자체는 안 보이고,
+        // 바깥으로 번진 그림자만 남습니다. 그게 곧 드롭 섀도입니다.
+        //
+        // **카드에 직접 `shadow`를 걸면 안 됩니다.** 유리를 켜면 카드에 배경색이 없어서
+        // 안드로이드가 그 카드를 "속이 안 비치는 판"으로 못 봅니다. 그래서 그림자를 카드
+        // **밑으로도** 그리고, 가장자리에서 옅어지는 그 띠가 끝나는 자리에 1화소짜리
+        // 경계가 섭니다. 실기기에서 카드 안쪽 104화소, 밝기 차 22%로 섰습니다.
+        // 카드 안에 네모 상자가 보인다던 것이 이것이었습니다 — 유리가 아니라 그림자입니다.
+        //
+        // 블러 반경을 절반으로 줄여도, 셰이더를 통째로 빼도, 클립을 빼도, 뒤 대화를
+        // 스크롤해도 **늘 같은 자리**였습니다. 원인을 유리 안에서만 찾으면 못 찾습니다.
+        if (usable && shadowElevation > 0.dp) {
+            val card = region!!.bounds.translate(-origin.x, -origin.y)
+            val density = LocalDensity.current
+            Box(
+                Modifier
+                    .offset { IntOffset(card.left.roundToInt(), card.top.roundToInt()) }
+                    .size(
+                        with(density) { card.width.toDp() },
+                        with(density) { card.height.toDp() }
                     )
-                )
-            }
-            translate(patch.left, patch.top) {
-                clipPath(local) { drawLayer(glassLayer) }
-            }
+                    .shadow(
+                        shadowElevation,
+                        RoundedCornerShape(with(density) { region.cornerRadiusPx.toDp() })
+                    )
+                    .background(backgroundColor)
+            )
         }
+
+        // 같은 그림을 유리로 한 번 더 얹습니다.
+        //
+        // 효과를 **`Modifier.graphicsLayer`에 겁니다.** `GraphicsLayer.renderEffect`에
+        // 걸었더니 실기기에서 카드를 0.835배 줄인 자리에 1화소짜리 세로 이음매가 섰습니다.
+        // 블러 반경을 절반으로 줄여도, 셰이더를 빼도, 뒤 내용을 바꿔도 같은 자리였고,
+        // 유리를 옆으로 밀자 이음매도 따라 움직였습니다. 그 경로가 원인입니다.
+        if (usable) Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer {
+                    val card = region!!.bounds.translate(-origin.x, -origin.y)
+                    val shader = RuntimeShader(LIQUID_GLASS_SHADER)
+                    shader.setFloatUniform("resolution", size.width, size.height)
+                    shader.setFloatUniform("cardCenter", card.center.x, card.center.y)
+                    shader.setFloatUniform("cardHalfSize", card.width / 2f, card.height / 2f)
+                    shader.setFloatUniform("cornerRadius", region.cornerRadiusPx)
+                    shader.setFloatUniform("edgeBand", edgeBandPx)
+                    shader.setFloatUniform("refraction", refractionPx)
+                    shader.setFloatUniform("rimWidth", rimWidthPx)
+                    shader.setFloatUniform("tint", tint.red, tint.green, tint.blue, tint.alpha)
+                    shader.setFloatUniform("backdrop", backdrop)
+                    shader.setFloatUniform("desaturation", desaturation)
+                    shader.setFloatUniform("highlightRolloff", highlightRolloff)
+                    // 흐린 다음에 휩니다. 실제 유리도 서린 빛이 모서리에서 꺾입니다.
+                    // `createChainEffect`는 **뒤 인자가 먼저** 걸립니다.
+                    renderEffect = RenderEffect.createChainEffect(
+                        RenderEffect.createRuntimeShaderEffect(shader, "contents"),
+                        RenderEffect.createBlurEffect(
+                            blurRadiusPx, blurRadiusPx, android.graphics.Shader.TileMode.CLAMP
+                        )
+                    ).asComposeRenderEffect()
+                }
+                .drawBehind { drawLayer(backdropLayer) }
+        )
+    }
 }
 
 /// 이 기기에서 유리를 쓸 수 있는지입니다. 안 되면 예전 불투명 카드로 갑니다.

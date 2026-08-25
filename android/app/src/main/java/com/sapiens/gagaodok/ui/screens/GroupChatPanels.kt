@@ -108,6 +108,10 @@ private val RelationshipMotionEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 /// 카드 높이는 원래 2명과 3명 이상을 각각 154dp, 192dp로 적어 두었는데, 두 값 모두
 /// `78 + 인원수 × 38`로 정확히 떨어집니다. 인원이 늘어도 같은 규칙이 이어지도록
 /// 공식으로 되돌렸습니다. 숫자를 두 개만 적어 두면 4명째부터 자리가 모자랍니다.
+/// 호감도 카드가 떠 있는 높이입니다. 유리를 켜면 그림자를 카드가 아니라 유리 쪽에서
+/// 만들기 때문에 밖에서도 볼 수 있어야 합니다. 이유는 `LiquidGlassBackdrop`에 적었습니다.
+internal val HeartGaugeElevation = 20.dp
+
 private object HeartGaugeMetrics {
     /// 접힌 칩. 피그마 실측 84 × 36dp, 모서리 18dp.
     val collapsedWidth = 84.dp
@@ -117,7 +121,7 @@ private object HeartGaugeMetrics {
     /// 펼친 카드. 피그마 실측 폭 336dp, 모서리 16dp, 테두리 1dp, 그림자 20dp.
     val expandedWidth = 336.dp
     val expandedRadius = 16.dp
-    val elevation = 20.dp
+    val elevation = HeartGaugeElevation
 
     /// 참여자 한 줄의 높이. 위 여백 6dp를 포함한 값입니다.
     val participantRow = 38.dp
@@ -299,7 +303,10 @@ internal fun HeartGaugePanel(
                 .then(
                     // 유리는 대화 목록 쪽에서 그립니다. 여기서는 테두리와 그림자만 얹습니다.
                     if (useGlass) Modifier
-                        .shadow(HeartGaugeMetrics.elevation, shape, clip = false)
+                        // **여기에 그림자를 걸지 않습니다.** 유리를 켜면 이 카드에는 배경색이
+                        // 없어서, 안드로이드가 카드 밑으로도 그림자를 그립니다. 그 띠가 끝나는
+                        // 자리에 1화소짜리 경계가 서고 카드 안에 네모 상자가 생깁니다.
+                        // 그림자는 유리 쪽에서 따로 만듭니다(`LiquidGlassBackdrop`).
                         .clip(shape)
                         .border(1.dp, glassEdgeBrush(), shape)
                     else Modifier.opaqueCardSurface(
