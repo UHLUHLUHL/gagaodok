@@ -38,29 +38,32 @@ public struct ConversationDigest: Codable, Equatable {
 
 /// 요청에 실을 이력을 정합니다. API도 화면도 모르는 순수 계산이라 그대로 시험해 볼 수 있습니다.
 public enum ConversationCompactor {
-    /// 기본 턴 수 (하위 호환용)
-    public static let thresholdTurns = 150
-    public static let verbatimWindowTurns = 20
-    public static let refreshPeriodTurns = 50
+    /// 구간 하나를 적는 데 쓰는 토큰의 기본값입니다. 모드별 값은 아래 함수를 씁니다.
     public static let segmentTokenBudget = 1500
 
     /// 모드별 최적 압축 시작 턴 수입니다.
-    /// - 멘토 모드: 60턴(약 30,000토큰)에서 신속하게 첫 압축을 시작하여 토큰 누적을 차단합니다.
-    /// - 챗봇 모드: 150턴까지 원문을 길게 유지하여 감정선과 미묘한 대화 뉘앙스를 보존합니다.
+    /// - 멘토 모드: 60턴(약 30,000토큰)에서 첫 압축을 시작해 토큰 누적을 차단합니다.
+    /// - 챗봇 모드: 실사용 방에서 83턴에 문맥이 약 20k토큰까지 커진 것을 보고 150에서
+    ///   80으로 낮췄습니다. 창+주기(30+50)와 같은 값이라 문턱을 넘는 순간 첫 구간이 잡힙니다.
+    ///
+    /// **응답 속도 때문에 다시 올리지 마십시오.** 실기기에서 입력 13,708토큰에 캐시까지
+    /// 똑같이 물린 두 요청이 35초 간격으로 1.7초와 24.3초가 나왔습니다. 첫 글자까지의
+    /// 시간은 입력 크기가 아니라 서버 쪽 변동이 정합니다. 이 값이 정하는 것은 토큰 비용과
+    /// 기억의 폭이지 속도가 아닙니다.
     public static func thresholdTurns(for mode: ChatMode) -> Int {
         switch mode {
         case .mathMentor: return 60
-        case .companion: return 150
+        case .companion: return 80
         }
     }
 
     /// 모드별 원문 보존 윈도우입니다.
     /// - 멘토 모드: 최근 20턴을 100% 무손실 원문으로 보존합니다.
-    /// - 챗봇 모드: 최근 20턴을 원문으로 보존합니다.
+    /// - 챗봇 모드: 압축 시점을 앞당긴 대신 최근 기억의 폭을 20턴에서 30턴으로 늘렸습니다.
     public static func verbatimWindowTurns(for mode: ChatMode) -> Int {
         switch mode {
         case .mathMentor: return 20
-        case .companion: return 20
+        case .companion: return 30
         }
     }
 
@@ -297,7 +300,6 @@ public enum ConversationCompactor {
         let total = starts.count
         let digest = digest ?? ConversationDigest()
         let covered = min(digest.coveredTurns, total)
-
         let threshold = thresholdTurns(for: mode)
         let verbatimWindow = verbatimWindowTurns(for: mode)
         let refreshPeriod = refreshPeriodTurns(for: mode)
