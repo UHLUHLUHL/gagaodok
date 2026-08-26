@@ -108,6 +108,7 @@ Phase 4 remote replica는 별도 store 또는 storage root를 사용해야 한�
 | `compactionProfileId` | 사람이 관리하는 압축 정책 이름 |
 | `compactionContractFingerprint` | 실제 압축 동작의 기계 판정용 fingerprint |
 | cache policy | provider cache 생성·재사용 호환성 계약 |
+| repetition policy | Runtime 반복 제어 동작과 관련 prompt version |
 
 `relationshipPolicy`의 초기 허용값은 다음과 같다.
 
@@ -133,7 +134,7 @@ persona_snapshot_identity = (space_id, persona_snapshot_id, snapshot_revision)
 | 공통 내용 | 설명, 실제 대사 예시, style guide, 활성 여부 |
 | Provenance | `owner_space_id`, `created_by_device_id`, `created_at` |
 | Compatibility | `personaSchemaVersion`, content fingerprint |
-| Extension | `suppressedExpressions`, `sampleEvidence`, 반복 제어 metadata 등 opaque platform extension |
+| Extension | `suppressedExpressions`, `sampleEvidence` 등 opaque platform extension |
 
 - 동기화 또는 D1 backup 대상 room의 persona snapshot은 D1에 versioned canonical entity로 저장한다.
 - Room profile은 AI request에 사용한 정확한 `persona_snapshot_id`와 `snapshot_revision`을 참조한다.
@@ -141,6 +142,8 @@ persona_snapshot_identity = (space_id, persona_snapshot_id, snapshot_revision)
 - Write authority는 source space 권한을 따르며 `created_by_device_id`는 provenance일 뿐 단독 권한 근거가 아니다.
 - 다른 플랫폼이 모르는 extension은 server가 보존하며 공통 필드 patch가 이를 삭제하면 안 된다.
 - E2EE를 선택하면 persona payload는 암호화하되 routing에 필요한 identity·revision metadata만 정책에 따라 노출한다.
+
+현재 Android `PersonaStyle`의 저장 필드는 `description`, `samples`, `styleGuide`, `isEnabled`, `suppressedExpressions`, `sampleEvidence` 여섯 개다. `companionRepetitionControlEnabled`는 저장 필드가 아니라 method 인자이고 `repetitionAdviceFromConversation`은 runtime 계산 결과다. 반복 제어 동작은 persona extension으로 가장하지 않고 `engineProfile`의 repetition policy에서 계약한다.
 
 ### 독립 character identity의 적용 범위
 
@@ -156,6 +159,7 @@ character_identity = (space_id, character_id)
 - `character_id`는 room UUID와 별도로 유지되는 stable ID다.
 - Profile과 persona snapshot은 필요할 때 `character_identity`를 참조한다.
 - 기존 room-only profile에서 `character_id`를 만드는 결정적 migration을 정의하기 전에는 서로 다른 room의 profile을 자동 병합하지 않는다.
+- `character_id`를 도입할 때 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `Message.speakerRoomId`의 room UUID 참조를 같은 mapping으로 결정적으로 이전한다. 세 참조의 부분 migration은 금지하며 화자와 호감도 귀속이 모두 보존되는 fixture·rollback test를 통과해야 한다.
 - 이 계약은 초기 room-only Shadow Upload의 blocker는 아니지만 친구·독립 profile 공유 기능의 선행 gate다.
 
 ### 결정적인 legacy `turn_id`
@@ -519,6 +523,8 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-26 | Claude Code | `755d571`의 6개 보완 항목과 코드 사실 재검토 완료 |
 | 2026-08-26 | 제3자 AI | 상태 metadata와 checkpoint·persona·character identity 명시 부족 지적 |
 | 2026-08-26 | Codex | 최초 제안서·현재 code와 대조 후 누락 계약 복원; Claude Code 재검토 대기 |
+| 2026-08-26 | Claude Code | `ba95a7b`의 복원 방향 승인; runtime 반복 제어 metadata와 room UUID 참조 migration 보정 요청 |
+| 2026-08-26 | Codex | 저장 model과 group 참조를 재검증해 두 보정 반영; Claude Code 재검토 대기 |
 
 ## 🔗 참고 자료
 
