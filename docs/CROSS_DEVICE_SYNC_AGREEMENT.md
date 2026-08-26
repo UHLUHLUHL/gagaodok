@@ -159,7 +159,7 @@ character_identity = (space_id, character_id)
 - `character_id`는 room UUID와 별도로 유지되는 stable ID다.
 - Profile과 persona snapshot은 필요할 때 `character_identity`를 참조한다.
 - 기존 room-only profile에서 `character_id`를 만드는 결정적 migration을 정의하기 전에는 서로 다른 room의 profile을 자동 병합하지 않는다.
-- `character_id`를 도입할 때 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `Message.speakerRoomId`, `MessageReaction.participantRoomId`, `MessageHeartChange.participantRoomId`의 room UUID 참조를 같은 mapping으로 결정적으로 이전한다. 다섯 참조의 부분 migration은 금지하며 화자·반응·현재 호감도·호감도 변화 기록의 귀속이 모두 보존되는 fixture·rollback test를 통과해야 한다.
+- `character_id`를 도입할 때 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `ChatMessage.speakerRoomId`, `MessageReaction.participantRoomId`, `MessageHeartChange.participantRoomId`의 room UUID 참조를 같은 mapping으로 결정적으로 이전한다. 다섯 참조의 부분 migration은 금지하며 화자·반응·현재 호감도·호감도 변화 기록의 귀속이 모두 보존되는 fixture·rollback test를 통과해야 한다.
 - `GroupChatState.participantRoomIds`는 `participants`에서 계산되는 파생값이고 `GroupParticipantSeed`는 비영속 생성 입력이므로 별도 migration 대상이 아니다. `ConversationScope.roomId`와 `InkDocument.roomId`는 방 자체 identity이므로 `character_id`로 치환하지 않는다.
 - 이 계약은 초기 room-only Shadow Upload의 blocker는 아니지만 친구·독립 profile 공유 기능의 선행 gate다.
 
