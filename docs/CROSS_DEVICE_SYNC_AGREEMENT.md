@@ -159,7 +159,8 @@ character_identity = (space_id, character_id)
 - `character_id`는 room UUID와 별도로 유지되는 stable ID다.
 - Profile과 persona snapshot은 필요할 때 `character_identity`를 참조한다.
 - 기존 room-only profile에서 `character_id`를 만드는 결정적 migration을 정의하기 전에는 서로 다른 room의 profile을 자동 병합하지 않는다.
-- `character_id`를 도입할 때 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `Message.speakerRoomId`의 room UUID 참조를 같은 mapping으로 결정적으로 이전한다. 세 참조의 부분 migration은 금지하며 화자와 호감도 귀속이 모두 보존되는 fixture·rollback test를 통과해야 한다.
+- `character_id`를 도입할 때 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `Message.speakerRoomId`, `MessageReaction.participantRoomId`, `MessageHeartChange.participantRoomId`의 room UUID 참조를 같은 mapping으로 결정적으로 이전한다. 다섯 참조의 부분 migration은 금지하며 화자·반응·현재 호감도·호감도 변화 기록의 귀속이 모두 보존되는 fixture·rollback test를 통과해야 한다.
+- `GroupChatState.participantRoomIds`는 `participants`에서 계산되는 파생값이고 `GroupParticipantSeed`는 비영속 생성 입력이므로 별도 migration 대상이 아니다. `ConversationScope.roomId`와 `InkDocument.roomId`는 방 자체 identity이므로 `character_id`로 치환하지 않는다.
 - 이 계약은 초기 room-only Shadow Upload의 blocker는 아니지만 친구·독립 profile 공유 기능의 선행 gate다.
 
 ### 결정적인 legacy `turn_id`
@@ -525,6 +526,8 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-26 | Codex | 최초 제안서·현재 code와 대조 후 누락 계약 복원; Claude Code 재검토 대기 |
 | 2026-08-26 | Claude Code | `ba95a7b`의 복원 방향 승인; runtime 반복 제어 metadata와 room UUID 참조 migration 보정 요청 |
 | 2026-08-26 | Codex | 저장 model과 group 참조를 재검증해 두 보정 반영; Claude Code 재검토 대기 |
+| 2026-08-26 | Claude Code | `267bcf2` 보정 승인; 영속 room-UUID-as-character 참조가 세 개가 아닌 다섯 개임을 추가 확인 |
+| 2026-08-26 | Codex | Android model 전수 검색 후 다섯 참조와 제외 대상 검증; migration atomicity 목록 보완 |
 
 ## 🔗 참고 자료
 
