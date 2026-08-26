@@ -6,9 +6,9 @@ _가가오독 Mac·Android phone·Android tablet 대화 동기화에 관한 기�
 
 | 항목 | 내용 |
 | --- | --- |
-| **상태** | 기술 합의 완료 / 구현 승인 아님 |
+| **상태** | 기술 합의 보완본 / 구현 승인 아님 |
 | **작성** | Codex, Codex–Claude Code 교차검증 결과 통합 |
-| **후속 검토** | 이번 보완본에 대한 Claude Code 검토 대기 |
+| **검토 상태** | `755d571` 본문은 Claude Code 재검토 완료; 이번 checkpoint·persona·character identity 보완분은 재검토 대기 |
 | **제품 결정** | 사용자 결정 대기; `결정 필요`로 표시 |
 | **원본 문서** | [최초 제안서](2026-08-26-cross-device-sync-proposal.md), [검토 과정의 r2 문서](2026-08-26-cross-device-sync-proposal-r2.md) |
 | **검토 중 데이터 접근** | 소스 코드만 검토; 실제 대화 파일은 열지 않음 |
@@ -17,7 +17,7 @@ _가가오독 Mac·Android phone·Android tablet 대화 동기화에 관한 기�
 
 ## 📋 합의 상태와 범위
 
-Codex와 Claude Code는 이 문서에 적힌 기술적 사실, 안전 요건, canonical 데이터 경계, 단계별 게이트에 합의했다. 남은 항목은 사용자가 정할 제품 선택이거나 아직 수행하지 않은 실측이다.
+Codex와 Claude Code는 `755d571`까지의 기술적 사실, 안전 요건, canonical 데이터 경계, 단계별 게이트에 합의했다. 제3자 검토에서 최초 제안서의 checkpoint·persona·character identity 계약이 최종 합의문에 충분히 옮겨지지 않은 점을 확인해 이번 보완본에 복원했다. 이 보완분은 Claude Code 재검토 대기 상태다. 나머지 미결 항목은 사용자가 정할 제품 선택이거나 아직 수행하지 않은 실측이다.
 
 이 문서는 내용이 충돌할 경우 두 제안서의 기술적 결론보다 우선한다. 최초 제안서와 r2 문서는 검토 이력으로 보존하며 더 이상 동기화해 고치지 않는다.
 
@@ -118,6 +118,45 @@ Phase 4 remote replica는 별도 store 또는 storage root를 사용해야 한�
 | `group` | group/worldline 관계 정책 사용 |
 
 현재 Android의 `BuildConfig.TABLET_MENTOR` 분기는 service·ViewModel·UI를 포함한 **9개 파일 16곳**에 퍼져 있으므로 service 한 곳만 `engineProfile`로 바꾸는 작업으로 끝나지 않는다. 특히 `personalAffectionEnabled`는 현재 `(flavor × mode × model)`의 함수인데 이 가운데 flavor는 동기화되지 않는다. 따라서 동기화 구현은 build flavor를 추측하지 말고 필요한 동작을 room-level profile에 명시해야 한다. 지원하지 않는 profile은 read-only로 열고 조용한 fallback은 금지한다.
+
+### Persona snapshot 계약
+
+동기화 대상은 persona를 추출하거나 편집한 과정 전체가 아니라 사용자가 확정한 versioned snapshot이다.
+
+```text
+persona_snapshot_identity = (space_id, persona_snapshot_id, snapshot_revision)
+```
+
+| 필드 집합 | 최소 내용 |
+| --- | --- |
+| Identity | `space_id`, `persona_snapshot_id`, `snapshot_revision` |
+| 공통 내용 | 설명, 실제 대사 예시, style guide, 활성 여부 |
+| Provenance | `owner_space_id`, `created_by_device_id`, `created_at` |
+| Compatibility | `personaSchemaVersion`, content fingerprint |
+| Extension | `suppressedExpressions`, `sampleEvidence`, 반복 제어 metadata 등 opaque platform extension |
+
+- 동기화 또는 D1 backup 대상 room의 persona snapshot은 D1에 versioned canonical entity로 저장한다.
+- Room profile은 AI request에 사용한 정확한 `persona_snapshot_id`와 `snapshot_revision`을 참조한다.
+- Snapshot 변경은 기존 revision을 덮어쓰지 않고 새 revision을 만든다. 갱신에는 `base_revision` compare-and-set을 적용한다.
+- Write authority는 source space 권한을 따르며 `created_by_device_id`는 provenance일 뿐 단독 권한 근거가 아니다.
+- 다른 플랫폼이 모르는 extension은 server가 보존하며 공통 필드 patch가 이를 삭제하면 안 된다.
+- E2EE를 선택하면 persona payload는 암호화하되 routing에 필요한 identity·revision metadata만 정책에 따라 노출한다.
+
+### 독립 character identity의 적용 범위
+
+초기 Phase 0~5는 room 중심 동기화이므로 standalone character entity를 노출하지 않아도 된다. 이 동안 room profile과 persona snapshot은 `conversation_scope`에 종속되며, 표시 이름이 같은 profile을 같은 캐릭터로 추론하지 않는다.
+
+친구 탭의 출처 공유, 여러 room에서 같은 profile 재사용, standalone profile 편집, room 밖의 group participant 공유를 활성화하기 전에는 다음 identity와 migration 규칙을 확정해야 한다.
+
+```text
+character_identity = (space_id, character_id)
+```
+
+- `display_name`은 표시용이며 identity가 아니다.
+- `character_id`는 room UUID와 별도로 유지되는 stable ID다.
+- Profile과 persona snapshot은 필요할 때 `character_identity`를 참조한다.
+- 기존 room-only profile에서 `character_id`를 만드는 결정적 migration을 정의하기 전에는 서로 다른 room의 profile을 자동 병합하지 않는다.
+- 이 계약은 초기 room-only Shadow Upload의 blocker는 아니지만 친구·독립 profile 공유 기능의 선행 gate다.
 
 ### 결정적인 legacy `turn_id`
 
@@ -262,8 +301,9 @@ flowchart LR
 ### Phase 1: Canonical 계약과 fixture
 
 - Canonical schema v1과 플랫폼 adapter를 정의한다.
+- Versioned persona snapshot과 context checkpoint의 D1 schema, revision, ownership, provenance를 정의한다.
 - 합성 Swift/Kotlin round-trip fixture를 추가한다.
-- Unknown extension 보존, tombstone, revision, UUID, date, `bubble_order`를 검증한다.
+- Unknown extension 보존, tombstone, revision, UUID, date, `bubble_order`, snapshot/checkpoint reference를 검증한다.
 - 표시 이름이 같은 방과 nullable worldline fixture를 추가한다.
 - 사용자가 정책을 정한 뒤 attachment·encryption envelope를 정의한다.
 
@@ -282,6 +322,7 @@ flowchart LR
 - 사용자가 historical upload의 E2EE 적용 여부를 결정한다.
 - 사용자가 phone-room backup 동작을 결정한다.
 - Group/worldline 데이터를 canonical scope가 지원하거나 명시적으로 제외한다.
+- Historical persona snapshot과 context checkpoint를 import할지 제외할지 manifest에 명시한다.
 - 비파괴 importer가 byte·mtime·hash 동일성 검사를 통과한다.
 - 결정적인 legacy turn identity가 반복 import test를 통과한다.
 - Backup restore가 성공한다.
@@ -303,6 +344,7 @@ Shadow Upload는 local data를 immutable import batch로 복사한다. D1 data�
 - Local write 실패가 caller에 전달된다.
 - Generation authority와 concurrent/offline writer 정책을 정의한다.
 - Local 필드와 canonical 필드를 분리한다.
+- Persona snapshot reference와 context checkpoint의 D1 revision·ownership contract test를 통과한다.
 - `base_revision`과 명시적인 `set`/`clear` patch가 contract test를 통과한다.
 - Compactor/cache compatibility test가 통과하거나 호환되지 않는 산출물을 무시한다.
 - Test room 하나의 rollback을 증명한다.
@@ -317,7 +359,7 @@ Shadow Upload는 local data를 immutable import batch로 복사한다. D1 data�
 
 ### 이후 단계
 
-Test room이 성공한 뒤 기존 room을 하나씩 opt-in한다. Shared checkpoint, 명시적인 provider-cache lease, group/worldline 노출, attachment, affection, real-time notification은 각각 별도 게이트가 필요한 확장으로 남긴다.
+Test room이 성공한 뒤 기존 room을 하나씩 opt-in한다. Context checkpoint의 canonical D1 저장은 core contract이며, 여러 기기가 checkpoint를 생성·연장하는 권한 확대만 이후 단계로 남긴다. 명시적인 provider-cache lease, group/worldline 노출, attachment, affection, real-time notification도 각각 별도 게이트가 필요한 확장이다. 친구·독립 profile 공유 전에는 `character_identity`와 기존 room profile migration을 먼저 확정한다.
 
 ## 🔍 Phase 0 inventory 합의
 
@@ -354,6 +396,30 @@ Timestamp gap은 triage signal일 뿐이다.
 - Historical collapse의 확정은 migration 전 archive와 대조해야만 가능하다.
 
 ## ⚙️ Compaction과 provider cache 합의
+
+### Canonical context checkpoint 저장
+
+Context checkpoint는 provider cache가 아니라 장기 대화 기억이다. 동기화 대상 room에서는 D1에 versioned canonical entity로 저장한다.
+
+```text
+checkpoint_identity = (conversation_scope, checkpoint_id)
+```
+
+| 필드 집합 | 최소 내용 |
+| --- | --- |
+| Identity | `conversation_scope`, `checkpoint_id` |
+| Coverage | 포함한 첫·마지막 `turn_id`, `through_server_seq` |
+| Payload | `segments`, `summary_text` 또는 versioned opaque summary payload |
+| Compatibility | `checkpointSchemaVersion`, `compactionProfileId`, `compactionContractFingerprint` |
+| Provenance | `owner_space_id`, `created_by_device_id`, `created_at` |
+| Concurrency | `revision`, 갱신 요청의 `base_revision` |
+
+- 원본 canonical message가 source of truth이며 checkpoint 생성 뒤에도 즉시 삭제하지 않는다.
+- 동일 범위 checkpoint의 생성·연장은 `base_revision` compare-and-set으로 직렬화한다.
+- `owner_space_id`와 현재 generation authority가 write 권한을 결정한다. `created_by_device_id`는 audit와 provenance에 사용한다.
+- 호환 fingerprint가 다른 기기는 허용된 opaque summary로 읽을 수 있어도 기존 checkpoint를 재요약하거나 연장하지 않는다.
+- Provider cache lease와 checkpoint는 별도 entity다. Provider cache 만료·삭제·credential 불일치가 장기 기억을 제거하면 안 된다.
+- Phase 3에서 기존 digest를 올리지 않는 경우에도 import manifest에 `excluded`를 명시한다. 올리는 무버전 digest는 아래 규칙에 따라 `legacy_unversioned`로 격리한다.
 
 ### Checkpoint compatibility
 
@@ -449,7 +515,10 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-26 | Codex와 Claude Code | 여러 라운드의 기술 교차검증 수렴 |
 | 2026-08-26 | Codex | 최초 통합 합의문 작성 |
 | 2026-08-26 | Claude Code | 내용 승인 후 구현 혼동을 막을 누락 사항 6개 제안 |
-| 2026-08-26 | Codex | 한국어 번역과 누락 계약 보완; Claude Code 재검토 대기 |
+| 2026-08-26 | Codex | 한국어 번역과 누락 계약 보완 |
+| 2026-08-26 | Claude Code | `755d571`의 6개 보완 항목과 코드 사실 재검토 완료 |
+| 2026-08-26 | 제3자 AI | 상태 metadata와 checkpoint·persona·character identity 명시 부족 지적 |
+| 2026-08-26 | Codex | 최초 제안서·현재 code와 대조 후 누락 계약 복원; Claude Code 재검토 대기 |
 
 ## 🔗 참고 자료
 
