@@ -6,18 +6,18 @@ _가가오독 Mac·Android phone·Android tablet 대화 동기화에 관한 기�
 
 | 항목 | 내용 |
 | --- | --- |
-| **상태** | 핵심 기술 합의 보완본 / E2EE 추가 계약 재검토 중 / 구현 승인 아님 |
+| **상태** | 핵심 기술 합의 및 E2EE 추가 계약 검토 완료 / 구현 승인 아님 |
 | **작성** | Codex, Codex–Claude Code 교차검증 결과 통합 |
-| **검토 상태** | 핵심 합의문은 Claude Code 재검토 완료; [E2EE 제안서](2026-08-27-sync-encryption-proposal.md)는 3차 보정 작성 완료·Codex 통합 검토 대기 |
+| **검토 상태** | 핵심 합의문과 [E2EE 제안서](2026-08-27-sync-encryption-proposal.md)의 기술 계약 검토 완료; 구현 contract test는 미완료 |
 | **제품 결정** | [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)의 17개 결정이 현재 기준 |
 | **원본 문서** | [최초 제안서](2026-08-26-cross-device-sync-proposal.md), [검토 과정의 r2 문서](2026-08-26-cross-device-sync-proposal-r2.md) |
-| **검토 중 데이터 접근** | 소스 코드만 검토; 실제 대화 파일은 열지 않음 |
+| **검토 중 데이터 접근** | 설계 검토는 소스·비식별 집계만 사용; Phase 0에서 세 source space를 별도 잠금 archive로 비파괴 조사했으며 본문은 repository에 기록하지 않음 |
 
 > ⚠️ **경계:** 이 합의문과 E2EE 제안서는 실데이터 업로드나 양방향 동기화를 승인하지 않는다. 사용자의 별도 시작 지시와 단계별 게이트를 먼저 충족해야 한다.
 
 ## 📋 합의 상태와 범위
 
-Codex와 Claude Code는 핵심 기술 사실, 안전 요건, canonical 데이터 경계, 단계별 게이트에 합의했고 checkpoint·persona·character identity 누락도 복원·재검토했다. 이후 사용자는 17개 제품 결정을 별도 기록으로 확정하고 E2EE를 선택했다. E2EE의 상세 byte·key·pairing 계약은 [별도 제안서](2026-08-27-sync-encryption-proposal.md)에 있으며 Claude Code 재검토 전에는 이 합의문에 병합하지 않는다. 남은 항목은 아직 수행하지 않은 실측과 acceptance test다.
+Codex와 Claude Code는 핵심 기술 사실, 안전 요건, canonical 데이터 경계, 단계별 게이트에 합의했고 checkpoint·persona·character identity 누락도 복원·재검토했다. 이후 사용자는 17개 제품 결정을 별도 기록으로 확정하고 E2EE를 선택했다. E2EE의 상세 byte·key·pairing 계약은 [별도 제안서](2026-08-27-sync-encryption-proposal.md)에 있으며 Codex의 고정 vector 독립 재현과 QR verifier 보완을 거쳐 이 합의문의 하위 구현 계약으로 채택한다. 남은 항목은 아직 수행하지 않은 구현과 acceptance test다.
 
 이 문서는 내용이 충돌할 경우 두 제안서의 기술적 결론보다 우선한다. 최초 제안서와 r2 문서는 검토 이력으로 보존하며 더 이상 동기화해 고치지 않는다.
 
@@ -35,7 +35,7 @@ Codex와 Claude Code는 핵심 기술 사실, 안전 요건, canonical 데이터
 
 아래는 기술적 단계 구분이며 **실행 지시가 아니다.** 각 phase는 사용자의 별도 요청이 있을 때만 시작한다.
 
-- Phase 0 inventory와 rollback 검증은 비파괴 경로로 시작할 수 있다.
+- Phase 0 inventory와 archive 검증은 세 source space에서 완료됐다. 이는 cloud upload 승인이 아니다.
 - Phase 1 계약 작성과 Phase 2 합성 Cloudflare 시험은 시작할 수 있다.
 - 합성 데이터만 쓰는 Phase 4 read-only UI prototype은 시작할 수 있다.
 - 실데이터를 쓰는 Phase 3 Shadow Upload는 관련 결정과 acceptance gate가 충족될 때까지 보류한다.
@@ -534,6 +534,8 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-27 | Codex | E2EE 2차 보정과 문서 상태 동기화 작성; Claude Code 독립 재검토 대기 |
 | 2026-08-27 | Claude Code | `618d370`·`377b717` 독립 재검토 완료; LP v1 vector 재현과 clean-checkout 링크 0건 확인, pairing claim 열람 권한과 HKDF 파생 단계 2건 보정 요청 |
 | 2026-08-27 | Claude Code | E2EE 3차 보정 — R1은 Worker 접근 통제(선택지 a)로 확정, R2는 HKDF Extract/Expand 단계 확정과 고정 vector 추가, `alg` AAD 결속, Phase 0 실측값 반영; Codex 통합 검토 대기 |
+| 2026-08-27 | Codex | `eb2d860`에서 동일 signer의 data-preserving Tablet 조사·원복을 완료하고 세 source space Phase 0 실측을 확정 |
+| 2026-08-27 | Codex | E2EE 고정 vector를 독립 재현하고 QR redeem verifier 등록·identity 결속·원자적 소비 공백을 보완; 기술 계약 통합 검토 완료, 구현 승인은 계속 보류 |
 
 ## 🔗 참고 자료
 

@@ -1,5 +1,7 @@
 # E2EE 제안서 3차 보정 설명
 
+> **검토 이력 문서:** 이 문서는 `c327650` 작성 시점의 상태를 보존한다. 현재 판정과 후속 보정은 [E2EE 제안서](2026-08-27-sync-encryption-proposal.md)와 [Codex 통합 검토](2026-08-27-e2ee-codex-integration-review.md)를 따른다.
+
 ## 문서 상태
 
 - 작성일: 2026-08-27

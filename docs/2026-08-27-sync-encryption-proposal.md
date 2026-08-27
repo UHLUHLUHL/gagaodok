@@ -6,8 +6,9 @@
 - 1차 개정: 2026-08-27 (Claude Code, commit `ea8b34f`)
 - 2차 개정: 2026-08-27 (Codex)
 - 3차 보정: 2026-08-27 (Claude Code) — R1·R2·`alg` AAD·Phase 0 실측값 반영
-- 상태: **E2EE 3차 보정 작성 완료 / Codex 통합 검토 대기 / 구현 승인 아님 / Cloudflare 리소스 생성·앱 코드 구현·실데이터 업로드 승인 아님**
-- 재검토 이력: [`618d370`/`377b717` Claude Code 독립 재검토](2026-08-27-e2ee-2nd-revision-claude-review.md)(당시 이력, 본문 보존), [3차 보정 설명](2026-08-27-e2ee-3rd-revision-notes.md)
+- 4차 통합: 2026-08-27 (Codex) — 고정 vector 독립 재현, redeem verifier 등록·결속 보완, Tablet 실측 통합
+- 상태: **E2EE 기술 계약 통합 검토 완료 / 구현·contract test 미완료 / Cloudflare 리소스 생성·앱 코드 구현·실데이터 업로드 승인 아님**
+- 재검토 이력: [`618d370`/`377b717` Claude Code 독립 재검토](2026-08-27-e2ee-2nd-revision-claude-review.md)(당시 이력, 본문 보존), [3차 보정 설명](2026-08-27-e2ee-3rd-revision-notes.md), [Codex 통합 검토](2026-08-27-e2ee-codex-integration-review.md)
 - 선행: [합의문](CROSS_DEVICE_SYNC_AGREEMENT.md), [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md), [Codex 교차검토](2026-08-27-sync-encryption-codex-review.md)
 - 이 문서를 쓰며 앱 코드·실제 대화 데이터·Cloudflare 리소스는 변경하지 않았다.
 
@@ -216,7 +217,7 @@ Swift `CryptoKit`은 `HKDF.deriveKey(inputKeyMaterial:salt:info:outputByteCount:
 
 ### 3.3 고정 key derivation vector
 
-아래 값은 표준 라이브러리만으로 구현한 독립 스크립트로 계산했다. 계산 전에 **RFC 5869 A.1·A.3 test vector로 HKDF 구현 자체를 먼저 검증**했다. Swift·Kotlin contract test는 이 값을 그대로 기대값으로 사용한다. 재현 절차는 [3차 보정 설명](2026-08-27-e2ee-3rd-revision-notes.md)에 있다.
+아래 값은 표준 라이브러리만으로 구현한 독립 스크립트로 계산했다. 계산 전에 **RFC 5869 A.1 test vector로 HKDF 구현 자체를 먼저 검증**했고 null·empty·field ordering도 별도 시험했다. Swift·Kotlin contract test는 이 값을 그대로 기대값으로 사용한다. 저장소의 [`tools/e2ee_contract_vectors.py`](../tools/e2ee_contract_vectors.py)와 [고정 테스트](../tools/tests/test_e2ee_contract_vectors.py)로 재현할 수 있다.
 
 **시험 전용 입력이며 실제 배포 키가 아니다.**
 
@@ -330,13 +331,13 @@ QR의 session 승인만으로는 부족하다. QR을 촬영한 다른 사람이 
 4. Worker에 짧은 TTL의 session 생성; QR에는 session_id와 pairing_secret 표시
 5. 새 기기가 32B claim_secret과 UUID claim_id 생성
 6. 새 기기가 device info·claim_secret을 pairing_claim_key로 암호화해 claim 제출
-7. Worker는 claim_id·claim_lookup·claim ciphertext를 session에 저장
+7. 새 기기는 `claim_redeem_verifier`를 계산해 claim과 함께 제출하고, Worker는 claim_id·claim_lookup·claim ciphertext·redeem verifier를 session에 저장
 8. 기존 기기가 인증된 경로로 claim을 받아 복호화
 9. 두 기기가 같은 6자리 SAS를 표시하고 사용자가 직접 비교
 10. 기존 기기가 일치하는 claim_id를 승인
 11. 기존 기기가 그 claim 전용 delivery_key로 master key package를 암호화
 12. Worker는 승인된 claim_id·claim_lookup에 package와 device token을 결속
-13. 새 기기가 claim_redeem_auth로 1회 redeem하고 master key를 로컬 복원
+13. 새 기기가 claim_redeem_auth를 request body로 보내면 Worker가 verifier를 constant-time 비교하고, 일치하는 승인 claim을 원자적으로 1회 소비한 뒤 package를 반환한다. 새 기기는 master key를 로컬 복원
 ```
 
 정확한 파생 규칙:
@@ -351,12 +352,32 @@ QR의 session 승인만으로는 부족하다. QR을 촬영한 다른 사람이 
 | `pairing_delivery_key` | HKDF-SHA256(`joint_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/pairing-delivery`, 32B) |
 | `pairing_sas_bytes` | HKDF-SHA256(`joint_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/pairing-sas`, 4B) |
 
-SAS는 `UInt32BE(pairing_sas_bytes) mod 1,000,000`을 앞자리 0을 포함한 6자리 숫자로 표시한다. Worker는 평문 `claim_redeem_auth`를 저장하지 않고 `LabeledHash("gagaodok/e2ee/v1/claim-redeem-verifier", claim_redeem_auth)`만 저장한다.
+SAS는 `UInt32BE(pairing_sas_bytes) mod 1,000,000`을 앞자리 0을 포함한 6자리 숫자로 표시한다. Worker는 평문 `claim_redeem_auth`를 저장하지 않고 아래 verifier만 저장한다.
+
+```text
+claim_redeem_verifier = LabeledHash(
+  "gagaodok/e2ee/v1/claim-redeem-verifier",
+  LP([
+    field 1 = session_id UUID ASCII,
+    field 2 = claim_id UUID ASCII,
+    field 3 = claim_lookup 32 bytes,
+    field 4 = claim_redeem_auth 32 bytes
+  ])
+)
+```
+
+고정 시험 입력 `session_id = 33333333-3333-4333-8333-333333333333`, `claim_id = 44444444-4444-4444-8444-444444444444`, `claim_lookup = 00…1f`, `claim_redeem_auth = 20…3f`에서 verifier는 다음 32바이트다.
+
+```text
+9f7c4f2294826ca2618ee42b6bb617dfd1699bb735fcd529c9725007a2bfdc88
+```
+
+Verifier는 claim 제출 시 평문 metadata로 등록하지만 256-bit secret의 단방향 hash이며, session·claim·lookup에 결속된다. Worker는 redeem 요청의 `claim_redeem_auth`로 같은 값을 다시 계산해 constant-time으로 비교한다. URL·log·분석 payload에는 auth와 verifier를 넣지 않는다.
 
 **승인은 반드시 key package 생성·배포 이전에 완료되어야 하며, session 전체가 아니라 `claim_id`와 `claim_lookup`에 결속되어야 한다.** 다른 claim이나 session bearer가 승인 결과를 받을 수 없어야 한다.
 
 - pairing session과 claim은 짧은 만료, 1회 사용, 성공·실패 후 즉시 폐기를 적용한다.
-- claim payload, key package, redeem verifier의 AAD에는 `session_id`·`claim_id`·`claim_lookup`을 포함한다.
+- claim payload와 key package의 AAD에는 `session_id`·`claim_id`·`claim_lookup`을 포함한다. Redeem verifier는 AEAD payload가 아니므로 AAD라는 표현을 쓰지 않고, 위 LP hash 입력으로 같은 세 identity에 결속한다.
 - claim 제출·승인·redeem의 race, QR 복제, 다른 claim의 package 탈취를 Phase 2 합성 시험으로 검증한다.
 - `claim_redeem_auth`는 request body로만 보내고 URL·로그·분석 payload에 남기지 않는다.
 - QR payload는 HTTP URL이 아닌 앱 전용 payload로 encode하며 `pairing_secret`을 universal-link query, clipboard, crash log에 남기지 않는다.
@@ -376,7 +397,7 @@ v1은 이 경로를 **Worker 접근 통제로 막는다.** 아래는 권고가 �
 5. **기존 기기가 claim을 조회할 때 Worker는 그 device token이 해당 pairing session의 account에 결속되어 있는지 확인한다.** 다른 계정의 유효한 token으로는 조회할 수 없다.
 6. **기존 기기의 명시적 승인 이전에는 master key package를 만들지도 배포하지도 않는다.** 승인 전 package 생성 요청은 거부한다.
 7. **Key package는 승인된 `claim_id`와 `claim_lookup`에만 결속한다.** session 단위 승인 flag를 두지 않는다.
-8. **새 기기는 `claim_redeem_auth`로 자신의 승인된 package만 1회 redeem할 수 있다.** 다른 claim의 package는 redeem 대상이 아니다.
+8. **새 기기는 `claim_redeem_auth`로 자신의 승인된 package만 1회 redeem할 수 있다.** Worker는 claim에 저장된 verifier와 constant-time 비교하고, 성공 시 claim·package를 원자적으로 consumed 상태로 바꾼다. 다른 session·claim에서 가져온 verifier나 auth, 두 번째 redeem, 승인되지 않은 claim은 모두 거부한다.
 
 이 계약이 뜻하는 것을 분명히 해 둔다. **claim payload의 암호화는 두 번째 방어선이고, 첫 번째 방어선은 위 접근 통제다.** 두 방어선이 독립적이지 않다는 점이 §10.7의 비보장 근거다.
 
@@ -656,7 +677,8 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 7. **HKDF domain separation** — 같은 root key에서도 field·checkpoint·attachment·compat·pairing label의 결과가 모두 다름
 8. **HKDF 단계 고정** — §3.3의 `scope_prk`·`scope_root_key`·child key 4개를 hex 기대값과 대조한다. **바로 위 7번(domain separation)만으로는 Extract 생략이나 재수행을 잡지 못하므로 이 시험이 별도로 필요하다**(§3.3의 오답 표 참조)
 9. **QR claim binding** — QR 복제·동시 claim·다른 claim redeem·SAS 불일치·승인 전 package 요청을 거부
-10. **claim ciphertext 접근 통제**(§5.1) — §14 Phase 2의 7개 negative test를 contract 수준에서도 고정
+10. **claim ciphertext 접근 통제**(§5.1) — §14 Phase 2의 9개 negative test를 contract 수준에서도 고정
+    - claim 제출 시 redeem verifier 등록, session·claim·lookup 결속, constant-time 비교, 원자적 1회 소비를 포함한다
 11. **recovery verifier와 문구 교체** — 평문 auth 미저장, verifier 비교, R2/D1 중간 실패 시 기존 recovery record 유지
 12. **한글 문자열 왕복** — 조합형·완성형이 섞인 입력이 정확히 복원되어야 한다
 13. **fail closed 검증** — 키가 없을 때 평문이 저장되지 않음
@@ -675,6 +697,7 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 - scope·field·checkpoint·attachment·compat·pairing의 exact HKDF label과 **Extract/Expand 단계**(§3.2)
 - Swift·Kotlin 고정 test vector — §3.3의 key derivation vector 포함
 - **§5.1 claim ciphertext 접근 통제를 Worker API 계약으로 명문화** (조회 권한, 응답 body에서 ciphertext 제외)
+- claim 제출 schema에 `claim_redeem_verifier`를 포함하고, redeem endpoint의 constant-time 비교·원자적 1회 소비 계약을 고정
 - Mac 입력 경로의 12MB 첨부 상한 적용 방식(§9.2)
 - persona Codable 하위호환 계약
 - 복구 문구 생성·재입력 확인 UX
@@ -684,7 +707,7 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 - QR pairing의 1회 사용·만료·replay·폐기 시험
 - **승인 이전에 키가 배포되지 않고 승인된 claim만 redeem함**을 검증
 - QR 복제자가 만든 별도 claim, claim race, SAS 불일치, 다른 claim의 package 탈취를 거부
-- **§5.1 claim ciphertext 접근 통제 시험** — 아래 7개는 모두 거부 또는 부재를 확인하는 negative test다
+- **§5.1 claim ciphertext 접근 통제 시험** — 아래 9개는 모두 거부·부재 또는 원자적 단일 성공을 확인하는 negative test다
   1. QR bearer(`pairing_session_lookup`·`session_id`만 보유)의 claim ciphertext GET 거부
   2. QR bearer의 claim 목록 조회 거부
   3. 유효한 device token으로 **다른 claim**의 ciphertext 조회 거부
@@ -692,6 +715,8 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
   5. 승인 전 key package 생성·조회 거부
   6. 승인되지 않은 claim의 redeem 거부
   7. claim 제출 응답과 session 조회 응답에 claim ciphertext가 **포함되지 않음**을 확인
+  8. 다른 session·claim의 verifier 또는 잘못된 `claim_redeem_auth`로 redeem 거부
+  9. 같은 승인 claim의 동시·반복 redeem 중 정확히 하나만 성공
 - 6.59MB avatar와 2.6MB 첨부를 실제 크기로 R2 업로드·암호화하며 최대 메모리 사용량 측정(§9.2)
 - 복구 문구만으로 새 synthetic device가 wrapped master key를 복원하는 dry run
 - field patch·tombstone·checkpoint가 암호화 payload에서도 보존되는 contract test
@@ -734,7 +759,7 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 
 ## 16. 남은 미결
 
-3차 보정에서 R1(§5.1 접근 통제)·R2(§3.2 HKDF 단계)·`alg` AAD 결속·Phase 0 실측값을 반영했다. **Codex 통합 검토가 끝나기 전에는 기술 합의 완료나 구현 승인으로 표시하지 않는다.**
+3차 보정의 R1(§5.1 접근 통제)·R2(§3.2 HKDF 단계)·`alg` AAD 결속을 Codex가 독립 재현했다. 4차 통합에서 claim redeem verifier의 등록·identity 결속·원자적 1회 소비 절차와 Tablet 실측값을 보완했다. **기술 계약 검토가 완료됐다는 뜻일 뿐 구현·Cloudflare 생성·실데이터 업로드 승인은 아니다.**
 
 ### 16.1 아직 측정하거나 구현 검증하지 않은 값
 
@@ -745,7 +770,7 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 
 ### 16.2 규격은 정했으나 아직 구현하지 않은 것
 
-- §5.1 접근 통제는 **Worker 구현이 지켜야 성립한다.** 문서만으로는 보장되지 않으며 §14 Phase 2의 7개 negative test로 확인한다
+- §5.1 접근 통제는 **Worker 구현이 지켜야 성립한다.** 문서만으로는 보장되지 않으며 §14 Phase 2의 9개 negative test로 확인한다
 - Mac 입력 경로에는 현재 첨부 상한이 없다. 12MB 상한을 실제 코드에 적용하는 작업이 남아 있다
 - §3.3 vector를 Swift·Kotlin contract test fixture로 옮기는 작업
 
