@@ -4,7 +4,7 @@ _실제 대화를 열기 전에 안전한 조사 절차를 고정하기 위한 �
 
 ---
 
-> ✅ **부분 실행 완료(2026-08-27):** 사용자 승인 아래 Mac과 Android phone의 archive·비파괴 inventory·restore drill을 완료했다. Tablet은 연결되지 않아 아직 조사하지 않았다. 실제 대화의 cloud upload나 앱 데이터 변경은 하지 않았다. 결과는 [2026-08-27 Phase 0 조사 결과](2026-08-27-phase0-inventory-result.md)에 기록한다.
+> ✅ **부분 실행 완료(2026-08-27):** 사용자 승인 아래 Mac과 Android phone의 archive·비파괴 inventory·restore drill을 완료했다. Tablet은 무선 디버깅 페어링까지 성공했지만 설치 앱이 non-debuggable이고 `allowBackup=false`라 내부 저장소 획득 단계에서 중단했다. 실제 대화의 cloud upload나 앱 데이터 변경은 하지 않았다. 결과는 [2026-08-27 Phase 0 조사 결과](2026-08-27-phase0-inventory-result.md)에 기록한다.
 
 ## 🎯 목적
 
@@ -171,7 +171,7 @@ Restore 검증은 live app directory에 덮어쓰지 않는다.
 ## 🚦 실행 전 체크리스트
 
 - [x] 사용자가 Mac·phone Phase 0 실행을 명시적으로 승인함
-- [ ] Tablet 획득 방법과 실행 시점을 확정함
+- [ ] Tablet의 non-debuggable·`allowBackup=false` 제약을 넘지 않는 획득 방법을 별도 승인함
 - [x] archive 저장 위치와 권한을 정함
 - [x] inventory tool source와 synthetic fixture를 먼저 작성함
 - [x] 일반 app loader를 참조하지 않는 정적 검사를 통과함

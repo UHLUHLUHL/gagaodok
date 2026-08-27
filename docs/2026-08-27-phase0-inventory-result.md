@@ -1,12 +1,12 @@
 # Gagaodok Phase 0 비파괴 조사 결과
 
-_실행일: 2026-08-27 · 범위: Mac + Android phone · Tablet 미포함_
+_실행일: 2026-08-27 · 범위: Mac + Android phone 완료 · Tablet 획득 경로 조사_
 
 ## 결론
 
 Mac과 Android phone의 실제 저장소를 앱이 멈춘 상태에서 archive로 복사하고, **복사본만** 구조 분석했다. 조사 전후 live source의 파일 집합·크기·수정 시각·SHA-256은 동일했다. 대화 본문, 방 이름, persona 본문, 첨부 이름, base64는 보고서와 실행 log에 기록하지 않았다.
 
-이번 결과는 **Mac·phone Phase 0 조사 완료**를 뜻한다. Tablet 조사, 동기화 구현, 실데이터 cloud upload 승인은 포함하지 않는다.
+이번 결과는 **Mac·phone Phase 0 조사 완료**를 뜻한다. Tablet은 연결과 획득 가능성 확인까지만 했으며 실제 대화는 읽지 못했다. 동기화 구현과 실데이터 cloud upload 승인은 포함하지 않는다.
 
 민감 archive와 상세 기계 보고서는 repository 밖의 다음 잠금 폴더에 있다.
 
@@ -47,6 +47,30 @@ Mac의 `loadMessagesForRoom(roomId:)`, Android의 `ChatStore.loadMessages(...)`�
 | worldline message/digest 파일 | 0 | 3 |
 
 Mac의 방 목록은 6개인데 메시지 파일은 13개다. 본문을 보지 않고 room UUID만 대조해, 삭제된 방의 잔여 파일인지 다른 용도의 파일인지 후속 확인해야 한다. 현재 단계에서는 임의 삭제하지 않는다.
+
+## Tablet 획득 결과
+
+무선 디버깅 페어링과 기기 식별은 성공했다.
+
+- 기기: Samsung `SM-X910`
+- Android: 16
+- application ID: `com.sapiens.gagaodok.tabletmentor`
+- 앱 버전: `2.0-tablet-mentor` (`versionCode=1`)
+- 내부 저장소: `/data/user/0/com.sapiens.gagaodok.tabletmentor/files/KakaoSapiens`
+
+하지만 설치 앱은 다음 두 조건 때문에 표준 ADB read-only export를 허용하지 않는다.
+
+- `run-as`: `package not debuggable`로 거부
+- 설치 APK manifest: `android:allowBackup="false"`
+
+외부 저장소 `/sdcard/Android/data/com.sapiens.gagaodok.tabletmentor`에는 조사 가능한 파일이 0개였다. 내부 저장소 직접 접근도 Android sandbox가 `Permission denied`로 차단했다.
+
+따라서 **Tablet 실제 대화는 한 줄도 읽지 않았고 archive도 만들지 않았다.** 우회 접근은 시도하지 않았다. 다음 단계는 아래 중 하나를 사용자가 별도로 승인해야 한다.
+
+1. 앱에 일회성 진단 archive 내보내기를 구현한다.
+2. 기존 데이터와 서명을 보존할 수 있는 debuggable 빌드의 안전한 설치·복구 절차를 먼저 설계한다.
+
+현재 앱을 삭제하거나 덮어쓰는 방식은 데이터 유실 위험 때문에 선택하지 않는다. Android backup은 설치 앱이 명시적으로 금지해 사용할 수 없다.
 
 ## Turn identity 결과
 
@@ -109,8 +133,8 @@ Mac tar 추출본은 원본의 nanosecond 단위 mtime까지 보존하지 않아
 
 ## 남은 일
 
-1. Tablet을 연결한 뒤 같은 절차로 별도 `TABLET_SPACE` archive와 inventory를 만든다.
+1. 사용자가 승인한 안전한 획득 경로를 마련한 뒤 `TABLET_SPACE` archive와 inventory를 만든다.
 2. Mac의 방 목록 6개와 메시지 파일 13개를 room UUID만으로 대조해 잔여 파일 수를 확정한다.
-3. Claude Code가 도구·결과·수치 해석을 독립 재검토한다.
+3. 도구·결과의 추가 교차검토는 최종 통합 gate에서 필요할 때만 수행한다.
 4. 세 source space 결과가 모이기 전에는 Phase 0 전체 완료로 표시하지 않는다.
 5. Phase 3 실데이터 cloud upload는 계속 보류한다.
