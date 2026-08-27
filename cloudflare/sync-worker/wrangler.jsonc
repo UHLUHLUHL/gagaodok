@@ -1,0 +1,32 @@
+{
+  // Local-only Phase 1 scaffold.
+  //
+  // This Worker is NEVER deployed. Every field below is chosen so that an
+  // accidental `wrangler deploy` cannot reach a real Cloudflare account:
+  //   - workers_dev is false and there are no routes, so nothing is published
+  //   - the D1 database_id is the zero UUID, which matches no real database
+  //   - the R2 bucket name is explicitly marked do-not-create
+  //   - package.json intentionally has no deploy script
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gagaodok-sync-worker-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gagaodok-sync-local",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      "bucket_name": "gagaodok-sync-local-do-not-create"
+    }
+  ],
+  "vars": {
+    "CURSOR_MAC_KEY": "local-development-placeholder-not-a-secret"
+  }
+}
