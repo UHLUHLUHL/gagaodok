@@ -568,7 +568,7 @@ sender, kind, text, canonicalText, persona 전체(`description`·`samples`·`sty
 
 Group·message 안에서 다른 room/character를 가리키는 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `ChatMessage.speakerRoomId`, `MessageReaction.participantRoomId`, `MessageHeartChange.participantRoomId`의 **참조 값도 암호화한다.** entity 자체의 canonical `room_id`·향후 `character_id`는 identity metadata로 평문이지만, 이 다섯 값은 관계 graph이므로 content field로 취급한다.
 
-`GroupChatState.activeWorldlineId`도 현재 선택 상태이므로 암호화한다. 각 message write가 평문 canonical `worldline_id`를 명시하므로 서버가 active 값 자체를 읽을 필요는 없다.
+`GroupChatState.activeWorldlineId`도 현재 선택 상태이므로 암호화한다. 각 message write가 평문 canonical `worldline_id`를 명시하므로 서버가 active 값 자체를 읽을 필요는 없다. 다만 평문 scope와 timestamp를 관찰하면 서버가 최근 active worldline을 추론할 수 있으므로 이 암호화가 선택 상태를 완전히 숨긴다고 보장하지 않는다.
 
 ### 8.3 평문으로 남는 것
 
@@ -651,6 +651,7 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 5. **metadata.** §8.5의 노출 항목.
 6. **복구 문구 분실.** 클라우드 사본을 영구히 읽을 수 없다. 로컬 데이터는 무관하다.
 7. **QR 유출과 claim ciphertext 열람이 동시에 일어나는 경우.** `claim_secret`은 QR에서 유도되는 키로만 보호되므로, QR을 본 주체가 어떤 경로로든 claim ciphertext를 함께 읽으면 `claim_redeem_auth`와 `pairing_delivery_key`를 모두 유도해 **승인된 정상 claim의 key package를 가로챌 수 있다.** v1은 이를 §5.1의 Worker 접근 통제로 막으며 **암호학적으로 막지 않는다.** 따라서 Worker 접근 통제 결함, claim record 유출, 서버 측 저장소 노출이 QR 유출과 겹치면 방어가 없다. SAS는 claim 치환을 잡는 장치이므로 이 경로를 탐지하지 못한다. 암호학적 보장이 필요해지면 §5.2의 강화 선택지를 도입한다.
+8. **현재 worldline 추론.** `activeWorldlineId` 값 자체는 암호화되지만 message write의 canonical `worldline_id`와 timestamp는 routing metadata로 평문이다. 서버는 최근 write 분포로 현재 선택된 worldline을 추론할 수 있으며 v1은 traffic-analysis 방어를 제공하지 않는다.
 
 ## 11. 기기 키 보관
 

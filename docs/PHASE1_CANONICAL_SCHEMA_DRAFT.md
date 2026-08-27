@@ -31,11 +31,11 @@ X0000000-0000-4000-8000-0000000000NN
 └ 첫 자리로 entity 종류를 구분하고 나머지는 0으로 채운다
   1 = room, 2 = worldline, 3 = turn, 4 = message,
   5 = persona snapshot, 6 = checkpoint, 7 = attachment,
-  8 = device, 9 = operation, a = account, b = character,
-  c = engine profile
+  8 = device, 9 = operation, A = account, B = character,
+  C = engine profile
 ```
 
-실제 구현은 표준 random UUID v4를 쓴다. 위 규칙은 문서 예시 전용이다.
+실제 구현은 표준 random UUID v4를 쓴다. 위 규칙은 문서 예시 전용이다. **예시를 포함한 모든 UUID는 E2EE 제안서 §12.3의 대문자 하이픈 36-byte ASCII 형식을 따른다.** importer와 Worker는 소문자를 자동 변환하지 않고 거부한다.
 
 ### 0.2 암호화 표기
 
@@ -96,13 +96,21 @@ Phase 0에서 세 source space를 모두 조사했다. `space_id`는 자유 문�
 
 **`space_id`는 build flavor에서 추론하지 않고 기기 등록 시 확정해 저장한다.** 합의문이 지적한 대로 flavor는 동기화되지 않는다.
 
-Phase 0 tablet report의 raw `source_space` 값은 `"tablet"`이었지만 이것은 canonical enum이 아니다. Importer는 source adapter가 명시적으로 `tablet → TABLET_SPACE`로 한 번 mapping하고, D1·AAD·outbox에는 canonical enum만 넣는다. 대소문자 보정이나 임의 문자열 fallback은 금지한다.
+Phase 0 집계 보고서에 실제 저장된 `source_space` 값은 다음과 같다.
+
+| Phase 0 report 값 | canonical `space_id` | 처리 |
+| --- | --- | --- |
+| `MAC_SPACE` | `MAC_SPACE` | 이미 canonical이므로 그대로 유지 |
+| `PHONE_SPACE` | `PHONE_SPACE` | 이미 canonical이므로 그대로 유지 |
+| `tablet` | `TABLET_SPACE` | 관측된 legacy alias를 한 번 명시적으로 변환 |
+
+Importer는 canonical 세 값은 그대로 허용하고, 관측된 legacy alias `tablet`만 `TABLET_SPACE`로 변환한다. `mac`·`phone`·`Tablet`·`TABLET` 같은 미등록 철자를 대소문자 보정하거나 임의 fallback으로 받아들이지 않는다. D1·AAD·outbox에는 canonical enum만 넣는다.
 
 ### 1.2 device
 
 ```json
 {
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "device_id": "80000000-0000-4000-8000-000000000001",
   "space_id": "MAC_SPACE",
   "display_name": "ENC(device label)",
@@ -129,7 +137,7 @@ Phase 0 tablet report의 raw `source_space` 값은 `"tablet"`이었지만 이것
 2. 확정된 mapping은 `(conversation_scope, message_id)`에 대해 **불변**이다. 같은 원본을 다시 import해도 같은 값을 낸다.
 3. **빈 번호를 허용한다.** 삭제로 번호가 듬성듬성해지는 것은 정상이며, 빠진 번호를 누락 데이터나 삭제 증거로 해석하지 않는다.
 4. 삭제·정렬·재동기화 뒤에도 기존 bubble을 재번호 매기지 않는다.
-5. 새 bubble은 해당 conversation scope 전체의 현재 최대값에 **1을 더한 값**을 받는다. 계획적으로 간격을 두지 않으며 기존 순서를 바꾸지 않는다. 빈 scope의 첫 값은 0이다.
+5. 새 bubble은 해당 conversation scope에서 **tombstone을 포함해 지금까지 배정된 모든 `bubble_order`의 최대값에 1을 더한 값**을 받는다. 살아 있는 bubble만 세지 않는다. 계획적으로 간격을 두지 않으며 기존 순서를 바꾸지 않는다. 한 번도 배정된 적 없는 scope의 첫 값은 0이다.
 
 `bubble_order`는 E2EE 제안서 §7.2의 AAD field 10에 포함되므로, **확정 후 값을 바꾸면 기존 암호문을 복호화할 수 없다.** 이 문서의 불변 규칙은 표시 순서 문제가 아니라 복호화 가능성 문제다.
 
@@ -176,7 +184,7 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 
 ```json
 {
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "space_id": "PHONE_SPACE",
   "room_id": "10000000-0000-4000-8000-000000000001",
   "worldline_id": null,
@@ -189,7 +197,7 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
     "byte_size": 274146
   },
   "engine_profile_ref": {
-    "engine_profile_id": "c0000000-0000-4000-8000-0000000000e1",
+    "engine_profile_id": "C0000000-0000-4000-8000-0000000000E1",
     "profile_revision": 3
   },
   "persona_snapshot_ref": {
@@ -224,7 +232,7 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 | bubble | `attachment_ref` | ⬜ R2 identity·byte size만; filename·MIME·payload는 🔒 |
 | bubble | `timestamp`, `revision`, `server_seq` | ⬜ metadata·CAS |
 
-`canonical_text`와 `heart_changes`를 bubble에 중복 저장하지 않는다. 기존 local JSON으로 내릴 때만 §9.2의 anchor 규칙으로 투영한다. `speaker_ref`·reaction·heart target의 암호화 경계는 §13.2를 따른다. message edit가 비활성인 초기 Phase 5에서도 `revision`은 tombstone CAS와 future compatibility를 위해 유지한다.
+`canonical_text`와 `heart_changes`를 bubble에 중복 저장하지 않는다. 기존 local JSON으로 내릴 때만 §9.3의 anchor 규칙으로 투영한다. `speaker_ref`·reaction·heart target의 암호화 경계는 §13.2를 따른다. message edit가 비활성인 초기 Phase 5에서도 `revision`은 tombstone CAS와 future compatibility를 위해 유지한다.
 
 ---
 
@@ -255,9 +263,9 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 
 ```json
 {
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "space_id": "MAC_SPACE",
-  "engine_profile_id": "c0000000-0000-4000-8000-0000000000e1",
+  "engine_profile_id": "C0000000-0000-4000-8000-0000000000E1",
   "profile_revision": 3,
   "mode": "ENC(mentor)",
   "model_capability": "ENC(capability profile)",
@@ -308,7 +316,7 @@ Android `PersonaStyle`의 저장 필드는 `description`·`samples`·`styleGuide
 
 ```json
 {
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "space_id": "PHONE_SPACE",
   "persona_snapshot_id": "50000000-0000-4000-8000-000000000001",
   "snapshot_revision": 2,
@@ -382,7 +390,7 @@ Phase 0에서 발견한 digest는 Mac 1개, phone 3개이며 **모두 policy 식
 
 ```json
 {
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "space_id": "MAC_SPACE",
   "room_id": "10000000-0000-4000-8000-000000000002",
   "worldline_id": null,
@@ -444,10 +452,10 @@ Phase 0 실측값이다.
 
 ```json
 {
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "attachment_id": "70000000-0000-4000-8000-000000000001",
   "kind": "attachment",
-  "r2_object_key": "obj/70000000-0000-4000-8000-0000000000ff",
+  "r2_object_key": "obj/70000000-0000-4000-8000-0000000000FF",
   "byte_size": 2618357,
   "file_name": "ENC(file name)",
   "mime_type": "ENC(image/png)",
@@ -507,6 +515,19 @@ Android codec은 `explicitNulls = false`이고 Swift의 여러 필드는 `decode
 
 **receiver는 배열 원소가 없다는 이유로 삭제를 추론하지 않는다.** tombstone에는 target identity, `operation_id`, `base_revision`, actor/device, server ordering을 담는다.
 
+### 9.1 D1 보존 규칙
+
+v1 tombstone은 별도 기록만 남기고 원본 entity를 지우는 방식이 아니라 **turn·bubble canonical 행을 보존하는 soft delete**다.
+
+- `turn`과 `bubble` 행은 ⬜ `is_tombstoned`, ⬜ `tombstoned_at`, ⬜ `tombstone_operation_id`를 가진다.
+- `is_tombstoned = 1`인 행도 primary/unique key와 scope-wide `bubble_order` unique 제약에 계속 참여한다.
+- `delete_turn`은 turn과 모든 child bubble을 같은 D1 transaction에서 tombstone 처리하며 identity·order 행을 물리 삭제하지 않는다. **본문·canonical text·heart change reason·extension 등 암호화 content 컬럼은 tombstone 적용과 함께 `NULL`로 비운다.** tombstone 보존은 삭제된 내용을 보관한다는 뜻이 아니다.
+- Worker는 호감도 암호문을 해석할 수 없으므로, 호감도 되돌림이 필요한 operation은 권한 있는 client가 계산한 새 encrypted worldline/group state patch를 함께 보낸다. 이 patch와 turn·bubble tombstone이 하나의 CAS transaction으로 성공하거나 모두 rollback된다.
+- pull·bootstrap projection은 tombstone identity와 ordering metadata를 내려주되 삭제된 content를 활성 entity처럼 노출하지 않는다.
+- v1에는 tombstone retention 만료나 물리 삭제를 두지 않는다.
+
+따라서 삭제된 꼬리 bubble의 번호도 영구히 은퇴하며 새 bubble에 재사용되지 않는다. 향후 tombstone을 물리 삭제하려면 먼저 conversation scope별 `next_bubble_order` 또는 `max_assigned_bubble_order` watermark를 별도 canonical 행에 영구 보존하고, 발급 transaction이 그 값을 CAS로 증가시키도록 규격을 바꿔야 한다.
+
 ```json
 {
   "operation_id": "90000000-0000-4000-8000-000000000002",
@@ -524,20 +545,20 @@ Android codec은 `explicitNulls = false`이고 Swift의 여러 필드는 `decode
 }
 ```
 
-### 9.1 플랫폼 삭제 의미가 다르다
+### 9.2 플랫폼 삭제 의미가 다르다
 
 - Mac은 선택한 message와 같은 `turnId`를 공유하는 **모든 bubble**을 지운다.
 - Android는 선택한 `message.id` **하나**만 지운다.
 
 Android의 bubble 삭제는 turn과 현재 호감도 값은 남긴 채 첫 bubble의 `canonicalText` 또는 마지막 bubble의 `heartChanges` 근거만 없앨 수 있다. **따라서 canonical turn entity가 local bubble anchor와 독립적으로 이 값을 소유해야 한다.**
 
-### 9.2 사용자 결정 반영
+### 9.3 사용자 결정 반영
 
 - 결정 10: **AI 답변은 턴 전체를 삭제한다.** 최초 활성화 버전은 `delete_turn`을 기본으로 한다.
 - 결정 11: **하트도 되돌린다.** 단 되돌릴 `heart_changes` 기록이 없으면 삭제만 하고 하트는 건드리지 않는다(`reverts_heart_changes = false`).
 - 결정 15: **수정·삭제는 첫 테스트에서 막아둔다.** 즉 이 절의 operation은 schema에 정의하되 Phase 5 초기에는 전송·수용하지 않는다.
 
-`delete_turn`이 단톡방에서 실행되면 여러 화자의 bubble과 여러 참여자의 하트 변화가 **함께 원자적으로** 되돌아간다(결정 4·10·11 조합).
+`delete_turn`이 단톡방에서 실행되면 여러 화자의 bubble tombstone과 권한 있는 client가 계산한 여러 참여자의 encrypted 하트 상태 patch가 **함께 원자적으로** 적용된다(결정 4·10·11 조합). Worker가 하트 값을 복호화하거나 직접 계산하지 않는다.
 
 **통합 결정:** headless turn을 만들지 않는다. 마지막 bubble을 지우려는 `delete_bubble`은 `delete_turn`으로 승격하며, turn과 모든 child bubble을 같은 transaction에서 tombstone 처리한다.
 
@@ -559,7 +580,7 @@ canonical turn의 `canonical_text`·`heart_changes`는 bubble과 독립된 turn-
 ```json
 {
   "operation_id": "90000000-0000-4000-8000-000000000003",
-  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
   "device_id": "80000000-0000-4000-8000-000000000001",
   "op": "patch_room",
   "target_scope": {
@@ -633,7 +654,7 @@ Phase 0 실측도 이와 일치한다. 단톡방·worldline은 `PHONE_SPACE`에�
 | `worldline` | `participant_hearts` | 🔒 participant reference와 현재 하트 값 |
 | `worldline` | `revision`, `server_seq` | ⬜ CAS·ordering |
 
-`participants`와 `participant_hearts`는 unknown member 보존이 가능한 canonical payload로 직렬화한다. 둘의 participant reference 값은 §13.2에 따라 암호화한다. `active_worldline_id`는 다음 message의 canonical scope를 결정하므로 local-only 선택 상태로 두지 않되, 서버 routing에는 각 write가 명시한 scope만 필요하므로 값은 암호화한다. `group_state`·`worldline` create/patch는 `PHONE_SPACE`가 아니면 거부한다.
+`participants`와 `participant_hearts`는 unknown member 보존이 가능한 canonical payload로 직렬화한다. 둘의 participant reference 값은 §13.2에 따라 암호화한다. `active_worldline_id`는 다음 message의 canonical scope를 결정하므로 local-only 선택 상태로 두지 않되, 서버 routing에는 각 write가 명시한 scope만 필요하므로 값은 암호화한다. **그러나 각 write의 평문 `worldline_id`와 timestamp를 관찰하면 서버가 최근 active worldline을 추론할 수 있으므로, 암호화가 선택 상태를 완전히 숨긴다고 보장하지 않는다.** `group_state`·`worldline` create/patch는 `PHONE_SPACE`가 아니면 거부한다.
 
 ---
 
@@ -735,8 +756,8 @@ Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId
 | `room` | `(account_id, space_id, room_id)` | — | `space_id`를 키에 넣어 space 간 UUID 충돌을 막는다 |
 | `group_state` | `(account_id, space_id, room_id)` | — | v1은 `PHONE_SPACE`만 허용 |
 | `worldline` | `(account_id, space_id, room_id, worldline_key)` | — | `worldline_key` 규칙은 §14.2 |
-| `turn` | `(account_id, space_id, room_id, worldline_key, turn_id)` | — | |
-| `bubble` | `(…scope key…, turn_id, message_id)` | `(…scope key…, message_id)`, `(…scope key…, bubble_order)` | message와 방 전체 표시 순서를 각각 유일하게 유지 |
+| `turn` | `(account_id, space_id, room_id, worldline_key, turn_id)` | — | `is_tombstoned` soft-delete; v1 물리 삭제 금지 |
+| `bubble` | `(…scope key…, turn_id, message_id)` | `(…scope key…, message_id)`, `(…scope key…, bubble_order)` | tombstone 행도 unique 제약에 참여; v1 물리 삭제 금지 |
 | `persona_snapshot` | `(account_id, space_id, persona_snapshot_id, snapshot_revision)` | — | immutable revision 행 |
 | `persona_snapshot_head` | `(account_id, space_id, persona_snapshot_id)` | — | 현재 revision을 CAS로 전진 |
 | `engine_profile` | `(account_id, space_id, engine_profile_id, profile_revision)` | — | immutable revision 행 |
@@ -800,21 +821,29 @@ Worker는 같은 `operation_id`가 없을 때만 account row의 `next_server_seq
 | 그 JSON 안 attachment base64 추정 | 12,494,244 | decoded 9,370,679 byte의 `4 × ceil(n/3)` 합계, R2로 이동 |
 | media 제거 후 text·JSON 구조 추정 | **4,501,741** | 암호화 전 계획값 |
 
-남은 4,501,741 byte 전체에 보수적으로 base64 4/3 배를 적용하면 **6,002,322 byte**다. 여기에 암호화 field instance 수를 `F`라 할 때 제시된 AEAD 봉투 고정 오버헤드 약 44 byte를 더한다.
+E2EE §7.1 봉투의 binary 고정 오버헤드는 `version 1 + alg 1 + key_generation 4 + nonce 12 + GCM tag 16 = 34 bytes`다. 패딩 포함 표준 Base64의 정확한 길이는 `4 × ceil(n / 3)`이므로 plaintext 크기가 `p_i`인 field 하나의 D1 text 길이는 다음과 같다.
 
 ```text
-estimated_d1_payload_bytes ≈ 6,002,322 + 44 × F
+field_i_bytes = 4 × ceil((p_i + 34) / 3)
+exact_payload_bytes = Σ field_i_bytes
 ```
 
-| 가정한 `F` | payload 추정 |
+현재는 field별 `p_i`를 세지 않았으므로 총 plaintext `P = 4,501,741`과 field 수 `F`만으로 정확값을 낼 수 없다. 각 field의 Base64 padding 차이를 포함한 보수적 범위는 다음과 같이 둔다.
+
+```text
+lower = 4 × ceil((P + 34F) / 3)
+upper = 4 × floor((P + 34F + 2F) / 3)
+```
+
+| 가정한 `F` | D1 암호문 text 범위 |
 | ---: | ---: |
-| 10,000 | 6,442,322 bytes (약 6.44 MB) |
-| 25,000 | 7,102,322 bytes (약 7.10 MB) |
-| 50,000 | 8,202,322 bytes (약 8.20 MB) |
+| 10,000 | 6,455,656 ~ 6,482,320 bytes |
+| 25,000 | 7,135,656 ~ 7,202,320 bytes |
+| 50,000 | 8,268,988 ~ 8,402,320 bytes |
 
-Phase 0 보고서는 민감한 본문을 남기지 않기 위해 **암호화 field instance 총수 `F`를 세지 않았다.** 따라서 현재의 정직한 결론은 “초기 D1 text payload는 대략 6~8.2MB 규모일 가능성이 높고, 정확값은 합성 importer가 field count와 serialized row size를 출력한 뒤 확정”이다. index·PK·row header, 이전 revision, tombstone, operation/change log, 향후 증가는 위 숫자에 포함되지 않는다.
+Phase 0 보고서는 민감한 본문을 남기지 않기 위해 **암호화 field instance 총수 `F`와 field별 byte 분포를 세지 않았다.** 따라서 현재의 정직한 결론은 “초기 D1 암호문 text는 예시 `F` 범위에서 약 6.46~8.40MB 규모일 가능성이 높고, 정확값은 합성 importer가 field별 envelope를 실제 직렬화한 뒤 확정”이다. index·PK·row header, 평문 metadata, 이전 revision, tombstone, operation/change log, 향후 증가는 위 숫자에 포함되지 않는다.
 
-현재 D1 Free 한도는 database당 500MB, account 전체 5GB, row/string/BLOB당 2MB다. 위 초기 payload는 database 한도의 약 1.2~1.7%지만, 평균이 아니라 **개별 암호문이 2MB를 넘지 않는지**도 별도 fixture로 검증해야 한다. D1은 한 database에서 query를 순차 처리하며 `batch()`는 하나가 실패하면 전체 sequence를 rollback한다. 근거: [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), [D1 `batch()`](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch).
+현재 D1 Free 한도는 database당 500MB, account 전체 5GB, row/string/BLOB당 2MB다. 위 초기 암호문 text 범위는 database 한도의 약 1.3~1.7%지만, 평균이 아니라 **개별 암호문이 2MB를 넘지 않는지**도 별도 fixture로 검증해야 한다. D1은 한 database에서 query를 순차 처리하며 `batch()`는 하나가 실패하면 전체 sequence를 rollback한다. 근거: [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), [D1 `batch()`](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch).
 
 ---
 
@@ -824,12 +853,12 @@ Phase 0 보고서는 민감한 본문을 남기지 않기 위해 **암호화 fie
 | ---: | --- | --- |
 | 1 | §0.2 | D1 암호문 컬럼은 `_enc`; wire field path는 canonical 이름 유지 |
 | 2 | §1.2 | 한 `space_id`에 여러 device 허용; 동시성은 CAS·authority로 통제 |
-| 3 | §2 | `bubble_order`는 scope-wide `0...2^53-1`, 최초 0-based index, 신규는 scope `max+1` |
+| 3 | §2·§9.1 | `bubble_order`는 scope-wide `0...2^53-1`, 최초 0-based index, tombstone 포함 `max+1`; 번호 재사용 금지 |
 | 4 | §3.3 | `<owner>.<entity>.<field>` namespace, key별 독립 봉투 |
 | 5 | §4 | `engine_profile`은 별도 immutable version entity, room이 exact revision 참조 |
 | 6 | §4 | `relationship_policy = group`은 v1 `PHONE_SPACE` 전용 |
 | 7 | §6.3 | legacy digest는 opaque read-only 보존; 필요할 때 원본에서 새 version 생성 |
-| 8 | §9.2 | 마지막 bubble 삭제는 `delete_turn`; headless turn 금지; first/last anchor 규칙 |
+| 8 | §9.3 | 마지막 bubble 삭제는 `delete_turn`; headless turn 금지; first/last anchor 규칙 |
 | 9 | §14.2 | D1 key는 checked materialized `worldline_key`; API·AAD는 nullable `worldline_id` 유지 |
 | 10 | §14.3 | account-wide `server_seq` 단일 cursor |
 | 11 | §13.2 | character migration 대상 다섯 relationship 참조값은 암호화 |
@@ -851,9 +880,12 @@ Phase 0 보고서는 민감한 본문을 남기지 않기 위해 **암호화 fie
 - 같은 turn 안에서 `bubble_order` 중복을 허용해 표시 순서가 모호해질 수 있던 것을 unique constraint로 막았다.
 - generated column을 primary key에 쓸 수 없는 SQLite 제약을 반영해 checked materialized `worldline_key`로 바꿨다.
 - Phase 0 tablet raw label `tablet`과 canonical `TABLET_SPACE`가 다른 점을 importer mapping으로 명시했다.
+- Phase 0 보고서의 실제 Mac·phone 값이 이미 `MAC_SPACE`·`PHONE_SPACE`임을 확인해 canonical pass-through와 legacy `tablet` 변환을 분리했다.
+- tombstone 행의 보존 위치가 불명확해 꼬리 `bubble_order`가 재사용될 수 있던 문제를 §2·§9.1·§14.1의 soft-delete 계약으로 막았다.
+- 예시 UUID 세 종류의 소문자 표기를 E2EE canonical 대문자 형식으로 통일했다.
 - character migration의 다섯 참조가 암호화 목록에 없던 것을 §13.2와 E2EE 제안서 §8.2에 반영했다.
 - unsupported profile을 무조건 read-only로 둬 사용자 결정 8과 충돌하던 문구를, 고지된 명시적 fallback과 turn별 실제 generation profile 기록으로 수정했다.
-- Phase 0 총 archive byte를 그대로 D1 용량으로 오해하지 않도록 R2 media·local-only data를 분리한 추정식을 §14.4에 추가했다.
+- Phase 0 총 archive byte를 그대로 D1 용량으로 오해하지 않도록 R2 media·local-only data를 분리하고, 표준 Base64 padding과 34-byte binary 봉투를 반영한 범위식을 §14.4에 추가했다.
 
 ## 16. Phase 1 완료 조건
 

@@ -167,7 +167,7 @@ GET /v1/sync/changes?after_seq=10400&limit=100
 - response는 `change_log` page와 각 identity의 **현재 canonical projection**을 함께 돌려준다.
 - 같은 entity가 page 안에 여러 번 나오면 identity를 deduplicate해 최신 projection 하나만 포함해도 된다.
 - projection의 `server_seq`가 page 마지막 sequence보다 클 수 있다. client는 entity revision/server_seq가 더 낮거나 같은 후속 event를 idempotently 무시한다.
-- tombstone은 영구 identity row로 유지해 bootstrap과 pull 모두에서 삭제를 재현한다.
+- turn·bubble tombstone은 canonical 행의 soft-delete 상태로 영구 유지해 bootstrap과 pull 모두에서 삭제를 재현한다. v1 Worker는 tombstone 행을 물리 삭제하지 않는다.
 
 ```json
 {
@@ -219,7 +219,7 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 4. 신규 operation이면 D1 `batch()` 한 번에 다음 statement를 순서대로 실행한다.
    1. `transaction_guard`에 base revision/existence 검증 결과를 삽입한다. false는 `CHECK` violation으로 전체 rollback한다.
    2. account `next_server_seq`를 1 증가시킨다.
-   3. canonical row create/patch/tombstone을 적용한다.
+   3. canonical row create/patch 또는 soft-delete tombstone을 적용한다. `delete_turn`은 turn과 모든 child bubble을 같은 batch에서 `is_tombstoned = 1`로 바꾸며 행을 삭제하지 않는다.
    4. `operation_log`에 fingerprint·결과 revision·할당 sequence를 삽입한다.
    5. `change_log`에 identity·change kind·revision·sequence를 삽입한다.
    6. 임시 guard row를 삭제한다.
@@ -227,7 +227,17 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 
 `batch()`는 statement를 순차 실행하고 하나가 실패하면 전체 sequence를 rollback한다. CAS mismatch가 단순히 `UPDATE 0 rows`로 끝나면 batch는 성공해 버리므로 **guard constraint가 필수**다.
 
-### 5.2 sequence 규칙
+### 5.2 tombstone과 `bubble_order`
+
+- `turn`·`bubble`은 `is_tombstoned`, `tombstoned_at`, `tombstone_operation_id`를 가진다.
+- tombstone 행도 `(account, scope, bubble_order)` unique 제약과 `max + 1` 계산에 포함한다.
+- tombstone 적용 시 identity·order·삭제 metadata만 남기고 암호화 content 컬럼은 `NULL`로 비운다. soft-delete는 삭제된 content를 계속 보관한다는 뜻이 아니다.
+- 호감도 되돌림은 Worker 계산이 아니라 client가 함께 보낸 encrypted group/worldline state patch이며, tombstone과 같은 CAS batch에서 적용한다.
+- 새 bubble의 번호는 살아 있는 행만 대상으로 계산하지 않는다.
+- v1에는 tombstone retention·물리 삭제 endpoint와 cleanup job을 두지 않는다.
+- 향후 물리 삭제를 도입하려면 scope별 최고 발급 번호 watermark를 먼저 영구 entity로 만들고 CAS 발급을 검증한다.
+
+### 5.3 sequence 규칙
 
 - `server_seq`는 account 단위 `1...2^53-1`이다.
 - 성공한 신규 operation만 한 값을 소비한다.
@@ -236,7 +246,7 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 - 상한 도달 시 wrap하지 않고 fail-closed한다.
 - `change_log(account_id, server_seq)` index는 pull hot path다.
 
-### 5.3 read consistency
+### 5.4 read consistency
 
 v1은 read replication을 활성화하지 않는다. 활성화하는 후속 버전은 D1 Sessions API를 사용한다.
 
@@ -318,6 +328,9 @@ pairing/recovery material은 sync operation log와 일반 request log에 들어�
 - 같은 operation 재시도는 동일 결과, 다른 payload는 mismatch
 - CAS 실패 시 canonical row·sequence·operation/change log가 모두 불변
 - concurrent identical operation은 하나만 적용
+- tombstone된 꼬리 bubble 뒤 새 bubble이 이전 번호를 재사용하지 않음
+- `delete_turn` 중간 실패 시 turn·child bubble·heart revert·change log가 모두 rollback
+- 성공한 `delete_turn` 뒤 identity·order는 남고 encrypted content 컬럼은 비어 있음
 - nullable worldline null/UUID가 D1 key와 E2EE AAD에서 같은 scope
 - pull page를 중간 crash 뒤 재적용해도 결과 동일
 - bootstrap 중 concurrent write가 있어도 bootstrap+pull 결과가 최신 상태

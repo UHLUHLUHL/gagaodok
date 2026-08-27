@@ -272,6 +272,12 @@ it("rejects duplicate scope-wide bubble order", async () => {
   await insertBubble({ turnId: T1, messageId: M1, bubbleOrder: 4 });
   await expect(insertBubble({ turnId: T2, messageId: M2, bubbleOrder: 4 })).rejects.toThrow();
 });
+
+it("does not reuse the last tombstoned order", async () => {
+  await insertBubble({ turnId: T1, messageId: M1, bubbleOrder: 4 });
+  await tombstoneTurn(T1);
+  expect(await allocateNextBubbleOrder(SCOPE)).toBe(5);
+});
 ```
 
 - [ ] **Step 2: migration 전 test 실패를 확인한다**
@@ -294,19 +300,23 @@ extension_field, attachment, operation_log, change_log, transaction_guard
 
 ```sql
 CHECK (worldline_key = COALESCE(worldline_id, ''))
+CHECK ((is_tombstoned = 0 AND tombstoned_at IS NULL AND tombstone_operation_id IS NULL)
+    OR (is_tombstoned = 1 AND tombstoned_at IS NOT NULL AND tombstone_operation_id IS NOT NULL))
 UNIQUE (account_id, space_id, room_id, worldline_key, bubble_order)
 UNIQUE (account_id, space_id, room_id, worldline_key, message_id)
 PRIMARY KEY (account_id, operation_id)
 PRIMARY KEY (account_id, server_seq)
 ```
 
-index는 change pull, operation replay, entity projection에 실제 쓰는 것만 둔다. test에서 `EXPLAIN QUERY PLAN`이 `change_log` full scan이 아닌 index search인지 확인한다.
+`turn_entity`와 `bubble`에 `is_tombstoned`, `tombstoned_at`, `tombstone_operation_id`를 두고 v1 query에서 물리 삭제하지 않는다. `bubble_order` unique 제약과 다음 번호 조회는 tombstone 행도 포함한다. index는 change pull, operation replay, entity projection에 실제 쓰는 것만 둔다. test에서 `EXPLAIN QUERY PLAN`이 `change_log` full scan이 아닌 index search인지 확인한다.
+
+Tombstone 적용 test는 identity·order·삭제 metadata는 남고 `text_enc`, `canonical_text_enc`, `heart_changes_enc`, extension content가 `NULL`인지도 확인한다. 삭제된 content를 soft-delete 행에 계속 보존하지 않는다.
 
 - [ ] **Step 4: local D1 schema test를 통과시킨다**
 
 Run: `npm test -- --run test/schema.spec.ts`
 
-Expected: null/UUID mapping, tenant duplicate, order duplicate, FK/PK test PASS.
+Expected: null/UUID mapping, tenant duplicate, order duplicate, tombstone 번호 은퇴, FK/PK test PASS.
 
 - [ ] **Step 5: migration을 커밋한다**
 
@@ -393,6 +403,15 @@ it("replays identical operation without a new sequence", async () => {
   expect(second.result.status).toBe("replayed");
   expect(second.result.server_seq).toBe(first.result.server_seq);
 });
+
+it("rolls back an incomplete delete_turn", async () => {
+  await seedTurnWithThreeBubbles();
+  injectFailureAfterChildTombstone(1);
+  const response = await deleteTurn();
+  expect(response.status).toBe(500);
+  expect(await readTurnAndBubbles()).toEqual(beforeDeleteFixture());
+  expect(await changeCount()).toBe(0);
+});
 ```
 
 - [ ] **Step 2: test 실패를 확인한다**
@@ -410,7 +429,7 @@ export interface ApplyResult {
 }
 ```
 
-HTTP handler는 body를 최대 `2,000,000 bytes`까지만 읽고, JSON parse·schema 검증 전에 원본 bytes의 SHA-256을 계산한다. 그 fingerprint를 parsed operation과 함께 storage layer에 넘긴다. CAS 불일치는 `transaction_guard CHECK`를 실패시켜 rollback한다. unique race는 기존 operation fingerprint를 다시 읽어 replay/mismatch로 분류한다. client retry는 outbox에 보관한 동일 bytes를 재전송해야 한다.
+HTTP handler는 body를 최대 `2,000,000 bytes`까지만 읽고, JSON parse·schema 검증 전에 원본 bytes의 SHA-256을 계산한다. 그 fingerprint를 parsed operation과 함께 storage layer에 넘긴다. CAS 불일치는 `transaction_guard CHECK`를 실패시켜 rollback한다. unique race는 기존 operation fingerprint를 다시 읽어 replay/mismatch로 분류한다. client retry는 outbox에 보관한 동일 bytes를 재전송해야 한다. `delete_turn`은 turn·모든 child bubble·client가 계산한 encrypted 호감도 state patch·operation/change log를 한 batch에서 갱신한다. identity·order 행은 남기되 암호화 content 컬럼은 비운다.
 
 - [ ] **Step 4: 동시 identical request를 포함해 통과시킨다**
 
@@ -674,6 +693,7 @@ git commit -m "Phase 1 Worker local 합성 통합을 검증"
 ## Plan self-review 결과
 
 - Schema §1~15의 각 결정은 Tasks 3~8 중 하나에 acceptance가 있다.
+- Tombstone soft-delete와 `bubble_order` 영구 은퇴는 Tasks 4·6에서 schema·transaction 양쪽으로 검증한다.
 - E2EE key derivation 자체는 Worker가 하지 않으며 Task 9는 verifier와 접근 통제만 담당한다.
 - D1/R2 remote 생성 명령은 없다. dry-run만 Task 10에 있다.
 - Mac·Android는 Worker interface가 측정되기 전 구현하지 않도록 별도 sub-project로 분리했다.
