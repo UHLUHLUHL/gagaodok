@@ -12,7 +12,7 @@
 | 📱 Android 폰 | [gagaodok-phone.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/gagaodok-phone.apk) | Android 8.0+ |
 | 📱 Android 태블릿 멘토 | [gagaodok-tablet-mentor.apk](https://github.com/UHLUHLUHL/gagaodok/releases/latest/download/gagaodok-tablet-mentor.apk) | Android 8.0+ |
 
-설치·초기 설정은 [설치방법.txt](설치방법.txt)를 보십시오. 둘 다 API 키(Gemini)를
+설치·초기 설정은 [설치방법.txt](docs/installation/설치방법.txt)를 보십시오. 둘 다 API 키(Gemini)를
 직접 발급받아 등록해야 동작합니다 — 앱에 내장된 키는 없습니다.
 
 ## 구조
@@ -24,8 +24,8 @@
 | 실행 | `./run.sh` | Android Studio 또는 `./gradlew installDebug` |
 
 두 플랫폼이 같은 기능을 유지해야 하는 구조입니다. 어디에 무엇이 있는지는
-[ARCHITECTURE.md](ARCHITECTURE.md)를, 왜 지금 구조로 나눴는지는
-[REFACTOR.md](REFACTOR.md)를 보십시오.
+[ARCHITECTURE.md](docs/ARCHITECTURE.md)를, 왜 지금 구조로 나눴는지는
+[REFACTOR.md](docs/REFACTOR.md)를 보십시오.
 
 Android는 `phone`과 `tabletMentor` product flavor로 배포합니다. 폰판은 기존
 `com.sapiens.gagaodok` 패키지와 모바일 하단 탭 UI를 유지하고, 태블릿 멘토판은
@@ -34,8 +34,8 @@ Android는 `phone`과 `tabletMentor` product flavor로 배포합니다. 폰판�
 
 ## 같이 볼 문서
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 하고 싶은 일별로 열어야 할 파일 찾기
-- [REFACTOR.md](REFACTOR.md) — 서비스 파일을 왜, 어떻게 나눴는지
-- [TOKEN_COST.md](TOKEN_COST.md) — 대화가 길어질수록 요금이 왜 오르는지, 고칠 곳
-- [MAC_BACKPORT.md](MAC_BACKPORT.md) — 안드로이드에서 먼저 고친 것 중 맥에 옮긴 기록
-- [android/MEASURED.md](android/MEASURED.md) — 원조 카카오톡 캡처에서 화소로 잰 치수
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 하고 싶은 일별로 열어야 할 파일 찾기
+- [REFACTOR.md](docs/REFACTOR.md) — 서비스 파일을 왜, 어떻게 나눴는지
+- [TOKEN_COST.md](docs/TOKEN_COST.md) — 대화가 길어질수록 요금이 왜 오르는지, 고칠 곳
+- [MAC_BACKPORT.md](docs/MAC_BACKPORT.md) — 안드로이드에서 먼저 고친 것 중 맥에 옮긴 기록
+- [android/MEASURED.md](docs/android/MEASURED.md) — 원조 카카오톡 캡처에서 화소로 잰 치수
