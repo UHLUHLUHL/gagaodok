@@ -6,18 +6,18 @@ _가가오독 Mac·Android phone·Android tablet 대화 동기화에 관한 기�
 
 | 항목 | 내용 |
 | --- | --- |
-| **상태** | 기술 합의 보완본 / 구현 승인 아님 |
+| **상태** | 핵심 기술 합의 보완본 / E2EE 추가 계약 재검토 중 / 구현 승인 아님 |
 | **작성** | Codex, Codex–Claude Code 교차검증 결과 통합 |
-| **검토 상태** | `755d571` 본문은 Claude Code 재검토 완료; 이번 checkpoint·persona·character identity 보완분은 재검토 대기 |
-| **제품 결정** | 사용자 결정 대기; `결정 필요`로 표시 |
+| **검토 상태** | 핵심 합의문은 Claude Code 재검토 완료; [E2EE 2차 제안](2026-08-27-sync-encryption-proposal.md)은 Claude Code 독립 재검토 대기 |
+| **제품 결정** | [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)의 17개 결정이 현재 기준 |
 | **원본 문서** | [최초 제안서](2026-08-26-cross-device-sync-proposal.md), [검토 과정의 r2 문서](2026-08-26-cross-device-sync-proposal-r2.md) |
 | **검토 중 데이터 접근** | 소스 코드만 검토; 실제 대화 파일은 열지 않음 |
 
-> ⚠️ **경계:** 이 합의문은 실데이터 업로드나 양방향 동기화를 승인하지 않는다. 아래 제품 결정과 단계별 게이트를 먼저 충족해야 한다.
+> ⚠️ **경계:** 이 합의문과 E2EE 제안서는 실데이터 업로드나 양방향 동기화를 승인하지 않는다. 사용자의 별도 시작 지시와 단계별 게이트를 먼저 충족해야 한다.
 
 ## 📋 합의 상태와 범위
 
-Codex와 Claude Code는 `755d571`까지의 기술적 사실, 안전 요건, canonical 데이터 경계, 단계별 게이트에 합의했다. 제3자 검토에서 최초 제안서의 checkpoint·persona·character identity 계약이 최종 합의문에 충분히 옮겨지지 않은 점을 확인해 이번 보완본에 복원했다. 이 보완분은 Claude Code 재검토 대기 상태다. 나머지 미결 항목은 사용자가 정할 제품 선택이거나 아직 수행하지 않은 실측이다.
+Codex와 Claude Code는 핵심 기술 사실, 안전 요건, canonical 데이터 경계, 단계별 게이트에 합의했고 checkpoint·persona·character identity 누락도 복원·재검토했다. 이후 사용자는 17개 제품 결정을 별도 기록으로 확정하고 E2EE를 선택했다. E2EE의 상세 byte·key·pairing 계약은 [별도 제안서](2026-08-27-sync-encryption-proposal.md)에 있으며 Claude Code 재검토 전에는 이 합의문에 병합하지 않는다. 남은 항목은 아직 수행하지 않은 실측과 acceptance test다.
 
 이 문서는 내용이 충돌할 경우 두 제안서의 기술적 결론보다 우선한다. 최초 제안서와 r2 문서는 검토 이력으로 보존하며 더 이상 동기화해 고치지 않는다.
 
@@ -32,6 +32,8 @@ Codex와 Claude Code는 `755d571`까지의 기술적 사실, 안전 요건, cano
 - 기존 방 확장은 명시적인 opt-in으로만 수행한다.
 
 ### 구현 가능 상태
+
+아래는 기술적 단계 구분이며 **실행 지시가 아니다.** 각 phase는 사용자의 별도 요청이 있을 때만 시작한다.
 
 - Phase 0 inventory와 rollback 검증은 비파괴 경로로 시작할 수 있다.
 - Phase 1 계약 작성과 Phase 2 합성 Cloudflare 시험은 시작할 수 있다.
@@ -141,7 +143,7 @@ persona_snapshot_identity = (space_id, persona_snapshot_id, snapshot_revision)
 - Snapshot 변경은 기존 revision을 덮어쓰지 않고 새 revision을 만든다. 갱신에는 `base_revision` compare-and-set을 적용한다.
 - Write authority는 source space 권한을 따르며 `created_by_device_id`는 provenance일 뿐 단독 권한 근거가 아니다.
 - 다른 플랫폼이 모르는 extension은 server가 보존하며 공통 필드 patch가 이를 삭제하면 안 된다.
-- E2EE를 선택하면 persona payload는 암호화하되 routing에 필요한 identity·revision metadata만 정책에 따라 노출한다.
+- 사용자 결정 1·17에 따라 persona payload는 E2EE로 보호하되, routing과 동기화에 불가피한 identity·revision·operation metadata만 [E2EE 제안서](2026-08-27-sync-encryption-proposal.md)의 평문 경계에 따라 노출한다.
 
 현재 Android `PersonaStyle`의 저장 필드는 `description`, `samples`, `styleGuide`, `isEnabled`, `suppressedExpressions`, `sampleEvidence` 여섯 개다. `companionRepetitionControlEnabled`는 저장 필드가 아니라 method 인자이고 `repetitionAdviceFromConversation`은 runtime 계산 결과다. 반복 제어 동작은 persona extension으로 가장하지 않고 `engineProfile`의 repetition policy에서 계약한다.
 
@@ -323,10 +325,8 @@ flowchart LR
 
 다음 조건을 모두 충족할 때까지 Phase 3를 보류한다.
 
-- 사용자가 attachment/avatar 처리 방식을 결정한다.
-- 사용자가 historical upload의 E2EE 적용 여부를 결정한다.
-- 사용자가 phone-room backup 동작을 결정한다.
-- Group/worldline 데이터를 canonical scope가 지원하거나 명시적으로 제외한다.
+- [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)의 attachment/avatar, E2EE, phone-room backup, group/worldline 결정을 canonical 계약과 구현에 반영한다.
+- E2EE 제안서의 독립 재검토와 합의문 병합을 완료한다.
 - Historical persona snapshot과 context checkpoint를 import할지 제외할지 manifest에 명시한다.
 - 비파괴 importer가 byte·mtime·hash 동일성 검사를 통과한다.
 - 결정적인 legacy turn identity가 반복 import test를 통과한다.
@@ -466,9 +466,9 @@ Android compaction constant 변경은 동기화와 분리된 제품·regression 
 
 향후 실험은 local fingerprint를 우회해 cache name을 직접 사용하고 credential 값을 log에 남기지 않은 채 same-project와 different-project credential을 비교해야 한다. Credential scope는 literal key equality가 아니라 project, authentication identity, permission을 뜻한다.
 
-## 🤔 사용자 결정 대기
+## 🤔 과거 사용자 결정 대기표 — 현재 기준 아님
 
-다음 항목은 의도적으로 결정하지 않았다. 검토자 권고는 사용자 승인이 아니다.
+아래 표는 합의문 작성 당시의 검토 이력으로 보존한다. **현재 제품 결정은 [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)의 17개 항목을 따른다.** 아래 `결정 필요` 표기를 현재 상태로 해석하지 않는다.
 
 | 결정 항목 | 검토자 권고 | 필요한 시점 | 상태 |
 | --- | --- | --- | --- |
@@ -528,6 +528,10 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-26 | Codex | 저장 model과 group 참조를 재검증해 두 보정 반영; Claude Code 재검토 대기 |
 | 2026-08-26 | Claude Code | `267bcf2` 보정 승인; 영속 room-UUID-as-character 참조가 세 개가 아닌 다섯 개임을 추가 확인 |
 | 2026-08-26 | Codex | Android model 전수 검색 후 다섯 참조와 제외 대상 검증; migration atomicity 목록 보완 |
+| 2026-08-27 | Claude Code | `ea8b34f` E2EE 1차 개정 작성 및 `d616f6e` README link 수정 |
+| 2026-08-27 | Codex | `8de019f`에서 E2EE 구현 규격 차단 4건, key 분리, clean-checkout link 문제 기록 |
+| 2026-08-27 | Claude Code 새 세션 | `8de019f` 승인; 문서 상태·pairing 파생·단일 generation 대가·tombstone 비보장 추가 지적 |
+| 2026-08-27 | Codex | E2EE 2차 보정과 문서 상태 동기화 작성; Claude Code 독립 재검토 대기 |
 
 ## 🔗 참고 자료
 

@@ -3,8 +3,9 @@
 ## 문서 상태
 
 - 최초 작성: 2026-08-27 (Claude Code, commit `3b449dc`)
-- 개정: 2026-08-27 (Claude Code)
-- 상태: **Codex 교차검토 수렴 완료 / 구현 승인 아님**
+- 1차 개정: 2026-08-27 (Claude Code, commit `ea8b34f`)
+- 2차 개정: 2026-08-27 (Codex)
+- 상태: **교차검토 보정 반영 / Claude Code 재검토 대기 / 구현 승인 아님 / 합의문 E2EE 병합 대기**
 - 선행: [합의문](CROSS_DEVICE_SYNC_AGREEMENT.md), [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md), [Codex 교차검토](2026-08-27-sync-encryption-codex-review.md)
 - 이 문서를 쓰며 앱 코드·실제 대화 데이터·Cloudflare 리소스는 변경하지 않았다.
 
@@ -98,10 +99,13 @@ recovery_entropy (16B, CSPRNG)          사용자가 12단어로 보관
    └── recovery_wrap_key  account_master_key를 감싸는 키
 
 account_master_key (32B, CSPRNG)        복구 문구에서 유도하지 않는다
-   │  HKDF-SHA256(ikm = account_master_key, salt = PROTOCOL_SALT, info = scope)
-   └── scope_key          space/room/worldline 단위
-        ├── field payload 암호화
-        └── attachment file key / chunk key 암호화
+   │  HKDF-SHA256(ikm = account_master_key, salt = PROTOCOL_SALT,
+   │               info = canonical scope context)
+   └── scope_root_key     space/room/worldline 단위
+        ├── field_aead_key
+        ├── checkpoint_aead_key
+        ├── attachment_wrap_key
+        └── compat_tag_key
 ```
 
 서버는 `account_master_key` 평문을 보관하지 않는다. `recovery_wrap_key`로 감싼 사본만 둔다.
@@ -125,13 +129,36 @@ account_master_key (32B, CSPRNG)        복구 문구에서 유도하지 않는�
 
 한국어 wordlist는 쓰지 않는다. 유니코드 정규화·유사 자모 문제를 새로 만든다.
 
-### 3.2 고정 protocol salt
+### 3.2 고정 protocol salt와 domain separation
 
 **서버에서 받아와야 하는 per-account salt를 두지 않는다.** 초판의 순환은 여기서 비롯됐다. 대신 양쪽 구현에 박아 넣은 고정 `PROTOCOL_SALT`를 쓴다.
 
-- HKDF salt는 약한 비밀번호 방어 외에 사용처 독립성에도 기여한다. 고정 salt는 그 역할을 유지하면서 서버 왕복을 없앤다.
-- 용도 분리는 HKDF `info` label(`recovery-lookup`, `recovery-auth`, `recovery-wrap`, `scope`)로 한다.
-- `PROTOCOL_SALT`는 비밀이 아니다. 규격 문서와 두 구현에 동일한 상수로 고정하고 test vector로 검증한다.
+- `PROTOCOL_SALT`의 정확한 byte는 UTF-8 `gagaodok/e2ee/v1/hkdf-salt`로 고정한다. 비밀이 아니다.
+- 용도 분리는 아래 **완전한 ASCII label**을 HKDF `info`에 넣어 수행한다. 약칭이나 번역문을 쓰지 않는다.
+
+| 용도 | HKDF `info` label |
+| --- | --- |
+| 계정 조회 | `gagaodok/e2ee/v1/recovery-lookup` |
+| 복구 인증 | `gagaodok/e2ee/v1/recovery-auth` |
+| master key 복구 봉투 | `gagaodok/e2ee/v1/recovery-wrap` |
+| scope root | `gagaodok/e2ee/v1/scope-root` + §7.2 scope context |
+| 수정 가능한 field | `gagaodok/e2ee/v1/field-aead` |
+| checkpoint | `gagaodok/e2ee/v1/checkpoint-aead` |
+| 첨부 file key 봉투 | `gagaodok/e2ee/v1/attachment-wrap` |
+| compaction 호환 태그 | `gagaodok/e2ee/v1/compat-tag` |
+
+`scope_root_key`를 AES-GCM과 HMAC에 직접 재사용하지 않는다. 각 하위 키를 위 label로 다시 HKDF-expand한다. 두 구현은 label의 대소문자·`/`·길이까지 test vector로 검증한다.
+
+`scope-root`의 context는 LP v1로 다음과 같이 고정한다.
+
+| field_id | 값 | type |
+| ---: | --- | --- |
+| 1 | `account_id` | UUID ASCII |
+| 2 | `space_id` | UTF-8 enum string |
+| 3 | `room_id` | UUID ASCII |
+| 4 | `worldline_id` | nullable UUID ASCII |
+
+`recovery_lookup`, `recovery_auth`, `recovery_wrap_key`와 모든 scope 하위 키의 출력 길이는 32바이트다.
 
 ### 3.3 왜 PBKDF2·Argon2를 쓰지 않는가
 
@@ -144,41 +171,84 @@ IKM이 **사람이 고른 비밀번호가 아니라 기기가 생성한 128비�
 ```text
 1. 사용자가 12단어를 입력
 2. checksum 검증 → recovery_entropy 복원
-3. recovery_lookup 유도 → 서버에 계정 조회
-4. 서버가 wrapped_master_key와 key_generation 반환
-5. recovery_auth로 자격 증명 → 새 device token 발급
-6. recovery_wrap_key로 wrapped_master_key 복호화 → account_master_key 획득
+3. recovery_lookup·recovery_auth·recovery_wrap_key 유도
+4. request body로 recovery_lookup과 recovery_auth 제출
+5. 서버가 recovery_auth_verifier를 constant-time 비교
+6. 성공 시 account_id·wrapped_master_key·key_generation과 새 device token 반환
+7. recovery_wrap_key로 wrapped_master_key 복호화 → account_master_key 획득
 ```
 
 - `recovery_lookup`은 128비트 이상이어야 하며 계정 존재를 추측하기 어려워야 한다.
 - `recovery_auth`는 복구 문구와 같은 급의 bearer credential이다. **요청 body·로그·분석·URL에 절대 남기지 않는다.**
+- 서버는 평문 `recovery_auth`를 보관하지 않는다. 다음 32바이트만 저장한다.
+
+```text
+recovery_auth_verifier = LabeledHash(
+    "gagaodok/e2ee/v1/recovery-auth-verifier",
+    recovery_auth
+)
+```
+
+- `LabeledHash`의 byte 규격은 §7.2에 정의한다. client가 보낸 `recovery_auth`에서 같은 verifier를 계산해 비교한다.
 - 복구 endpoint에는 강한 rate limit, 일정한 실패 응답, constant-time 비교를 적용한다.
 - 서버는 평문 master key를 어느 단계에서도 보지 않는다.
+
+### 4.1 복구 문구 교체
+
+복구 문구 교체는 `account_master_key`나 콘텐츠의 `key_generation`을 바꾸지 않고 같은 master key를 새 `recovery_wrap_key`로 다시 감싸는 작업이다.
+
+1. 연결된 신뢰 기기에서 기기 재인증을 요구한다.
+2. 새 entropy와 문구를 만들고 사용자에게 재입력시켜 checksum과 round-trip을 확인한다.
+3. `recovery_version`을 1 올리고 새 lookup·auth verifier·wrapped master key를 만든 뒤, 새 R2 복구 사본을 versioned object로 먼저 올린다.
+4. D1 transaction에서 새 recovery record를 삽입·활성화하고 기존 record를 폐기한다.
+5. R2 upload나 D1 transaction이 실패하면 기존 record를 그대로 유지한다. D1 전환에 실패해 남은 R2 object는 orphan cleanup 대상으로만 기록한다.
+
+새 문구 확인과 D1 전환이 끝나기 전에는 기존 recovery credential을 폐기하지 않는다. 이 절차는 master key rotation이 아니므로 v1의 `key_generation = 1`은 그대로다.
 
 ## 5. 기기 연결 (기존 기기가 남아 있을 때)
 
 **복구 문구는 이 경로에 쓰지 않는다.** 문구 입력은 §4의 전체 분실 복구에서만 필요하다.
 
+QR의 session 승인만으로는 부족하다. QR을 촬영한 다른 사람이 같은 session에 요청할 수 있으므로, 승인을 **정확한 새 기기의 claim**에 묶는다.
+
 ```text
 1. 기존 기기 재인증 (Touch ID / 기기 자격 증명)
-2. 기존 기기가 256비트 one-time pairing_secret 생성
-3. HKDF(pairing_secret) → pairing_wrap_key
-4. account_master_key와 필요한 metadata를 pairing_wrap_key로 암호화
-5. Worker에 hash(pairing_secret)을 lookup으로 삼아 암호문만 업로드
-   (pairing_secret 자체는 서버로 보내지 않는다)
-6. QR에 session id와 pairing_secret을 담아 표시
-7. 새 기기가 QR을 읽고 연결을 요청
-8. 기존 기기에 새 기기의 이름·종류를 표시
-9. 기존 기기에서 승인
-10. 승인 이후에만 wrapped/pairing 암호문과 device token을 새 기기에 제공
-11. 새 기기가 로컬에서 master key를 복원
+2. 기존 기기가 32B one-time pairing_secret 생성
+3. pairing_session_lookup과 pairing_claim_key 유도
+4. Worker에 짧은 TTL의 session 생성; QR에는 session_id와 pairing_secret 표시
+5. 새 기기가 32B claim_secret과 UUID claim_id 생성
+6. 새 기기가 device info·claim_secret을 pairing_claim_key로 암호화해 claim 제출
+7. Worker는 claim_id·claim_lookup·claim ciphertext를 session에 저장
+8. 기존 기기가 인증된 경로로 claim을 받아 복호화
+9. 두 기기가 같은 6자리 SAS를 표시하고 사용자가 직접 비교
+10. 기존 기기가 일치하는 claim_id를 승인
+11. 기존 기기가 그 claim 전용 delivery_key로 master key package를 암호화
+12. Worker는 승인된 claim_id·claim_lookup에 package와 device token을 결속
+13. 새 기기가 claim_redeem_auth로 1회 redeem하고 master key를 로컬 복원
 ```
 
-**승인은 반드시 키 배포 이전에 완료되어야 한다.** 키를 먼저 내려주고 사후 확인하는 순서는 확인의 의미가 없다.
+정확한 파생 규칙:
 
-- pairing session은 짧은 만료, 1회 사용, 성공·실패 후 즉시 폐기를 적용한다.
-- 서버가 다른 암호문으로 바꿔치기해도 AEAD가 거부한다.
-- QR을 본 사람은 계정 키를 받을 수 있으므로 QR 화면에 **"주변에 보이지 않게 하십시오"**를 표시한다.
+| 값 | 규칙 |
+| --- | --- |
+| `pairing_session_lookup` | HKDF-SHA256(`pairing_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/pairing-session-lookup`, 32B) |
+| `pairing_claim_key` | HKDF-SHA256(`pairing_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/pairing-claim`, 32B) |
+| `claim_lookup` | HKDF-SHA256(`claim_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/claim-lookup`, 32B) |
+| `claim_redeem_auth` | HKDF-SHA256(`claim_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/claim-redeem-auth`, 32B) |
+| `joint_secret` | LP v1 `field 1 = pairing_secret`, `field 2 = claim_secret` |
+| `pairing_delivery_key` | HKDF-SHA256(`joint_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/pairing-delivery`, 32B) |
+| `pairing_sas_bytes` | HKDF-SHA256(`joint_secret`, `PROTOCOL_SALT`, `gagaodok/e2ee/v1/pairing-sas`, 4B) |
+
+SAS는 `UInt32BE(pairing_sas_bytes) mod 1,000,000`을 앞자리 0을 포함한 6자리 숫자로 표시한다. Worker는 평문 `claim_redeem_auth`를 저장하지 않고 `LabeledHash("gagaodok/e2ee/v1/claim-redeem-verifier", claim_redeem_auth)`만 저장한다.
+
+**승인은 반드시 key package 생성·배포 이전에 완료되어야 하며, session 전체가 아니라 `claim_id`와 `claim_lookup`에 결속되어야 한다.** 다른 claim이나 session bearer가 승인 결과를 받을 수 없어야 한다.
+
+- pairing session과 claim은 짧은 만료, 1회 사용, 성공·실패 후 즉시 폐기를 적용한다.
+- claim payload, key package, redeem verifier의 AAD에는 `session_id`·`claim_id`·`claim_lookup`을 포함한다.
+- claim 제출·승인·redeem의 race, QR 복제, 다른 claim의 package 탈취를 Phase 2 합성 시험으로 검증한다.
+- `claim_redeem_auth`는 request body로만 보내고 URL·로그·분석 payload에 남기지 않는다.
+- QR payload는 HTTP URL이 아닌 앱 전용 payload로 encode하며 `pairing_secret`을 universal-link query, clipboard, crash log에 남기지 않는다.
+- QR을 본 사람은 pairing 요청을 보낼 수 있으므로 QR 화면에 **"주변에 보이지 않게 하십시오"**를 표시한다. SAS 비교를 생략하지 않는다.
 - Mac·태블릿·폰 어느 신뢰 기기든 QR을 만들 수 있다. 최초 기준 기기를 특정 플랫폼으로 고정하지 않는다.
 
 ## 6. `wrapped_master_key` 보관과 `key_generation`
@@ -187,25 +257,25 @@ IKM이 **사람이 고른 비밀번호가 아니라 기기가 생성한 128비�
 
 | 위치 | 성격 |
 | --- | --- |
-| D1 | 현재 사용 사본 |
-| R2 | 별도 경로의 복구용 암호화 사본 |
-| 연결된 각 기기 | 로컬 암호화 사본 |
+| D1 | 현재 recovery record의 사용 사본 |
+| R2 | `recovery_version`별 복구용 암호화 사본 |
+| 연결된 각 기기 | 기기 key로 감싼 로컬 암호화 사본 |
 
-- 모든 사본에 `key_generation`과 무결성 검증값을 포함한다.
+- 모든 사본에 `key_generation`과 무결성 검증값을 포함한다. D1·R2의 recovery-wrapped 사본에는 별도 `recovery_version`도 포함한다.
 - **어느 곳에도 평문 master key를 저장하지 않는다.**
 - D1과 R2는 같은 Cloudflare 계정 아래이므로 완전히 독립적인 백업이 아니다. 이 한계를 명시한다.
 - D1 Free의 Time Travel은 **키가 오래되면 사라진다는 뜻이 아니라**, 실수로 삭제·손상된 것을 7일 이내에 발견해야 되돌릴 수 있다는 뜻이다. 장기 보존은 R2 export 같은 별도 백업이 담당한다.
 - 계정 자체가 사라지는 상황까지 대비하는 사용자 보관용 복구 파일은 초기 범위에 넣지 않는다. **Cloudflare 데이터가 전부 사라지면 복호화할 암호문도 함께 사라지므로**, 키의 보관 내구성은 암호문의 내구성과 같은 수준이면 충분하다. 중복이 실제로 막는 것은 **키 레코드만 손상되는 부분 손실**이다.
 
-### 6.2 사본 선택 규칙
+### 6.2 v1은 단일 generation만 지원
 
-- **암호문 봉투에 적힌 `key_generation`과 정확히 같은 키를 사용한다.** 가장 높은 번호를 무조건 쓰지 않는다.
-- 같은 generation의 사본이 여럿이면 무결성 검증을 통과한 것을 쓴다. **대체는 같은 generation 안에서만 한다.**
-- 최신 generation 키가 손상됐다고 이전 generation으로 조용히 후퇴하지 않는다.
-- 이전 generation 키는 그 generation으로 암호화된 데이터에만 쓴다.
-- **서버가 옛 키와 옛 암호문을 짝 맞춰 되돌리면 복호화가 성공할 수 있다.** 이는 §10의 명시적 비보장 항목이다.
+- v1이 생성하는 모든 master-key 봉투와 콘텐츠 암호문은 **`key_generation = 1`**이다.
+- v1 client는 다른 generation을 자동 선택하거나 이전 generation으로 후퇴하지 않고 **지원하지 않는 규격 오류**로 중단한다.
+- 같은 generation 1의 사본이 여럿이면 무결성 검증을 통과한 것을 쓴다.
+- 실제 master key rotation, 여러 generation keyring, old ciphertext 재암호화 완료 판정과 key 폐기는 v1 범위 밖이다.
+- 복구 문구 교체는 같은 master key를 다시 감싸므로 generation을 올리지 않는다.
 
-AAD에 `key_generation`이 포함되므로 generation 라벨만 바꿔치기하는 것은 막힌다. 남는 것은 짝을 맞춘 통째 rollback뿐이다.
+봉투에 `key_generation`을 지금부터 넣는 이유는 향후 rotation 도입 시 기존 암호문 형식을 다시 바꾸지 않기 위해서다. v1에서 rotation을 지원하는 것처럼 안내해서는 안 된다.
 
 ## 7. 레코드 암호화
 
@@ -233,26 +303,84 @@ AAD에 `key_generation`이 포함되므로 generation 라벨만 바꿔치기하�
 
 ### 7.2 AAD — canonical binary encoding
 
-`"a" || "bc"`와 `"ab" || "c"`가 같은 바이트열이 되는 모호성을 없애야 한다. **각 요소를 길이 접두사와 함께 직렬화한다**(또는 canonical CBOR). 사람이 읽는 설명의 `/`·`||`를 실제 바이트 규격으로 쓰지 않는다.
-
-포함 요소:
+두 구현이 선택할 여지를 남기지 않는다. canonical CBOR는 사용하지 않고 다음 **LP v1** 형식 하나만 사용한다.
 
 ```text
-protocol_version
-key_generation
-account_id
-space_id
-room_id
-worldline_id_or_null
-entity_type
-entity_id
-field_path
-bubble_order_if_bubble
+header:
+  magic       4 bytes   ASCII "GDK1" (47 44 4B 31)
+  item_count  UInt16BE
+
+item (field_id 오름차순, 중복 금지):
+  field_id    UInt16BE
+  presence    UInt8     0 = null/부재, 1 = present
+  length      UInt32BE
+  value       length bytes
 ```
 
-- `entity_type`을 넣어 room·profile·checkpoint·attachment의 UUID가 우연히 겹치는 경우를 막는다.
-- `bubble_order`는 최초 canonical import 후 불변이므로 bubble payload에 포함한다. 서버가 순서만 바꿔 렌더를 조작하는 것을 막는다.
-- **`revision`·`base_revision`·`server_seq`·timestamp는 넣지 않는다.** 넣으면 내용이 바뀌지 않은 필드까지 동기화마다 재암호화해야 한다. 대가는 §10에 기록한다.
+- `presence = 0`이면 `length`는 반드시 0이다.
+- present empty value는 `presence = 1, length = 0`이므로 null과 구별된다.
+- integer는 명시된 고정 폭의 big-endian, boolean은 0 또는 1의 UInt8이다.
+- UUID는 기존 `Codec.kt` 계약과 같은 **대문자 하이픈 36-byte ASCII**다.
+- 문자열은 UTF-8, BOM 없음이며 별도 Unicode 정규화를 하지 않는다.
+- 알 수 없는 `field_id`, 순서가 뒤집힌 item, 중복 item, 잘못된 길이는 fail closed로 거부한다.
+
+고정 encoding vector:
+
+```text
+LP([
+  field 1 = present bytes 00 01,
+  field 2 = null,
+  field 3 = present UTF-8 "A"
+])
+= 47444b310003000101000000020001000200000000000003010000000141
+```
+
+AAD field는 다음 순서와 type으로 고정한다.
+
+| field_id | 이름 | type |
+| ---: | --- | --- |
+| 1 | `protocol_version` | UInt16BE, v1 = 1 |
+| 2 | `key_generation` | UInt32BE, v1 = 1 |
+| 3 | `account_id` | UUID ASCII |
+| 4 | `space_id` | UTF-8 enum string |
+| 5 | `room_id` | UUID ASCII |
+| 6 | `worldline_id` | nullable UUID ASCII |
+| 7 | `entity_type` | UTF-8 ASCII identifier |
+| 8 | `entity_id` | UTF-8 canonical identifier |
+| 9 | `field_path` | nullable UTF-8 path |
+| 10 | `bubble_order` | nullable UInt64BE |
+| 11 | `recovery_version` | nullable UInt32BE |
+
+`entity_type`을 넣어 room·profile·checkpoint·attachment의 UUID가 우연히 겹치는 경우를 막는다. `bubble_order`는 최초 canonical import 후 불변이므로 bubble payload에 포함한다.
+
+Recovery-wrapped master key는 `entity_type = recovery_wrapped_master_key`, `entity_id = account_id`, field 11에 해당 `recovery_version`을 넣는다. Pairing claim과 delivery package는 account 내용을 복호화하기 전에도 계산할 수 있도록 다음 별도 LP AAD를 사용한다.
+
+| field_id | pairing AAD 값 | type |
+| ---: | --- | --- |
+| 1 | `protocol_version` | UInt16BE |
+| 2 | `session_id` | UUID ASCII |
+| 3 | `claim_id` | UUID ASCII |
+| 4 | `claim_lookup` | 32 bytes |
+| 5 | payload type (`claim` 또는 `delivery`) | UTF-8 ASCII |
+
+HKDF와 hash의 domain separation도 LP v1을 사용한다.
+
+```text
+HKDFInfo(purpose, context_or_null) = LP([
+  field 1 = UInt16BE(protocol_version),
+  field 2 = UTF8(purpose),
+  field 3 = context_or_null
+])
+
+LabeledHash(label, payload) = SHA-256(LP([
+  field 1 = UTF8(label),
+  field 2 = payload
+]))
+```
+
+앞 절 표의 `HKDF(..., label, ...)`은 실제 구현에서 `HKDFInfo(label, null)`을 뜻한다. scope·claim처럼 context가 필요한 경우 field 3에 해당 LP byte를 넣는다. label 원문과 context field 구성을 고정 test vector로 검증한다.
+
+**`revision`·`base_revision`·`server_seq`·timestamp는 AAD에 넣지 않는다.** 넣으면 내용이 바뀌지 않은 field까지 동기화마다 재암호화해야 한다. 대가는 §10에 기록한다.
 
 ## 8. 암호화 범위와 평문 경계
 
@@ -282,7 +410,7 @@ canonical identity(`space_id`·`room_id`·`worldline_id`·`turn_id`·`message_id
 서버가 checkpoint 호환성의 equality만 비교해야 한다면 실제 fingerprint 대신 다음을 평문으로 둔다.
 
 ```text
-compaction_compat_tag = HMAC(scope_key, canonical_compaction_contract)
+compaction_compat_tag = HMAC-SHA256(compat_tag_key, canonical_compaction_contract)
 ```
 
 같은 scope 안에서 같음/다름만 드러내고 실제 mode·model 이름은 드러내지 않는다.
@@ -300,7 +428,7 @@ compaction_compat_tag = HMAC(scope_key, canonical_compaction_contract)
 ```text
 file_key = CSPRNG(32B)
 R2 객체 = AES-256-GCM(file_key, 파일 바이트)
-레코드 = AES-256-GCM(scope_key, file_key)     ← 감싼 키
+레코드 = AES-256-GCM(attachment_wrap_key, file_key)  ← 감싼 키
 R2 객체 이름 = 내용과 무관한 난수 UUID
 ```
 
@@ -331,10 +459,11 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 
 1. **악의적 서버의 rollback.** AAD에서 `revision`을 뺐으므로, 서버가 옛 ciphertext를 새 revision 자리에 놓거나 옛 키와 옛 암호문을 짝 맞춰 되돌리면 클라이언트가 탐지하지 못한다. 위협 모델을 "내용을 읽으려 하지만 데이터를 악의적으로 변조하지는 않는 서버"로 제한한 결과다.
    - 기존 기기가 마지막으로 본 revision·generation을 로컬에 기억하면 그 기기에서는 부분적으로 탐지할 수 있으나, **새 기기나 전체 복구 후에는 비교 기준이 없다.** 완전한 방어에는 hash chain이나 신뢰 가능한 checkpoint 전달 규격이 필요하며 v1 범위 밖이다.
-2. **분실 기기의 기존 로컬 데이터.** device token 폐기는 앞으로의 서버 접근만 막는다. **전체 key rotation을 해도** 분실 기기에 이미 저장된 대화나 키를 원격으로 지울 수 없다. 새 키는 앞으로 내려받을 데이터와 재암호화된 클라우드 사본만 보호한다.
-3. **기기 내부 데이터.** 로컬 JSON은 평문이다. 보호 범위는 클라우드 동기화 사본이다.
-4. **metadata.** §8.5의 노출 항목.
-5. **복구 문구 분실.** 클라우드 사본을 영구히 읽을 수 없다. 로컬 데이터는 무관하다.
+2. **악의적 서버의 삭제·숨김·operation 조작.** tombstone과 operation metadata는 평문이며 별도 client signature/MAC을 두지 않는다. 서버가 레코드를 숨기거나 거짓 tombstone을 주입하면 v1 client가 진짜 device operation과 구별하지 못할 수 있다. AAD는 ciphertext를 다른 identity로 옮기는 조작은 막지만 서버의 suppression·삭제 주입까지 증명하지 않는다.
+3. **분실 기기의 기존 로컬 데이터와 v1 단일 generation 한계.** device token 폐기는 정상 서버 경로의 추가 접근만 막는다. 분실 기기에 이미 저장된 대화와 master key는 원격으로 지울 수 없다. v1은 실제 master key rotation을 지원하지 않으므로, 분실 기기가 다른 경로로 이후 generation-1 ciphertext를 얻으면 기존 key로 읽을 수 있다. 향후 rotation을 구현해도 이미 내려받은 옛 로컬 사본까지 지울 수는 없다.
+4. **기기 내부 데이터.** 로컬 JSON은 평문이다. 보호 범위는 클라우드 동기화 사본이다.
+5. **metadata.** §8.5의 노출 항목.
+6. **복구 문구 분실.** 클라우드 사본을 영구히 읽을 수 없다. 로컬 데이터는 무관하다.
 
 ## 11. 기기 키 보관
 
@@ -360,20 +489,25 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 2. **고정 test vector** — 주어진 entropy·nonce·평문에 대한 기대 ciphertext를 hex로 문서에 박고 양 구현이 동일 결과를 내는지 확인
 3. **교차 복호** — Swift가 암호화한 것을 Kotlin이, Kotlin이 암호화한 것을 Swift가 푼다
 4. **AAD 불일치 거부** — entity id·field path·`bubble_order`·`key_generation`을 바꾼 ciphertext는 실패해야 한다
-5. **한글 문자열 왕복** — 조합형·완성형이 섞인 입력이 정확히 복원되어야 한다
-6. **fail closed 검증** — 키가 없을 때 평문이 저장되지 않음
-7. **persona Codable 하위호환** — 새 필드가 없는 옛 JSON이 정상적으로 읽혀야 한다
-8. **generation 규칙** — 다른 generation 키로의 자동 후퇴가 일어나지 않음
-9. **비파괴 importer 결합** — 암호화는 업로드 경로에서만 일어나고 원본 로컬 파일의 byte·mtime·hash가 변하지 않는다
-10. RFC 5869 test vector로 HKDF 구현 검증
+5. **LP v1 byte 동일성** — §7.2 고정 vector, null/empty, optional bubble order, UUID, 잘못된 길이를 양쪽에서 동일 처리
+6. **HKDF domain separation** — 같은 root key에서도 field·checkpoint·attachment·compat·pairing label의 결과가 모두 다름
+7. **QR claim binding** — QR 복제·동시 claim·다른 claim redeem·SAS 불일치·승인 전 package 요청을 거부
+8. **recovery verifier와 문구 교체** — 평문 auth 미저장, verifier 비교, R2/D1 중간 실패 시 기존 recovery record 유지
+9. **한글 문자열 왕복** — 조합형·완성형이 섞인 입력이 정확히 복원되어야 한다
+10. **fail closed 검증** — 키가 없을 때 평문이 저장되지 않음
+11. **persona Codable 하위호환** — 새 필드가 없는 옛 JSON이 정상적으로 읽혀야 한다
+12. **generation 규칙** — v1이 1 이외 generation을 거부하고 자동 후퇴하지 않음
+13. **비파괴 importer 결합** — 암호화는 업로드 경로에서만 일어나고 원본 로컬 파일의 byte·mtime·hash가 변하지 않는다
+14. RFC 5869 test vector로 HKDF 구현 검증
 
 ## 14. Phase gate 보정
 
 ### Phase 1
 
 - raw 16바이트 entropy ↔ mnemonic 왕복과 checksum
-- account lookup / auth / wrapped master key schema
-- canonical HKDF·AAD·envelope byte encoding과 `key_generation`
+- account lookup / auth verifier / wrapped master key schema와 recovery record 교체 절차
+- LP v1 canonical HKDF·AAD·envelope byte encoding과 `key_generation = 1`
+- scope·field·checkpoint·attachment·compat·pairing의 exact HKDF label
 - Swift·Kotlin 고정 test vector
 - persona Codable 하위호환 계약
 - 복구 문구 생성·재입력 확인 UX
@@ -381,7 +515,8 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 ### Phase 2 (합성 데이터)
 
 - QR pairing의 1회 사용·만료·replay·폐기 시험
-- **승인 이전에 키가 배포되지 않음**을 검증
+- **승인 이전에 키가 배포되지 않고 승인된 claim만 redeem함**을 검증
+- QR 복제자가 만든 별도 claim, claim race, SAS 불일치, 다른 claim의 package 탈취를 거부
 - 복구 문구만으로 새 synthetic device가 wrapped master key를 복원하는 dry run
 - field patch·tombstone·checkpoint가 암호화 payload에서도 보존되는 contract test
 - chunked attachment 중단·재개·태그 변조·순서 바꿈 거부 시험(구현하는 경우)
@@ -410,10 +545,10 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 | --- | --- | --- |
 | 키 계층 | 문구 → `content_key` 직접 유도 | 무작위 `account_master_key` + recovery-wrapped key |
 | 계정 조회 | `account_salt`를 서버에서 받음 (순환) | `recovery_lookup` + 고정 `PROTOCOL_SALT` |
-| 새 기기 키 전달 | 없음 | QR `pairing_secret`, 승인 후 배포 |
+| 새 기기 키 전달 | 없음 | QR `pairing_secret` + claim secret + SAS, claim 승인 후 1회 배포 |
 | BIP-39 | 문구 문자열을 NFC로 HKDF에 투입 | wordlist·checksum만 사용, raw 16바이트를 IKM으로 |
-| AAD | 구분자 문자열 이어붙이기, message 중심 | length-prefix canonical, entity별 |
-| `key_generation` | 미포함 | 봉투·AAD·wrapped key에 포함, 일치 규칙 명시 |
+| AAD | 구분자 문자열 이어붙이기, message 중심 | LP v1 exact binary grammar, entity별 |
+| `key_generation` | 미포함 | 봉투·AAD·wrapped key에 포함, v1은 1만 지원 |
 | 암호화 단위 | 명시 없음 | per-field / whole-payload / chunk 구분 |
 | engine·compaction profile | 미결 | 암호화, 필요 시 keyed compat tag만 평문 |
 | 첨부 크기 | 언급 없음 | Phase 0 결과에 따른 상한 또는 chunked AEAD |
@@ -423,7 +558,9 @@ v1이 방어하지 **않는** 것을 사용자와 문서에 분명히 남긴다.
 
 ## 16. 남은 미결
 
-기술 이견은 없다. 다음은 **아직 아무도 측정하지 않은 값**이며 Phase 0~2에서 확인한다.
+`8de019f`에서 제기된 구현 규격 차단 사항과 그 후속 검토를 이번 2차 개정에 반영했다. **Claude Code의 독립 재검토가 끝나기 전에는 기술 합의 완료나 구현 승인으로 표시하지 않는다.**
+
+다음은 아직 아무도 측정하지 않은 값이며 Phase 0~2에서 확인한다.
 
 - 실제 대화 데이터의 규모 — 옛 방 수, 혼합 세대 파일, **최대 첨부 크기**(§9.2의 입력), 세계선·단톡방 수
 - Worker가 10ms CPU 제한 안에서 동작하는지

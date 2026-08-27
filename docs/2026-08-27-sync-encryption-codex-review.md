@@ -1,11 +1,11 @@
-# `3b449dc` 동기화 E2EE 설계 Codex 교차검토
+# 동기화 E2EE 설계 Codex 교차검토
 
 ## 문서 상태
 
 - 검토일: 2026-08-27
-- 검토 대상: commit `3b449dc` 및 [동기화 암호화(E2EE) 설계 제안](2026-08-27-sync-encryption-proposal.md)
+- 검토 대상: commits `3b449dc`, `ea8b34f`, `d616f6e`, `8de019f` 및 [동기화 암호화(E2EE) 설계 제안](2026-08-27-sync-encryption-proposal.md)
 - 작성: Codex
-- 상태: **방향 조건부 승인 / 아래 차단 사항 수정 전 합의문 병합·구현 착수 불가**
+- 상태: **2차 보정 작성 완료 / Claude Code 독립 재검토 대기 / 합의문 E2EE 병합·구현 착수 전 승인 필요**
 - 이 검토에서 앱 코드·실제 대화 데이터·Cloudflare 리소스는 변경하지 않았다.
 
 ## 1. 결론
@@ -380,3 +380,31 @@ Phase 1 account schema에 다음을 고정해야 한다.
 6. README 설치 링크가 clean checkout에서 실제 파일을 가리킴
 
 나머지 설계 방향에는 반대하지 않는다. Phase 0~2를 건너뛰지 않으며, 위 항목과 기존 contract test가 통과하기 전에는 앱 코드 구현 승인이나 Phase 3 실데이터 upload 승인으로 해석하지 않는다.
+
+---
+
+## 9. `8de019f` 후속 보정 처리
+
+새 Claude Code 세션이 `8de019f`를 재검토해 문서 상태 충돌, 검토 기록 누락, 미추적 link target, pairing 파생 규격, 단일 generation의 대가, tombstone 조작 비보장을 추가 지적했다. 사용자는 Claude Code가 시작한 미커밋 제안서 조각을 되돌리고 Codex가 `ea8b34f` 기준에서 다시 작성하도록 승인했다.
+
+### 9.1 처리 결과
+
+| 출처 | 처리 |
+| --- | --- |
+| §8.2 QR claimant binding | 32B `claim_secret`, encrypted claim payload, claim-bound SAS·승인·1회 redeem 규격으로 반영 |
+| §8.3 canonical encoding | 선택지를 제거하고 LP v1 exact grammar, field type, null/empty 규칙과 hex vector를 반영 |
+| §8.4 generation lifecycle | v1은 `key_generation = 1`만 지원하고 rotation은 범위 밖으로 확정; 대가를 §10에 명시 |
+| §8.5 recovery verifier | server-side labeled verifier, constant-time 비교, recovery record 교체 절차 반영 |
+| §8.6 scope key 재사용 | field·checkpoint·attachment·compat용 HKDF subkey로 분리 |
+| pairing 파생 규격 | session lookup·claim·redeem·delivery·SAS의 exact label과 byte 길이 반영 |
+| tombstone 조작 | 악의적 서버의 삭제·숨김·operation 주입을 v1 비보장으로 명시 |
+| 문서 상태 | 제안서·검토문서·합의문 상태와 검토 기록을 현재 단계로 갱신 |
+| clean-checkout link | README 설치 문서와 합의문의 최초 제안서가 미추적임을 확인; 별도 문서-only commit 대상으로 분리 |
+
+`SHA-256(pairing_secret)` lookup과 HKDF-derived wrapping key가 같은 암호화 key를 직접 재사용한 것은 아니므로 즉시 취약점이라는 표현은 채택하지 않았다. 다만 규격이 불완전하고 domain separation이 암묵적이었던 문제는 맞으므로 모든 pairing 목적을 별도 HKDF label로 고정했다.
+
+### 9.2 현재 판정
+
+Codex가 확인한 차단 사항은 2차 제안서에 반영했다. 그러나 **작성자가 자기 문서를 승인하지 않는다.** Claude Code가 독립적으로 byte contract, QR race 방어, recovery 교체, v1 generation 경계를 재검토하기 전까지 합의문 E2EE 계약 병합과 앱 구현은 승인되지 않는다.
+
+깨진 내부 link target 정리는 설계 변경과 분리한 후속 commit으로 처리한다. Phase 0 실행, 실제 데이터 접근, 앱 코드 변경, Cloudflare resource 생성은 이번 문서 보정의 범위가 아니다.
