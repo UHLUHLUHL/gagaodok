@@ -81,13 +81,18 @@ TABLET_SPACE = "TABLET_SPACE"
 
 SPACE_IDS = frozenset({MAC_SPACE, PHONE_SPACE, TABLET_SPACE})
 
-#: Draft §1.1 — the Phase 0 tablet report emitted the raw label ``"tablet"``.
+#: Actual Phase 0 aggregate values, confirmed by Codex against the locked
+#: report outside the repository: Mac and phone already emit the canonical
+#: enum, and only the tablet run emitted the legacy label ``"tablet"``.
+#:
 #: The mapping is an exact-match table on purpose: no case folding, no
-#: normalisation, no fallback for unknown labels.
+#: normalisation, no fallback for unknown labels. ``"mac"`` and ``"phone"``
+#: are deliberately absent because they were never observed.
 _RAW_SOURCE_SPACE = {
-    "mac": MAC_SPACE,
-    "phone": PHONE_SPACE,
-    "tablet": TABLET_SPACE,
+    MAC_SPACE: MAC_SPACE,
+    PHONE_SPACE: PHONE_SPACE,
+    TABLET_SPACE: TABLET_SPACE,
+    "tablet": TABLET_SPACE,  # only observed legacy alias
 }
 
 
@@ -101,9 +106,11 @@ def canonical_space_id(value: object, *, field: str = "space_id") -> str:
 def map_raw_source_space(raw: object) -> str:
     """Map a Phase 0 adapter label to the canonical enum, exactly once.
 
-    Draft §1.1 forbids case correction and arbitrary-string fallback, so
-    ``"Tablet"``, ``"TABLET"`` and unknown labels are rejected rather than
-    coerced.
+    Values that are already canonical pass through unchanged; the single
+    observed legacy alias ``"tablet"`` is translated explicitly. Draft §1.1
+    forbids case correction and arbitrary-string fallback, so ``"Tablet"``,
+    ``"TABLET"``, ``"mac"``, ``"phone"`` and unknown labels are rejected
+    rather than coerced.
     """
     if not isinstance(raw, str):
         raise ContractError("raw source_space must be a string")
@@ -581,9 +588,13 @@ PHASE0_AVATAR_BYTES = 20_800_577
 PHASE0_LOCAL_ONLY_BYTES = 2_558_968
 PHASE0_INLINE_ATTACHMENT_BASE64_BYTES = 12_494_244
 
-#: AEAD envelope overhead per encrypted field instance (E2EE proposal §7.1:
-#: version + alg + key_generation + nonce + tag, rounded as documented).
-AEAD_FIELD_OVERHEAD_BYTES = 44
+#: Fixed binary overhead of one E2EE field envelope (proposal §7.1):
+#: version 1 + alg 1 + key_generation 4 + nonce 12 + GCM tag 16.
+AEAD_ENVELOPE_OVERHEAD_BYTES = 34
+
+#: The draft's `~44 byte` figure, kept only so the superseded arithmetic
+#: stays traceable. It is NOT the envelope size: see `draft_v1_estimate_bytes`.
+DRAFT_V1_PER_FIELD_CONSTANT = 44
 
 
 def phase0_message_json_bytes() -> int:
@@ -598,11 +609,64 @@ def phase0_text_bytes() -> int:
     return phase0_message_json_bytes() - PHASE0_INLINE_ATTACHMENT_BASE64_BYTES
 
 
-def base64_expanded_bytes(plain_bytes: int) -> int:
-    return math.ceil(plain_bytes * 4 / 3)
+def base64_encoded_length(plain_bytes: int) -> int:
+    """Exact length of standard padded Base64: ``4 * ceil(n / 3)``.
+
+    Padded Base64 always emits whole 4-character quanta, so the result is
+    always a multiple of 4. The draft used ``ceil(n * 4 / 3)``, which returns
+    values such as 2 and 3 that no padded Base64 encoder can produce.
+    """
+    _require_safe_int(plain_bytes, field="plain_bytes")
+    return 4 * math.ceil(plain_bytes / 3)
 
 
-def estimate_d1_payload_bytes(field_count: int) -> int:
-    """Reproduce ``6,002,322 + 44 x field_count`` from the draft."""
+def encrypted_field_storage_bytes(plaintext_bytes: int) -> int:
+    """D1 text size of one encrypted field: envelope, then Base64.
+
+    ``4 * ceil((plaintext_bytes + 34) / 3)``
+    """
+    _require_safe_int(plaintext_bytes, field="plaintext_bytes")
+    return base64_encoded_length(plaintext_bytes + AEAD_ENVELOPE_OVERHEAD_BYTES)
+
+
+def exact_encrypted_payload_bytes(plaintext_sizes: Iterable[int]) -> int:
+    """Exact total when every field's plaintext size is known.
+
+    Base64 padding is per field, so the total can only be computed exactly by
+    encoding each field separately — never by encoding the sum.
+    """
+    return sum(encrypted_field_storage_bytes(size) for size in plaintext_sizes)
+
+
+def estimate_d1_payload_range(
+    total_plaintext_bytes: int, field_count: int
+) -> tuple[int, int]:
+    """Inclusive [min, max] when only the total P and field count F are known.
+
+    Each field contributes ``4 * ceil((p_i + 34) / 3)``. With ``m_i = p_i + 34``
+    and ``sum(m_i) = P + 34F``:
+
+    * every ``m_i`` divisible by 3 gives the minimum ``4 * ceil((P + 34F) / 3)``
+    * every ``m_i % 3 == 1`` gives the maximum, since ``ceil(m/3) = (m + 2)/3``
+
+    The spread is up to ``8/3`` bytes per field, so a single "exact" number
+    cannot be produced from P and F alone.
+    """
+    total = _require_safe_int(total_plaintext_bytes, field="total_plaintext_bytes")
+    count = _require_safe_int(field_count, field="field_count")
+    envelope_total = total + AEAD_ENVELOPE_OVERHEAD_BYTES * count
+    minimum = 4 * math.ceil(envelope_total / 3)
+    maximum = 4 * ((envelope_total + 2 * count) // 3)
+    return (minimum, max(minimum, maximum))
+
+
+def draft_v1_estimate_bytes(field_count: int) -> int:
+    """Reproduce the superseded draft §14.4 figure ``6,002,322 + 44 x F``.
+
+    Retained only so the review can show what the draft asserted. Both inputs
+    are wrong: ``ceil(n * 4 / 3)`` is not the padded Base64 length, and 44 is
+    not the envelope size. Use `estimate_d1_payload_range` instead.
+    """
     _require_safe_int(field_count, field="field_count")
-    return base64_expanded_bytes(phase0_text_bytes()) + AEAD_FIELD_OVERHEAD_BYTES * field_count
+    superseded_base = math.ceil(phase0_text_bytes() * 4 / 3)
+    return superseded_base + DRAFT_V1_PER_FIELD_CONSTANT * field_count

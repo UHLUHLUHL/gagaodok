@@ -7,7 +7,7 @@ opened and no assertion message can contain user content.
 import unittest
 
 from tools.canonical_schema_contract import (
-    AEAD_FIELD_OVERHEAD_BYTES,
+    AEAD_ENVELOPE_OVERHEAD_BYTES,
     ENCRYPTED_RELATIONSHIP_REFERENCES,
     MAX_BUBBLE_ORDER,
     MAX_SAFE_INTEGER,
@@ -16,12 +16,15 @@ from tools.canonical_schema_contract import (
     ConversationScope,
     SequenceAllocator,
     attachment_key,
-    base64_expanded_bytes,
+    base64_encoded_length,
     build_extension_envelopes,
     canonical_space_id,
     canonical_uuid,
     engine_profile_key,
-    estimate_d1_payload_bytes,
+    draft_v1_estimate_bytes,
+    encrypted_field_storage_bytes,
+    estimate_d1_payload_range,
+    exact_encrypted_payload_bytes,
     find_plaintext_leaks,
     initial_bubble_orders,
     map_raw_source_space,
@@ -270,13 +273,25 @@ class TenantAndIdentityTests(unittest.TestCase):
             with self.subTest(key=key[0]):
                 self.assertEqual(key[0], ACCOUNT_A)
 
-    def test_tablet_raw_label_maps_explicitly(self):
+    def test_canonical_labels_pass_through_unchanged(self):
+        # Phase 0 aggregate report: Mac and phone already emit the enum.
+        self.assertEqual(map_raw_source_space("MAC_SPACE"), "MAC_SPACE")
+        self.assertEqual(map_raw_source_space("PHONE_SPACE"), "PHONE_SPACE")
+        self.assertEqual(map_raw_source_space("TABLET_SPACE"), "TABLET_SPACE")
+
+    def test_only_observed_legacy_alias_is_translated(self):
+        # The tablet run was the single source that emitted a legacy label.
         self.assertEqual(map_raw_source_space("tablet"), "TABLET_SPACE")
-        self.assertEqual(map_raw_source_space("mac"), "MAC_SPACE")
-        self.assertEqual(map_raw_source_space("phone"), "PHONE_SPACE")
+
+    def test_unobserved_lowercase_labels_are_rejected(self):
+        # "mac"/"phone" were never observed; inventing them would be a guess.
+        for bad in ("mac", "phone"):
+            with self.subTest(raw=bad):
+                with self.assertRaises(ContractError):
+                    map_raw_source_space(bad)
 
     def test_case_variants_and_unknown_labels_are_rejected(self):
-        for bad in ("Tablet", "TABLET", "TABLET_SPACE", "desktop", "watch", ""):
+        for bad in ("Tablet", "TABLET", "Mac", "PHONE", "desktop", "watch", ""):
             with self.subTest(raw=bad):
                 with self.assertRaises(ContractError):
                     map_raw_source_space(bad)
@@ -534,29 +549,114 @@ class ServerSequenceTests(unittest.TestCase):
         self.assertEqual(self.allocator.issued_sequences(ACCOUNT_A), [MAX_SAFE_INTEGER])
 
 
-class CapacityEstimateTests(unittest.TestCase):
-    """Item 9 — reproduce the documented D1 sizing chain."""
+class Base64AndEnvelopeTests(unittest.TestCase):
+    """A-2 — padded Base64 length and the 34-byte E2EE field envelope."""
 
-    def test_intermediate_chain_matches_the_document(self):
+    def test_padded_base64_length_is_four_times_ceil_n_over_three(self):
+        self.assertEqual(base64_encoded_length(0), 0)
+        self.assertEqual(base64_encoded_length(1), 4)
+        self.assertEqual(base64_encoded_length(2), 4)
+        self.assertEqual(base64_encoded_length(3), 4)
+        self.assertEqual(base64_encoded_length(4), 8)
+
+    def test_padded_base64_length_is_always_a_multiple_of_four(self):
+        for n in range(0, 64):
+            with self.subTest(n=n):
+                self.assertEqual(base64_encoded_length(n) % 4, 0)
+
+    def test_matches_the_standard_library_encoder(self):
+        import base64 as _b64
+        import os as _os
+
+        for n in (0, 1, 2, 3, 4, 5, 17, 34, 100, 1021):
+            with self.subTest(n=n):
+                self.assertEqual(
+                    base64_encoded_length(n), len(_b64.b64encode(_os.urandom(n)))
+                )
+
+    def test_envelope_overhead_is_thirty_four_bytes(self):
+        # version 1 + alg 1 + key_generation 4 + nonce 12 + tag 16
+        self.assertEqual(AEAD_ENVELOPE_OVERHEAD_BYTES, 1 + 1 + 4 + 12 + 16)
+        self.assertEqual(AEAD_ENVELOPE_OVERHEAD_BYTES, 34)
+
+    def test_encrypted_field_storage_applies_envelope_then_base64(self):
+        # 4 * ceil((0 + 34) / 3) = 4 * 12 = 48
+        self.assertEqual(encrypted_field_storage_bytes(0), 48)
+        # 4 * ceil((2 + 34) / 3) = 4 * 12 = 48
+        self.assertEqual(encrypted_field_storage_bytes(2), 48)
+        # 4 * ceil((3 + 34) / 3) = 4 * 13 = 52
+        self.assertEqual(encrypted_field_storage_bytes(3), 52)
+
+    def test_exact_total_needs_per_field_sizes(self):
+        sizes = [10, 200, 3_000]
+        expected = sum(4 * -(-(size + 34) // 3) for size in sizes)
+        self.assertEqual(exact_encrypted_payload_bytes(sizes), expected)
+
+    def test_encoding_the_sum_is_not_the_sum_of_encodings(self):
+        """Padding is per field, so the two are genuinely different."""
+        sizes = [10, 200, 3_000]
+        per_field = exact_encrypted_payload_bytes(sizes)
+        as_one_blob = base64_encoded_length(
+            sum(sizes) + AEAD_ENVELOPE_OVERHEAD_BYTES
+        )
+        self.assertNotEqual(per_field, as_one_blob)
+        self.assertGreater(per_field, as_one_blob)
+
+
+class CapacityEstimateTests(unittest.TestCase):
+    """Item 9 — Phase 0 sizing chain, now as a range rather than one number."""
+
+    def test_plaintext_chain_matches_the_document(self):
+        # The subtraction chain in the draft is arithmetically sound.
         self.assertEqual(phase0_message_json_bytes(), 16_995_985)
         self.assertEqual(phase0_text_bytes(), 4_501_741)
-        self.assertEqual(base64_expanded_bytes(phase0_text_bytes()), 6_002_322)
 
-    def test_overhead_constant(self):
-        self.assertEqual(AEAD_FIELD_OVERHEAD_BYTES, 44)
+    def test_range_brackets_every_possible_padding_outcome(self):
+        total, count = phase0_text_bytes(), 25_000
+        low, high = estimate_d1_payload_range(total, count)
+        self.assertLessEqual(low, high)
+        # Every concrete field split must land inside the reported range.
+        per_field = total // count
+        remainder = total - per_field * count
+        sizes = [per_field] * count
+        sizes[0] += remainder
+        self.assertGreaterEqual(exact_encrypted_payload_bytes(sizes), low)
+        self.assertLessEqual(exact_encrypted_payload_bytes(sizes), high)
 
-    def test_documented_field_count_scenarios(self):
-        self.assertEqual(estimate_d1_payload_bytes(10_000), 6_442_322)
-        self.assertEqual(estimate_d1_payload_bytes(25_000), 7_102_322)
-        self.assertEqual(estimate_d1_payload_bytes(50_000), 8_202_322)
+    def test_range_bounds_are_attainable(self):
+        # All (p_i + 34) divisible by 3 -> the minimum.
+        sizes_min = [2, 2, 2]  # 36, 36, 36
+        total = sum(sizes_min)
+        low, high = estimate_d1_payload_range(total, len(sizes_min))
+        self.assertEqual(exact_encrypted_payload_bytes(sizes_min), low)
+        # All (p_i + 34) % 3 == 1 -> the maximum.
+        sizes_max = [3, 3, 3]  # 37, 37, 37
+        low2, high2 = estimate_d1_payload_range(sum(sizes_max), len(sizes_max))
+        self.assertEqual(exact_encrypted_payload_bytes(sizes_max), high2)
 
-    def test_zero_fields_is_the_base_payload(self):
-        self.assertEqual(estimate_d1_payload_bytes(0), 6_002_322)
+    def test_range_is_a_range_not_a_point(self):
+        low, high = estimate_d1_payload_range(phase0_text_bytes(), 25_000)
+        self.assertGreater(high, low)
 
-    def test_base64_expansion_uses_ceiling(self):
-        self.assertEqual(base64_expanded_bytes(1), 2)
-        self.assertEqual(base64_expanded_bytes(3), 4)
-        self.assertEqual(base64_expanded_bytes(4), 6)
+    def test_all_scenarios_stay_far_below_the_free_d1_limit(self):
+        """The headline conclusion survives the corrected formula."""
+        d1_free_database_limit = 500 * 1000 * 1000
+        for field_count in (10_000, 25_000, 50_000):
+            with self.subTest(field_count=field_count):
+                low, high = estimate_d1_payload_range(phase0_text_bytes(), field_count)
+                self.assertLess(high, d1_free_database_limit * 0.05)
+
+    def test_superseded_draft_formula_is_reproducible_but_wrong(self):
+        # Reproducing what the draft said ...
+        self.assertEqual(draft_v1_estimate_bytes(0), 6_002_322)
+        self.assertEqual(draft_v1_estimate_bytes(10_000), 6_442_322)
+        self.assertEqual(draft_v1_estimate_bytes(25_000), 7_102_322)
+        self.assertEqual(draft_v1_estimate_bytes(50_000), 8_202_322)
+        # ... and showing it is not a valid padded-Base64 length.
+        self.assertNotEqual(draft_v1_estimate_bytes(0) % 4, 0)
+        self.assertNotEqual(
+            draft_v1_estimate_bytes(0), base64_encoded_length(phase0_text_bytes())
+        )
 
 
 if __name__ == "__main__":
