@@ -1,10 +1,10 @@
-# Phase 1 Canonical Sync Schema 초안
+# Phase 1 Canonical Sync Schema 통합 초안
 
 ## 문서 상태
 
 - 작성일: 2026-08-27
-- 작성: Claude Code (Codex 배정 작업)
-- 상태: **초안 / Codex 통합 검토 대기 / 확정 아님 / 구현 승인 아님**
+- 작성: Claude Code (초안), Codex (통합 결정·보정)
+- 상태: **§15 통합 결정 완료 / contract fixture 작성 전 / 구현 승인 아님**
 - 이 문서는 **Cloudflare 리소스 생성, 앱 코드 구현, Phase 3 실데이터 업로드를 승인하지 않는다.**
 - 작성 중 앱 코드·Cloudflare 리소스·실제 대화 archive를 열거나 변경하지 않았다. Phase 0 수치는 저장소 안 보고서의 집계값만 인용했다.
 
@@ -35,8 +35,6 @@ X0000000-0000-4000-8000-0000000000NN
   c = engine profile
 ```
 
-`00000000-0000-4000-8000-000000000000`(전부 0)은 §14.2의 기본 세계선 sentinel 후보이며 다른 entity에 쓰지 않는다.
-
 실제 구현은 표준 random UUID v4를 쓴다. 위 규칙은 문서 예시 전용이다.
 
 ### 0.2 암호화 표기
@@ -48,12 +46,12 @@ E2EE 제안서 §8이 정한 경계에 따라, **내용 필드는 봉투 base64�
 
 예시 JSON의 봉투 값은 `"ENC(...)"` 형태의 **자리표시자**다. 실제 봉투 byte 형식은 E2EE 제안서 §7.1에 있다.
 
-> **Codex 통합 결정 필요:** 암호화 필드의 D1 컬럼 명명 규칙(`title` vs `title_enc`)이 아직 정해지지 않았다. 이 문서는 읽기 쉽도록 평문 이름을 쓰고 🔒로 표시했다. 컬럼 접미사를 붙일지 확정해야 한다.
+**통합 결정:** D1에서 암호문을 담는 컬럼은 반드시 `_enc` 접미사를 쓴다(`title_enc`, `status_message_enc`). API의 canonical field path와 문서 JSON 예시는 원래 이름(`title`, `status_message`)을 유지한다. 즉 `_enc`는 저장 컬럼 이름이며 patch path가 아니다. 이 구분으로 암호문을 평문처럼 처리하거나 평문을 암호문 컬럼에 넣는 실수를 막는다.
 
 ### 0.3 시각과 순서
 
 - ⬜ `created_at`·`updated_at`은 RFC 3339 UTC 문자열이다.
-- ⬜ `server_seq`는 Worker가 매기는 단조 증가 정수이며 정렬의 권위 원본이다.
+- ⬜ `server_seq`는 Worker가 매기는 `1...2^53-1` 범위의 단조 증가 정수이며 정렬의 권위 원본이다.
 - 클라이언트 timestamp는 표시·정렬 보조에만 쓰고 순서 판정에 쓰지 않는다.
 
 ---
@@ -98,6 +96,8 @@ Phase 0에서 세 source space를 모두 조사했다. `space_id`는 자유 문�
 
 **`space_id`는 build flavor에서 추론하지 않고 기기 등록 시 확정해 저장한다.** 합의문이 지적한 대로 flavor는 동기화되지 않는다.
 
+Phase 0 tablet report의 raw `source_space` 값은 `"tablet"`이었지만 이것은 canonical enum이 아니다. Importer는 source adapter가 명시적으로 `tablet → TABLET_SPACE`로 한 번 mapping하고, D1·AAD·outbox에는 canonical enum만 넣는다. 대소문자 보정이나 임의 문자열 fallback은 금지한다.
+
 ### 1.2 device
 
 ```json
@@ -117,7 +117,7 @@ Phase 0에서 세 source space를 모두 조사했다. `space_id`는 자유 문�
 - 🔒 `display_name`은 사용자가 붙인 기기 이름이므로 암호화한다.
 - ⬜ `revoked_at`이 null이 아니면 해당 device token을 거부한다.
 
-> **Codex 통합 결정 필요:** 한 `space_id`에 기기가 둘 이상 연결될 수 있는지. 현재 사용자 결정은 Mac 1대·phone 1대·tablet 1대를 전제하지만 schema가 이를 강제할지 정해야 한다. 강제하면 기기 교체 시 마이그레이션이 필요하고, 강제하지 않으면 같은 space에서 동시 write가 가능해진다.
+**통합 결정:** 한 `space_id`에 여러 기기를 허용한다. `space_id`는 물리 기기 identity가 아니라 동작·출처 영역이다. 기기 교체와 향후 같은 종류 기기 추가 때문에 `UNIQUE(account_id, space_id)`를 두지 않는다. 동시 write는 device 수 제한이 아니라 `base_revision` CAS, active writer, generation authority로 통제한다.
 
 ---
 
@@ -125,17 +125,17 @@ Phase 0에서 세 source space를 모두 조사했다. `space_id`는 자유 문�
 
 합의문의 확정 규칙을 schema 관점으로 옮긴다.
 
-1. ⬜ `bubble_order`는 부호 없는 정수이며 **최초 canonical import에서 원본 JSON 배열 index로 확정**한다.
+1. ⬜ `bubble_order`는 `0...9,007,199,254,740,991` 범위의 정수이며 **최초 canonical import에서 원본 JSON 배열의 0-based index로 확정**한다.
 2. 확정된 mapping은 `(conversation_scope, message_id)`에 대해 **불변**이다. 같은 원본을 다시 import해도 같은 값을 낸다.
 3. **빈 번호를 허용한다.** 삭제로 번호가 듬성듬성해지는 것은 정상이며, 빠진 번호를 누락 데이터나 삭제 증거로 해석하지 않는다.
 4. 삭제·정렬·재동기화 뒤에도 기존 bubble을 재번호 매기지 않는다.
-5. 새 bubble은 해당 scope의 현재 최대값보다 큰 값을 받는다. 기존 순서를 바꾸지 않는다.
+5. 새 bubble은 해당 conversation scope 전체의 현재 최대값에 **1을 더한 값**을 받는다. 계획적으로 간격을 두지 않으며 기존 순서를 바꾸지 않는다. 빈 scope의 첫 값은 0이다.
 
 `bubble_order`는 E2EE 제안서 §7.2의 AAD field 10에 포함되므로, **확정 후 값을 바꾸면 기존 암호문을 복호화할 수 없다.** 이 문서의 불변 규칙은 표시 순서 문제가 아니라 복호화 가능성 문제다.
 
 중간 삽입이 필요한 기능(메시지 편집 등)은 별도 stable ordering 규격을 먼저 정한 뒤에 연다.
 
-> **Codex 통합 결정 필요:** `bubble_order`의 폭. E2EE AAD는 UInt64BE로 잡혀 있고 D1은 `INTEGER`(64bit signed)다. 두 표현의 경계값 처리와 새 bubble 증가 폭(1씩인지 간격을 둘지)을 확정해야 한다.
+E2EE AAD에는 이 값을 UInt64BE로 인코딩하지만 v1의 유효 범위는 JavaScript `Number`의 안전한 정수 상한(`2^53-1`)으로 제한한다. D1은 더 큰 정수를 담을 수 있어도 Worker 경계에서 정밀도를 잃을 수 있기 때문이다. 범위를 넘기기 전에 write를 fail-closed로 거부한다.
 
 ---
 
@@ -200,14 +200,31 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
   "server_seq": 10427,
   "updated_at": "2026-08-27T00:00:00Z",
   "extensions": {
-    "android.baseAffection": "ENC(opaque extension)"
+    "android.room_profile.base_affection": "ENC(opaque extension)"
   }
 }
 ```
 
 `extensions`는 **다른 플랫폼이 모르는 필드를 그대로 보존하는 자리**다. 키는 소유 플랫폼을 접두사로 붙여 충돌을 막는다.
 
-> **Codex 통합 결정 필요:** `extensions` 키 명명 규칙(`android.` 접두사 방식)과, 값 전체를 하나의 봉투로 암호화할지 키마다 개별 봉투를 둘지. 개별 봉투는 per-field patch와 잘 맞고, 통째 봉투는 unknown field 보존이 단순하다.
+**통합 결정:** extension key는 `<owner>.<entity>.<field>` 형식의 소문자 dotted namespace를 쓴다. 각 segment는 `[a-z][a-z0-9_]*`이며 예시는 `android.room_profile.base_affection`이다. 값은 **key마다 별도 봉투로 암호화**하고 patch도 key 단위로 수행한다. 서버와 모르는 클라이언트는 key와 암호문 byte를 해석하지 않고 그대로 보존한다. extension 전체를 한 봉투로 묶어 known key 하나를 고칠 때 unknown key까지 재암호화하는 방식은 금지한다.
+
+### 3.4 Turn과 bubble canonical 필드
+
+초안에서 identity만 있고 내용 entity가 빠져 있었으므로 다음 ownership을 확정한다.
+
+| Entity | 필드 | 분류 |
+| --- | --- | --- |
+| turn | `account_id`, conversation scope, `turn_id` | ⬜ identity |
+| turn | `canonical_text`, `heart_changes` | 🔒 turn-level source of truth |
+| turn | `generation_profile_ref`, `fallback_reason` | 🔒 실제 생성 계약 provenance |
+| turn | `created_by_device_id`, `created_at`, `revision`, `server_seq` | ⬜ provenance·metadata·CAS |
+| bubble | conversation scope, `turn_id`, `message_id`, `bubble_order` | ⬜ identity·order |
+| bubble | `sender`, `kind`, `text`, `speaker_ref`, `reactions` | 🔒 content·relationship edge |
+| bubble | `attachment_ref` | ⬜ R2 identity·byte size만; filename·MIME·payload는 🔒 |
+| bubble | `timestamp`, `revision`, `server_seq` | ⬜ metadata·CAS |
+
+`canonical_text`와 `heart_changes`를 bubble에 중복 저장하지 않는다. 기존 local JSON으로 내릴 때만 §9.2의 anchor 규칙으로 투영한다. `speaker_ref`·reaction·heart target의 암호화 경계는 §13.2를 따른다. message edit가 비활성인 초기 Phase 5에서도 `revision`은 tombstone CAS와 future compatibility를 위해 유지한다.
 
 ---
 
@@ -225,7 +242,7 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 | 🔒 `compaction_contract_fingerprint` | 기계 판정용 압축 fingerprint |
 | 🔒 `cache_policy` | provider cache 생성·재사용 호환성 계약 |
 | 🔒 `repetition_policy` | runtime 반복 제어 동작과 prompt version |
-| ⬜ `profile_revision` | CAS |
+| ⬜ `profile_revision` | immutable version identity |
 | ⬜ `compaction_compat_tag` | 서버가 equality만 비교하는 keyed 태그 |
 
 `relationship_policy`의 허용값은 `none`·`personal`·`group` 세 가지다.
@@ -234,10 +251,12 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 
 **반복 제어는 persona extension으로 가장하지 않고 여기 `repetition_policy`에서 계약한다.** Android의 `companionRepetitionControlEnabled`는 저장 필드가 아니라 method 인자이고 `repetitionAdviceFromConversation`은 runtime 계산 결과이므로 canonical 저장 대상이 아니다.
 
-지원하지 않는 profile을 만난 기기는 **read-only로 열고 조용한 fallback을 하지 않는다**(사용자 결정 8).
+지원하지 않는 profile을 만난 기기는 **조용히 fallback하지 않는다.** 사용자 결정 8에 따라 방 진입 시 1회 또는 방 목록에서 차이를 알린 뒤, 그 기기에 등록된 명시적 fallback profile로 답변할 수 있다. 이때 AI turn은 원래 room profile이 아니라 실제 사용한 `generation_profile_ref`와 암호화된 `fallback_reason`을 저장한다. 지원 불가를 감지했는데 고지·등록된 fallback이 없으면 fail-closed로 전송을 막는다.
 
 ```json
 {
+  "account_id": "a0000000-0000-4000-8000-000000000001",
+  "space_id": "MAC_SPACE",
   "engine_profile_id": "c0000000-0000-4000-8000-0000000000e1",
   "profile_revision": 3,
   "mode": "ENC(mentor)",
@@ -254,9 +273,9 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 }
 ```
 
-> **Codex 통합 결정 필요:** `engine_profile`을 room에 인라인할지 별도 entity로 참조할지. 이 초안은 별도 entity + `engine_profile_ref` 참조로 그렸다. 여러 방이 같은 profile을 공유할 수 있으면 참조가 낫고, 방마다 다르면 인라인이 단순하다. Phase 0은 이 질문에 답할 데이터를 수집하지 않았다.
+**통합 결정:** `engine_profile`은 별도 versioned entity로 두고 room은 `(engine_profile_id, profile_revision)`을 정확히 참조한다. profile revision은 immutable이다. 변경은 기존 행을 덮어쓰지 않고 새 revision을 만든 뒤, 대상 room의 reference를 field patch로 바꾼다. 여러 room이 같은 revision을 참조할 수 있지만 한 room의 변경이 다른 room에 암묵적으로 전파되어서는 안 된다.
 
-> **Codex 통합 결정 필요:** `relationship_policy = group`을 `PHONE_SPACE` 밖에서 만들 수 있는지. 사용자 결정 9에 따르면 호감도는 폰 전용이므로 다른 space가 이 값을 쓰는 것은 오류일 가능성이 높다.
+**통합 결정:** v1에서 `relationship_policy = group`은 `PHONE_SPACE`에만 허용한다. 다른 space의 create·patch는 Worker와 client 양쪽에서 거부한다. 이는 group/worldline과 하트가 PHONE_SPACE 백업 안에만 존재한다는 사용자 결정 4·9의 경계다.
 
 ---
 
@@ -265,12 +284,12 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 동기화 대상은 persona를 추출·편집한 과정 전체가 아니라 **사용자가 확정한 versioned snapshot**이다.
 
 ```text
-persona_snapshot_identity = (space_id, persona_snapshot_id, snapshot_revision)
+persona_snapshot_identity = (account_id, space_id, persona_snapshot_id, snapshot_revision)
 ```
 
 | 필드 집합 | 내용 |
 | --- | --- |
-| Identity | ⬜ `space_id`, ⬜ `persona_snapshot_id`, ⬜ `snapshot_revision` |
+| Identity | ⬜ `account_id`, ⬜ `space_id`, ⬜ `persona_snapshot_id`, ⬜ `snapshot_revision` |
 | 내용 | 🔒 `description`, 🔒 `samples`, 🔒 `style_guide`, 🔒 `is_enabled` |
 | Provenance | ⬜ `owner_space_id`, ⬜ `created_by_device_id`, ⬜ `created_at` |
 | Compatibility | ⬜ `persona_schema_version`, 🔒 `content_fingerprint` |
@@ -278,7 +297,7 @@ persona_snapshot_identity = (space_id, persona_snapshot_id, snapshot_revision)
 
 ### 5.1 revision·ownership·extension 규칙
 
-1. **snapshot 변경은 기존 revision을 덮어쓰지 않고 새 revision을 만든다.** 갱신은 `base_revision` CAS로 직렬화한다.
+1. **snapshot 변경은 기존 revision을 덮어쓰지 않고 새 revision을 만든다.** `persona_snapshot_head`의 갱신을 `base_revision` CAS로 직렬화한다.
 2. room profile은 AI request에 실제로 쓴 `persona_snapshot_id`와 `snapshot_revision`을 정확히 참조한다.
 3. **write 권한은 `owner_space_id`가 결정한다.** `created_by_device_id`는 provenance이며 단독 권한 근거가 아니다.
 4. **다른 플랫폼이 모르는 extension은 서버가 보존하며, 공통 필드 patch가 이를 삭제하면 안 된다.**
@@ -289,6 +308,7 @@ Android `PersonaStyle`의 저장 필드는 `description`·`samples`·`styleGuide
 
 ```json
 {
+  "account_id": "a0000000-0000-4000-8000-000000000001",
   "space_id": "PHONE_SPACE",
   "persona_snapshot_id": "50000000-0000-4000-8000-000000000001",
   "snapshot_revision": 2,
@@ -302,8 +322,8 @@ Android `PersonaStyle`의 저장 필드는 `description`·`samples`·`styleGuide
   "is_enabled": "ENC(true)",
   "content_fingerprint": "ENC(fingerprint)",
   "extensions": {
-    "android.suppressedExpressions": "ENC(opaque)",
-    "android.sampleEvidence": "ENC(opaque)"
+    "android.persona_style.suppressed_expressions": "ENC(opaque)",
+    "android.persona_style.sample_evidence": "ENC(opaque)"
   },
   "server_seq": 10310
 }
@@ -316,7 +336,7 @@ Android `PersonaStyle`의 저장 필드는 `description`·`samples`·`styleGuide
 Context checkpoint는 provider cache가 아니라 **장기 대화 기억**이다.
 
 ```text
-checkpoint_identity = (conversation_scope, checkpoint_id)
+checkpoint_identity = (account_id, conversation_scope, checkpoint_id)
 ```
 
 | 필드 집합 | 내용 |
@@ -354,14 +374,15 @@ fingerprint 입력은 합의문이 정한 대로 summary instruction 본문, thr
 
 Phase 0에서 발견한 digest는 Mac 1개, phone 3개이며 **모두 policy 식별자가 없다.** tablet에는 없었다.
 
-- version 정보가 없는 기존 digest는 ⬜ `compaction_profile_id = "legacy_unversioned"`로 격리한다.
+- version 정보가 없는 기존 digest는 🔒 `compaction_profile_id = "legacy_unversioned"`로 격리한다.
 - **현재 profile과 같다고 추정하지 않는다.**
-- cross-device continuation 전에 (a) opaque read-only summary로만 소비, (b) 원본 message에서 재생성, (c) source-space owner만 이어쓰기 중 하나를 고른다.
-
-> **Codex 통합 결정 필요:** 위 (a)·(b)·(c) 중 v1 선택. 대상이 4개뿐이므로 (b) 재생성 비용이 크지 않을 수 있으나, 재생성은 model 호출이므로 비용·결과 변화가 따른다.
+- v1은 기존 digest를 **opaque read-only summary로만 보존**하고 이어쓰기·재요약하지 않는다.
+- 새 versioned checkpoint가 실제로 필요해지는 시점에만 canonical 원본 message에서 새 checkpoint를 만든다. 기존 digest를 변환하거나 그 결과로 덮어쓰지 않는다.
+- import만을 위한 model 호출은 하지 않는다. 기존 4개 digest의 비용·결과를 임의로 바꾸지 않기 위해서다.
 
 ```json
 {
+  "account_id": "a0000000-0000-4000-8000-000000000001",
   "space_id": "MAC_SPACE",
   "room_id": "10000000-0000-4000-8000-000000000002",
   "worldline_id": null,
@@ -423,6 +444,7 @@ Phase 0 실측값이다.
 
 ```json
 {
+  "account_id": "a0000000-0000-4000-8000-000000000001",
   "attachment_id": "70000000-0000-4000-8000-000000000001",
   "kind": "attachment",
   "r2_object_key": "obj/70000000-0000-4000-8000-0000000000ff",
@@ -517,7 +539,16 @@ Android의 bubble 삭제는 turn과 현재 호감도 값은 남긴 채 첫 bubbl
 
 `delete_turn`이 단톡방에서 실행되면 여러 화자의 bubble과 여러 참여자의 하트 변화가 **함께 원자적으로** 되돌아간다(결정 4·10·11 조합).
 
-> **Codex 통합 결정 필요:** 마지막 bubble 삭제를 `delete_turn`으로 승격할지 headless turn을 만들지. 그리고 canonical 데이터를 local JSON으로 투영할 때 turn-level 필드(`canonical_text`·`heart_changes`)를 어느 bubble에 다시 anchor할지. 합의문이 미결로 남긴 항목이며 삭제 기능 활성화 전에 정해야 한다.
+**통합 결정:** headless turn을 만들지 않는다. 마지막 bubble을 지우려는 `delete_bubble`은 `delete_turn`으로 승격하며, turn과 모든 child bubble을 같은 transaction에서 tombstone 처리한다.
+
+canonical turn의 `canonical_text`·`heart_changes`는 bubble과 독립된 turn-level source of truth다. local JSON으로 투영할 때만 다음 규칙으로 anchor한다.
+
+- `canonical_text`: 남은 AI bubble 중 첫 bubble
+- `heart_changes`: 남은 AI bubble 중 마지막 bubble
+- 중간 bubble: 두 turn-level 필드를 갖지 않는다
+- 남은 bubble이 없으면 reanchor하지 않고 turn을 삭제한다
+
+이 anchor는 local storage 호환을 위한 projection일 뿐 canonical ownership을 bubble로 되돌리지 않는다. 초기 Phase 5에서는 사용자 결정 10·15에 따라 `delete_bubble` 자체를 전송·수용하지 않고 `delete_turn`만 허용한다.
 
 ---
 
@@ -586,6 +617,24 @@ Phase 0 실측도 이와 일치한다. 단톡방·worldline은 `PHONE_SPACE`에�
 
 결정 9는 **추가 조치가 필요 없다.** 하트가 `PHONE_SPACE` 안에만 존재하고 결정 3이 폰 방을 다른 space에서 숨기므로 자동으로 비공개가 된다.
 
+### 11.1 PHONE_SPACE group·worldline canonical entity
+
+초안에서 scope만 정의하고 실제 group state 행이 빠져 있었으므로 다음 두 entity를 둔다.
+
+| Entity | 필드 | 분류 |
+| --- | --- | --- |
+| `group_state` | `(account_id, PHONE_SPACE, room_id)` | ⬜ identity |
+| `group_state` | `participants` | 🔒 participant relationship 목록 |
+| `group_state` | `active_worldline_id` | 🔒 현재 선택된 write scope 참조 |
+| `group_state` | `revision`, `server_seq` | ⬜ CAS·ordering |
+| `worldline` | `(account_id, PHONE_SPACE, room_id, worldline_id)` | ⬜ identity |
+| `worldline` | `name` | 🔒 표시 내용 |
+| `worldline` | `created_at` | ⬜ timestamp |
+| `worldline` | `participant_hearts` | 🔒 participant reference와 현재 하트 값 |
+| `worldline` | `revision`, `server_seq` | ⬜ CAS·ordering |
+
+`participants`와 `participant_hearts`는 unknown member 보존이 가능한 canonical payload로 직렬화한다. 둘의 participant reference 값은 §13.2에 따라 암호화한다. `active_worldline_id`는 다음 message의 canonical scope를 결정하므로 local-only 선택 상태로 두지 않되, 서버 routing에는 각 write가 명시한 scope만 필요하므로 값은 암호화한다. `group_state`·`worldline` create/patch는 `PHONE_SPACE`가 아니면 거부한다.
+
 ---
 
 ## 12. 결정적인 legacy `turn_id`
@@ -647,7 +696,18 @@ character_identity = (space_id, character_id)
 
 Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId` 메시지 411개, reaction 2개, heart change 237개.
 
-### 13.2 이전 대상이 아닌 것
+### 13.2 다섯 참조의 E2EE 분류
+
+**통합 결정:** 다섯 참조의 **값은 암호화 대상**이다. entity 자체의 `room_id`·향후 `character_id`는 D1 routing과 identity를 위해 평문이지만, 메시지·반응·호감도 안의 참조는 “어느 방/캐릭터가 누구와 말하고 반응했는지”라는 관계 graph를 드러내며 서버 query에 필요하지 않다.
+
+- `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`는 각각 group participant·heart payload 안에서 암호화한다.
+- `ChatMessage.speakerRoomId`, `MessageReaction.participantRoomId`, `MessageHeartChange.participantRoomId`는 해당 bubble/turn의 수정 가능한 field 봉투 안에서 암호화한다.
+- field path와 entity identity는 평문이고 참조 **값**만 암호화한다.
+- `character_id` 도입 시 authorized client/importer가 다섯 값을 같은 mapping으로 복호화·이전·재암호화한다. 서버가 ciphertext를 보고 migration을 추론하지 않는다.
+
+이 결정은 E2EE 제안서 §8.2의 암호화 목록에 반영하며, §8.3의 canonical identity 평문 규칙과 충돌하지 않는다. 평문인 것은 entity의 identity이고, 암호화되는 것은 다른 entity를 가리키는 relationship edge다.
+
+### 13.3 이전 대상이 아닌 것
 
 | 항목 | 이유 |
 | --- | --- |
@@ -664,43 +724,54 @@ Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId
 
 ## 14. D1 schema — primary key, unique key, CAS
 
-> **Codex 통합 결정 필요:** 아래는 초안이며 실제 `CREATE TABLE`은 Phase 1 확정 후에 만든다. 이 문서는 Cloudflare 리소스를 만들지 않는다.
+아래는 통합 key contract다. 실제 `CREATE TABLE`과 index DDL은 fixture·migration test와 함께 별도 구현한다. 이 문서는 Cloudflare 리소스를 만들지 않는다.
 
 ### 14.1 키 설계
 
 | 테이블 | Primary key | Unique key | 비고 |
 | --- | --- | --- | --- |
 | `account` | `account_id` | — | |
-| `device` | `device_id` | `(account_id, device_id)` | `revoked_at`으로 무효화 |
+| `device` | `(account_id, device_id)` | — | `revoked_at`으로 무효화 |
 | `room` | `(account_id, space_id, room_id)` | — | `space_id`를 키에 넣어 space 간 UUID 충돌을 막는다 |
-| `worldline` | `(account_id, space_id, room_id, worldline_id)` | — | |
-| `turn` | `(account_id, space_id, room_id, worldline_id, turn_id)` | — | `worldline_id`는 null 대신 sentinel 사용(아래) |
-| `bubble` | `(…scope…, turn_id, message_id)` | `(…scope…, message_id)` | `bubble_order`는 unique가 **아니다** |
-| `persona_snapshot` | `(space_id, persona_snapshot_id, snapshot_revision)` | — | revision마다 행이 늘어난다 |
-| `checkpoint` | `(…scope…, checkpoint_id)` | — | |
-| `attachment` | `attachment_id` | `r2_object_key` | |
-| `operation_log` | `operation_id` | — | idempotency |
+| `group_state` | `(account_id, space_id, room_id)` | — | v1은 `PHONE_SPACE`만 허용 |
+| `worldline` | `(account_id, space_id, room_id, worldline_key)` | — | `worldline_key` 규칙은 §14.2 |
+| `turn` | `(account_id, space_id, room_id, worldline_key, turn_id)` | — | |
+| `bubble` | `(…scope key…, turn_id, message_id)` | `(…scope key…, message_id)`, `(…scope key…, bubble_order)` | message와 방 전체 표시 순서를 각각 유일하게 유지 |
+| `persona_snapshot` | `(account_id, space_id, persona_snapshot_id, snapshot_revision)` | — | immutable revision 행 |
+| `persona_snapshot_head` | `(account_id, space_id, persona_snapshot_id)` | — | 현재 revision을 CAS로 전진 |
+| `engine_profile` | `(account_id, space_id, engine_profile_id, profile_revision)` | — | immutable revision 행 |
+| `checkpoint` | `(…scope key…, checkpoint_id)` | — | mutable revision은 CAS |
+| `extension_field` | `(…owner identity…, extension_key)` | — | key별 암호문 봉투 |
+| `attachment` | `(account_id, attachment_id)` | `(account_id, r2_object_key)` | |
+| `operation_log` | `(account_id, operation_id)` | — | idempotency |
+| `change_log` | `(account_id, server_seq)` | — | account cursor |
 
 ### 14.2 nullable `worldline_id`를 키에 쓰는 문제
 
 SQLite/D1에서 **`NULL`은 서로 같지 않으므로 primary key나 unique 제약에 그대로 넣으면 중복 행이 생긴다.** `worldline_id`가 null인 기본 세계선이 여러 번 삽입될 수 있다.
 
-해결책은 둘 중 하나다.
+**통합 결정:** sentinel UUID를 쓰지 않는다. D1에는 nullable `worldline_id`와 key 전용 non-null **materialized column**을 함께 둔다.
 
-- **(a) sentinel 값**: 기본 세계선을 `00000000-0000-4000-8000-000000000000` 같은 고정 UUID로 저장하고 애플리케이션 경계에서 null과 변환한다.
-- **(b) 생성 컬럼**: `worldline_key = COALESCE(worldline_id, '')`를 만들어 키에 쓴다.
+```sql
+worldline_id  TEXT NULL,
+worldline_key TEXT NOT NULL,
+CHECK (worldline_key = COALESCE(worldline_id, ''))
+```
 
-이 초안은 **(a)를 기본으로 그렸다.** 다만 E2EE 제안서 §7.2의 AAD field 6은 `worldline_id`를 **nullable UUID(`presence = 0`)**로 정의한다. 즉 **저장 표현과 AAD 표현이 달라진다.** sentinel을 AAD에도 쓰면 AAD 규격을 고쳐야 하고, AAD만 null로 두면 두 표현 사이 변환 규칙을 명시해야 한다.
-
-> **Codex 통합 결정 필요 (중요):** (a)와 (b) 중 선택, 그리고 선택한 표현이 E2EE AAD의 nullable 정의와 어떻게 대응하는지. **이 대응을 정하지 않으면 같은 대화가 저장 경로와 암호화 경로에서 다른 scope로 취급될 수 있다.**
+- D1 primary/unique/index는 `worldline_key`를 사용한다.
+- API·canonical object·E2EE AAD는 언제나 원래 nullable `worldline_id`를 사용한다. null은 LP v1 `presence = 0`, 실제 UUID는 `presence = 1`이다.
+- `worldline_key = ''`는 D1 내부 key 표현일 뿐 API, AAD, outbox, R2 key에 노출하지 않는다.
+- 실제 UUID가 빈 문자열이 될 수 없으므로 mapping은 일대일이다. sentinel UUID와 실제 UUID 충돌 가능성도 없다.
+- Worker가 canonical uppercase UUID 형식을 검증한 뒤 `worldline_key = worldline_id ?? ""`를 함께 bind한다. DB의 `CHECK`가 둘의 불일치를 거부한다.
+- SQLite generated column은 primary key 일부가 될 수 없으므로 generated column을 쓰지 않는다. natural composite primary key를 유지하면서 mapping을 DB가 검증하는 선택이다.
 
 ### 14.3 revision과 CAS 조건
 
-모든 mutable entity(`room`, `persona_snapshot`, `checkpoint`, `engine_profile`)는 ⬜ `revision`을 가진다.
+모든 mutable entity(`room`, `persona_snapshot_head`, `checkpoint`)는 ⬜ `revision`을 가진다. `persona_snapshot`과 `engine_profile`의 revision 행 자체는 immutable이며 새 revision 생성과 head/reference 전진을 같은 transaction에서 처리한다.
 
 ```sql
 UPDATE room
-   SET status_message = ?, revision = revision + 1, server_seq = ?
+   SET status_message_enc = ?, revision = revision + 1, server_seq = ?
  WHERE account_id = ? AND space_id = ? AND room_id = ?
    AND revision = ?;          -- base_revision. 0 row 갱신이면 conflict
 ```
@@ -710,30 +781,60 @@ UPDATE room
 - `revision` 증가·canonical row 갱신·`operation_log` 삽입·change log 기록은 **하나의 `batch()` transaction**으로 적용한다.
 - 같은 `operation_id`가 이미 `operation_log`에 있으면 **재적용하지 않고 기존 결과를 반환**한다(idempotency).
 
-`server_seq`는 Worker가 계정 단위로 매기는 단조 증가 값이며 클라이언트 pull의 cursor가 된다.
+`server_seq`는 Worker가 **account 단위**로 매기는 단조 증가 값이며 클라이언트 pull의 단일 cursor가 된다. scope별 cursor는 room 생성·삭제와 새 scope 발견을 위해 별도 fan-out cursor가 필요하므로 v1에서 쓰지 않는다. 이 선택은 correctness contract이며 성능 보장은 아니다. 합성 Phase 2에서 동시 write·pagination·D1 CPU/latency를 측정하고, 한 DB가 query를 순차 처리한다는 D1 특성 때문에 병목이 확인될 때만 shard나 별도 sequencer를 검토한다.
 
-> **Codex 통합 결정 필요:** `server_seq`를 account 단위로 할지 scope 단위로 할지. account 단위는 cursor가 하나여서 단순하지만 모든 write가 한 시퀀스를 경합한다. Workers Free의 10ms CPU 한도 안에서 동작하는지는 아직 측정하지 않았다.
+Worker는 같은 `operation_id`가 없을 때만 account row의 `next_server_seq`를 1 증가시키고, 같은 transaction의 canonical row·operation log·change log가 그 값을 읽게 한다. idempotent 재시도는 새 sequence를 소비하지 않는다. sequence는 중복 없이 증가하며 gap은 허용한다. 범위 상한에 도달하면 wrap하거나 0으로 돌아가지 않고 fail-closed한다. 동시 batch 두 개가 중복 sequence를 만들지 않는지 Phase 2에서 검증한다.
 
 ---
 
-## 15. 미결 항목 정리 — Codex 통합 결정 필요
+### 14.4 Phase 0 기반 D1 용량 추정
 
-| # | 절 | 항목 |
+이 계산은 정책 결정이 아니라 Phase 1 sizing 참고값이다. 실제 D1 DDL·index와 ciphertext가 없으므로 정확한 청구량을 뜻하지 않는다.
+
+| 항목 | byte | 처리 |
+| --- | ---: | --- |
+| 세 archive 전체 | 40,355,530 | 출발점 |
+| 별도 avatar 파일(프로필 avatar 포함) | 20,800,577 | R2, D1 본문에서 제외 |
+| local-only·cache·ink 등 나머지 other | 2,558,968 | canonical D1에서 제외 |
+| message·room list·digest JSON | 16,995,985 | D1 후보 |
+| 그 JSON 안 attachment base64 추정 | 12,494,244 | decoded 9,370,679 byte의 `4 × ceil(n/3)` 합계, R2로 이동 |
+| media 제거 후 text·JSON 구조 추정 | **4,501,741** | 암호화 전 계획값 |
+
+남은 4,501,741 byte 전체에 보수적으로 base64 4/3 배를 적용하면 **6,002,322 byte**다. 여기에 암호화 field instance 수를 `F`라 할 때 제시된 AEAD 봉투 고정 오버헤드 약 44 byte를 더한다.
+
+```text
+estimated_d1_payload_bytes ≈ 6,002,322 + 44 × F
+```
+
+| 가정한 `F` | payload 추정 |
+| ---: | ---: |
+| 10,000 | 6,442,322 bytes (약 6.44 MB) |
+| 25,000 | 7,102,322 bytes (약 7.10 MB) |
+| 50,000 | 8,202,322 bytes (약 8.20 MB) |
+
+Phase 0 보고서는 민감한 본문을 남기지 않기 위해 **암호화 field instance 총수 `F`를 세지 않았다.** 따라서 현재의 정직한 결론은 “초기 D1 text payload는 대략 6~8.2MB 규모일 가능성이 높고, 정확값은 합성 importer가 field count와 serialized row size를 출력한 뒤 확정”이다. index·PK·row header, 이전 revision, tombstone, operation/change log, 향후 증가는 위 숫자에 포함되지 않는다.
+
+현재 D1 Free 한도는 database당 500MB, account 전체 5GB, row/string/BLOB당 2MB다. 위 초기 payload는 database 한도의 약 1.2~1.7%지만, 평균이 아니라 **개별 암호문이 2MB를 넘지 않는지**도 별도 fixture로 검증해야 한다. D1은 한 database에서 query를 순차 처리하며 `batch()`는 하나가 실패하면 전체 sequence를 rollback한다. 근거: [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), [D1 `batch()`](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch).
+
+---
+
+## 15. Codex 통합 결정 기록
+
+| # | 절 | 확정 결정 |
 | ---: | --- | --- |
-| 1 | §0.2 | 암호화 필드의 D1 컬럼 명명 규칙(`title` vs `title_enc`) |
-| 2 | §1.2 | 한 `space_id`에 기기가 둘 이상 연결될 수 있는지 |
-| 3 | §2 | `bubble_order`의 폭과 새 bubble 증가 폭 |
-| 4 | §3.3 | `extensions` 키 명명 규칙과 봉투 단위(키별 vs 통째) |
-| 5 | §4 | `engine_profile`을 room에 인라인할지 별도 entity로 둘지 |
-| 6 | §4 | `relationship_policy = group`을 `PHONE_SPACE` 밖에서 허용할지 |
-| 7 | §6.3 | `legacy_unversioned` digest 4개의 처리 방식 (a/b/c) |
-| 8 | §9.2 | 마지막 bubble 삭제의 승격 여부와 turn-level 필드 재anchor 위치 |
-| 9 | **§14.2** | **nullable `worldline_id`의 저장 표현과 E2EE AAD 표현의 대응** |
-| 10 | §14.3 | `server_seq`의 단위(account vs scope) |
+| 1 | §0.2 | D1 암호문 컬럼은 `_enc`; wire field path는 canonical 이름 유지 |
+| 2 | §1.2 | 한 `space_id`에 여러 device 허용; 동시성은 CAS·authority로 통제 |
+| 3 | §2 | `bubble_order`는 scope-wide `0...2^53-1`, 최초 0-based index, 신규는 scope `max+1` |
+| 4 | §3.3 | `<owner>.<entity>.<field>` namespace, key별 독립 봉투 |
+| 5 | §4 | `engine_profile`은 별도 immutable version entity, room이 exact revision 참조 |
+| 6 | §4 | `relationship_policy = group`은 v1 `PHONE_SPACE` 전용 |
+| 7 | §6.3 | legacy digest는 opaque read-only 보존; 필요할 때 원본에서 새 version 생성 |
+| 8 | §9.2 | 마지막 bubble 삭제는 `delete_turn`; headless turn 금지; first/last anchor 규칙 |
+| 9 | §14.2 | D1 key는 checked materialized `worldline_key`; API·AAD는 nullable `worldline_id` 유지 |
+| 10 | §14.3 | account-wide `server_seq` 단일 cursor |
+| 11 | §13.2 | character migration 대상 다섯 relationship 참조값은 암호화 |
 
-**9번이 가장 시급하다.** 저장 경로와 암호화 경로가 같은 대화를 다른 scope로 취급하면 복호화가 실패하거나, 더 나쁘게는 서로 다른 세계선의 데이터가 같은 키로 처리된다.
-
-### 15.1 이 초안이 확정하지 않은 것
+### 15.1 이 통합 초안이 아직 확정하지 않은 것
 
 - 실제 `CREATE TABLE` DDL과 인덱스
 - Worker API endpoint 목록과 요청·응답 형식
@@ -741,14 +842,28 @@ UPDATE room
 - Phase 4 remote replica의 별도 store 구조
 - Mac 방 목록 6개와 메시지 파일 13개의 차이 원인 — Phase 0이 **후속 확인 대상으로 남긴 항목**이며 임의 삭제하지 않는다
 
+### 15.2 통합 검토에서 고친 오류·누락
+
+- `turn`·`bubble`의 canonical 내용 필드와 ownership이 없던 문제를 §3.4에 보완했다.
+- group/worldline scope만 있고 `group_state`·`worldline` payload가 없던 문제를 §11.1에 보완했다.
+- `persona_snapshot`·`attachment` key에 `account_id`가 빠져 tenant 경계가 약했던 것을 §14.1에서 수정했다.
+- `engine_profile`·extension·change log table이 key 표에 빠진 것을 추가했다.
+- 같은 turn 안에서 `bubble_order` 중복을 허용해 표시 순서가 모호해질 수 있던 것을 unique constraint로 막았다.
+- generated column을 primary key에 쓸 수 없는 SQLite 제약을 반영해 checked materialized `worldline_key`로 바꿨다.
+- Phase 0 tablet raw label `tablet`과 canonical `TABLET_SPACE`가 다른 점을 importer mapping으로 명시했다.
+- character migration의 다섯 참조가 암호화 목록에 없던 것을 §13.2와 E2EE 제안서 §8.2에 반영했다.
+- unsupported profile을 무조건 read-only로 둬 사용자 결정 8과 충돌하던 문구를, 고지된 명시적 fallback과 turn별 실제 generation profile 기록으로 수정했다.
+- Phase 0 총 archive byte를 그대로 D1 용량으로 오해하지 않도록 R2 media·local-only data를 분리한 추정식을 §14.4에 추가했다.
+
 ## 16. Phase 1 완료 조건
 
 이 초안이 계약으로 확정되려면 다음이 필요하다.
 
-1. §15의 미결 10건에 대한 Codex 통합 결정
-2. 각 entity의 fixture와 acceptance test 작성
-3. E2EE 제안서 §13의 contract test와 이 schema의 결합 검증 — 특히 AAD scope 대응(§14.2)
-4. 비파괴 importer가 §12 규칙으로 같은 결과를 반복 생성하는지 확인
-5. Mac `PersonaStyle` custom decoder 하위호환 확인(§5.1)
+1. 각 entity의 fixture와 acceptance test 작성
+2. E2EE 제안서 §13의 contract test와 이 schema의 결합 검증 — 특히 nullable worldline과 relationship reference 암호화
+3. 비파괴 importer가 §12 규칙으로 같은 결과를 반복 생성하는지 확인
+4. Mac `PersonaStyle` custom decoder 하위호환 확인(§5.1)
+5. 실제 DDL·index에서 §14 key·CAS·account-wide sequence를 합성 동시 write로 검증
+6. 합성 importer가 정확한 encrypted field count·serialized D1 row/index size를 계산해 §14.4 추정을 교체
 
 **위 조건이 충족되기 전에는 이 문서를 구현 규격으로 사용하지 않는다.** Phase 2 합성 시험과 Phase 3 실데이터 업로드는 각각의 게이트를 별도로 통과해야 하며, 이 초안은 어느 쪽도 승인하지 않는다.

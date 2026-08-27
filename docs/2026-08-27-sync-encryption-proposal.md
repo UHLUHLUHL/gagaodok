@@ -566,6 +566,10 @@ LabeledHash(label, payload) = SHA-256(LP([
 
 sender, kind, text, canonicalText, persona 전체(`description`·`samples`·`styleGuide`·`suppressedExpressions`·`sampleEvidence`), profile 표시값(`title`·`statusMessage`·`musicTitle`·`musicArtist`), heart delta와 reason, checkpoint segment text와 summary, attachment filename·MIME·content, avatar 이미지, **그리고 `mode`·`modelIdentifier`·`engineProfile`·`compactionProfileId`·`compactionContractFingerprint`의 실제 값.**
 
+Group·message 안에서 다른 room/character를 가리키는 `GroupParticipant.roomId`, `ParticipantHeart.participantRoomId`, `ChatMessage.speakerRoomId`, `MessageReaction.participantRoomId`, `MessageHeartChange.participantRoomId`의 **참조 값도 암호화한다.** entity 자체의 canonical `room_id`·향후 `character_id`는 identity metadata로 평문이지만, 이 다섯 값은 관계 graph이므로 content field로 취급한다.
+
+`GroupChatState.activeWorldlineId`도 현재 선택 상태이므로 암호화한다. 각 message write가 평문 canonical `worldline_id`를 명시하므로 서버가 active 값 자체를 읽을 필요는 없다.
+
 ### 8.3 평문으로 남는 것
 
 canonical identity(`space_id`·`room_id`·`worldline_id`·`turn_id`·`message_id`), `bubble_order`, `revision`/`base_revision`, `server_seq`, `operation_id`, tombstone 표시, timestamp, 암호문과 R2 객체의 byte size, `import_batch_id`, `recovery_lookup`, `key_generation`.
