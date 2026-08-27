@@ -255,3 +255,128 @@ HKDF 하나만을 위해 Tink를 추가하지 않는다. RFC 5869의 extract/exp
 - [Android Keystore](https://developer.android.com/privacy-and-security/keystore)
 - [AndroidX Security Crypto release notes](https://developer.android.com/jetpack/androidx/releases/security)
 - [Cloudflare R2 upload methods and multipart limits](https://developers.cloudflare.com/r2/objects/upload-objects/)
+
+---
+
+## 8. `ea8b34f` / `d616f6e` 재검토
+
+- 검토일: 2026-08-27
+- 대상:
+  - `ea8b34f` — E2EE 제안서 개정
+  - `d616f6e` — README 문서 링크 수정
+- 판정: **설계 방향 승인 / 구현 규격 승인 보류 / 보정 후 재검토 필요**
+- 범위: 문서와 커밋만 읽었다. 앱 코드·실제 대화 데이터·Cloudflare 리소스는 변경하지 않았다.
+
+### 8.1 확인된 반영 사항
+
+`ea8b34f`는 앞선 교차검토의 핵심 결론을 정확히 반영했다.
+
+- 무작위 `account_master_key`와 recovery-wrapped key로 키 계층 교체
+- `recovery_lookup`으로 전 기기 분실 복구의 계정 조회 순환 제거
+- BIP-39를 128-bit entropy의 표현·checksum 검증에만 사용
+- 승인 완료 전 key package와 device token 배포 금지
+- entity별 AAD, `key_generation`, 명시적 rollback 비보장
+- mutable room/profile의 per-field 암호화와 checkpoint whole-payload 조건 분리
+- `wrapped_master_key`의 D1·R2·기기 로컬 중복 보관
+- Mac `PersonaStyle` custom decoder 필요성 및 evidence-empty 동작 정정
+- 첨부 상한을 Phase 0 inventory의 실제 최대 크기와 연결
+- 로컬 JSON 평문, metadata 노출, 분실 기기 원격 삭제 불가를 사용자 고지 대상으로 명시
+
+Cloudflare 수치도 현재 공식 문서와 맞는다. Workers Free의 HTTP request CPU 한도는 10 ms이고, D1 Free의 Time Travel은 7일이며 D1의 최대 row/string/BLOB은 2,000,000 bytes다. R2는 큰 파일과 재개 가능 upload에 multipart를 제공한다.
+
+- [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Cloudflare D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
+- [Cloudflare D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)
+- [Cloudflare R2 upload methods](https://developers.cloudflare.com/r2/objects/upload-objects/)
+
+### 8.2 차단 1 — QR 승인이 정확한 새 기기 요청에 묶이지 않는다
+
+제안서 §5는 QR에 `session_id`와 `pairing_secret`을 넣고, 새 기기의 이름·종류를 기존 기기에 보여준 뒤 승인한다고 한다. 그러나 이름·종류는 새 기기가 자칭하는 값이며, **승인이 어떤 claimant의 요청을 승인한 것인지 cryptographic binding이 없다.**
+
+현재 규칙만 따르면 QR을 촬영한 제3자가 같은 `pairing_secret`으로 먼저 또는 동시에 요청하고, 사용자가 기대하는 기기 이름을 흉내 낼 수 있다. session 전체에 승인 flag만 붙이면 승인 후 key package와 device token을 QR 사본 보유자가 경합해 가져갈 수 있다. “승인 후 배포”는 필요하지만 그것만으로 승인 대상이 고정되지는 않는다.
+
+Phase 1 계약에 다음을 추가해야 한다.
+
+1. 새 기기가 claim마다 고유한 고엔트로피 secret 또는 ephemeral public key를 만든다.
+2. Worker의 claim record와 기존 기기의 승인은 그 `claim_id` 및 key/secret fingerprint에 묶인다.
+3. 두 기기에 같은 짧은 확인 코드(SAS) 또는 fingerprint를 보여 사용자가 실제 손에 든 기기와 승인 대상을 비교한다.
+4. key package와 device token은 **승인된 claim만** 1회 redeem할 수 있다.
+5. 다른 claimant나 session-level bearer가 승인 결과를 가져갈 수 없어야 한다.
+
+공개키 방식을 반드시 채택하라는 뜻은 아니다. 대칭 claim secret으로도 설계할 수 있지만, “어떤 요청을 승인했는가”와 “누가 결과를 받을 수 있는가”가 같은 cryptographic claim에 결속되어야 한다.
+
+### 8.3 차단 2 — canonical encoding이 아직 하나의 byte 규격이 아니다
+
+§7.2는 “length-prefix canonical encoding **또는 canonical CBOR**”라고 두 선택지를 남겼다. length-prefix 방식도 다음이 정의되지 않았다.
+
+- 길이 field의 폭과 endian
+- string/UUID/integer의 type 및 byte 표현
+- `null`, 빈 문자열, field 부재의 서로 다른 표현
+- optional `bubble_order`의 부재 marker
+- HKDF `info` label의 정확한 byte와 protocol version 결합 방식
+
+이 상태에서는 Swift와 Kotlin이 각각 문서에 충실하게 구현해도 다른 AAD와 key를 만들 수 있다. Phase 1에서 정하겠다는 gate는 맞지만, **현재 문서를 구현 규격 완료 상태로 표시할 수는 없다.** 한 방식을 선택하고 exact binary grammar와 고정 hex vector를 문서에 넣어야 한다.
+
+### 8.4 차단 3 — `key_generation` 선택 규칙에 필요한 keyring 수명주기가 없다
+
+§6.2는 이전 generation의 key를 그 generation의 ciphertext에만 쓰라고 정확히 규정한다. 그러나 §6.1의 저장 모델은 각 위치에 단수 `wrapped_master_key` 사본만 설명한다. rotation 중에는 새 generation과 예전 generation의 ciphertext가 동시에 존재할 수 있으므로 이전 key가 없으면 아직 재암호화되지 않은 데이터를 읽지 못한다.
+
+둘 중 하나를 명시적으로 선택해야 한다.
+
+- v1은 `key_generation = 1`만 지원하고 rotation 구현을 범위 밖으로 둔다. 또는
+- `wrapped_master_keys[generation]` keyring, current generation 승격, old ciphertext 재암호화 완료 판정, 이전 key 보존·폐기 조건, D1/R2/기기 사본의 atomic update와 rollback 절차를 정의한다.
+
+최신 key 실패 시 이전 key로 자동 후퇴하지 않는다는 기존 합의는 그대로 유지한다.
+
+### 8.5 차단 4 — recovery verifier의 서버 저장·검증 규격이 빠졌다
+
+§4는 `recovery_auth`를 bearer credential이라고 하고 constant-time 비교를 요구하지만, 서버가 무엇을 보관하고 어떤 byte를 비교하는지 적지 않았다. 앞선 Codex 검토에는 “서버는 `recovery_auth`의 hash만 저장한다”는 결론이 있었는데 개정본에서 누락됐다.
+
+Phase 1 account schema에 다음을 고정해야 한다.
+
+- 서버는 평문 `recovery_auth`를 저장하지 않는다.
+- 정확한 verifier 계산식과 byte encoding을 정의한다.
+- client가 보낸 auth에서 verifier를 계산해 constant-time으로 비교한다.
+- recovery phrase 교체 시 `recovery_lookup`, verifier, recovery-wrapped key를 함께 교체하는 atomic/rollback 절차를 둔다.
+
+### 8.6 보강 — scope key의 용도별 하위 키를 분리한다
+
+현재 문서는 같은 `scope_key`를 field AEAD, attachment file-key wrapping, `compaction_compat_tag` HMAC에 직접 사용하는 것으로 읽힌다. 서로 다른 primitive와 protocol 용도에 같은 key를 재사용하지 말고 HKDF `info` label로 다음과 같이 분리해야 한다.
+
+- `field_aead_key`
+- `attachment_wrap_key`
+- `compat_tag_key`
+- 필요 시 checkpoint/metadata별 별도 key
+
+이는 새로운 root secret을 추가하는 작업이 아니라 기존 HKDF domain separation을 끝까지 적용하는 보정이다.
+
+### 8.7 README 커밋은 설치 안내 링크 하나가 아직 깨져 있다
+
+`d616f6e`의 일반 문서 링크는 `HEAD`에서 모두 존재한다. 그러나 `README.md`의 설치 링크는 `docs/installation/설치방법.txt`를 가리키며, 이 파일은 현재 작업 트리에만 있는 **untracked file**이다. `HEAD`에는 여전히 루트 `설치방법.txt`만 추적되어 있다.
+
+따라서 `d616f6e`만 checkout하면 설치 링크가 깨진다. 커밋 메시지의 “링크 대상 파일은 이미 docs 아래에 있으므로 문서 이동 작업이 완결된다”는 설명도 설치 안내에 대해서는 사실이 아니다.
+
+다음 중 하나를 별도 후속 commit으로 처리해야 한다.
+
+- 준비된 설치 문서 이동 전체를 검토해 `docs/installation/`에 추적 상태로 commit한다. 또는
+- 이동을 아직 commit하지 않을 경우 README 설치 링크를 현재 추적 경로로 되돌린다.
+
+이 작업은 현재 untracked `docs/installation/`의 소유권과 내용을 먼저 확인한 뒤 진행해야 하며, 다른 미커밋 작업을 함께 stage하면 안 된다.
+
+### 8.8 비차단 문서 보정
+
+- 문서 상태의 “Codex 교차검토 수렴 완료”와 §16의 “기술 이견은 없다”는 위 차단 항목 보정 전에는 “재검토 보정 필요”로 바꾼다.
+- `d616f6e` commit message는 `IMPROVEMENTS`, `ANDROID_PLAN` 링크를 수정했다고 적지만 실제 diff에는 해당 링크가 없다. 코드 영향은 없지만 후속 기록에서 정정한다.
+
+### 8.9 재검토 acceptance criteria
+
+다음이 충족되면 구현 규격 승인을 다시 검토한다.
+
+1. QR approval과 redeem이 동일한 cryptographic claim에 묶인 합성 replay/race test가 정의됨
+2. Swift·Kotlin이 공유하는 exact canonical binary grammar와 고정 hex vector가 문서화됨
+3. v1 generation 정책을 “1만 지원” 또는 keyring lifecycle 중 하나로 확정함
+4. recovery verifier 저장·검증·문구 교체의 atomic contract가 정의됨
+5. scope key의 용도별 HKDF subkey label이 확정됨
+6. README 설치 링크가 clean checkout에서 실제 파일을 가리킴
+
+나머지 설계 방향에는 반대하지 않는다. Phase 0~2를 건너뛰지 않으며, 위 항목과 기존 contract test가 통과하기 전에는 앱 코드 구현 승인이나 Phase 3 실데이터 upload 승인으로 해석하지 않는다.
