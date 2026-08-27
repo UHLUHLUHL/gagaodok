@@ -1,0 +1,337 @@
+# Phase 1 Worker API 계약 초안
+
+## 문서 상태
+
+- 작성일: 2026-08-28
+- 작성: Codex
+- 상태: **API·transaction 설계 / 구현 승인 아님 / Cloudflare 리소스 생성 안 함**
+- Schema 기준: `7748170`
+- Claude Code의 schema fixture 작업과 소유 파일이 겹치지 않는다.
+
+이 문서는 Worker의 HTTP 경계와 D1·R2 transaction 순서를 고정하기 위한 설계다. TypeScript project, Wrangler 설정, D1 migration, R2 bucket, 앱 networking code는 아직 만들지 않는다.
+
+## 1. v1 원칙
+
+1. **device token이 account 경계다.** URL·body의 `account_id`를 신뢰하지 않고 token에서 얻는다.
+2. **한 push request는 operation 하나다.** 초기 규모는 세 기기이며, 여러 operation의 부분 성공 규격보다 단일 idempotent transaction이 안전하다.
+3. **내용은 Worker가 해석하지 않는다.** 평문 identity·revision·field path만 검증하고 암호문은 opaque byte/base64로 보존한다.
+4. **operation 적용은 원자적이다.** canonical row, account sequence, operation log, change log가 함께 commit되거나 함께 rollback된다.
+5. **R2 payload와 D1 metadata는 2단계 완료 상태를 쓴다.** R2와 D1을 하나의 transaction으로 묶을 수 없기 때문이다.
+6. **로그에 content·token·복구 문구·암호문·첨부 이름을 남기지 않는다.** request id, endpoint, status, duration, byte count, 오류 code만 허용한다.
+7. v1은 D1 read replication을 켜지 않는다. 향후 켤 경우 Sessions API bookmark를 `X-Sync-Bookmark`로 전달한다.
+
+## 2. 공통 HTTP 규격
+
+### 2.1 Base와 headers
+
+```text
+Base path: /v1
+Authorization: Device <opaque-device-token>
+Content-Type: application/json
+X-Protocol-Version: 1
+```
+
+- token·pairing secret·recovery material은 URL query에 넣지 않는다.
+- JSON request body 최대값은 endpoint별로 제한한다. 일반 sync operation은 정확히 `2,000,000 bytes` 이하이고, 암호화된 단일 field 값은 base64 envelope 전체가 `1,900,000 bytes` 이하여야 한다. attachment body는 별도 endpoint만 쓴다.
+- UUID는 대문자 하이픈 36-byte 형식, integer는 `0...2^53-1`, timestamp는 RFC 3339 UTC다.
+- 알 수 없는 top-level field와 enum은 v1에서 fail-closed한다. Opaque extension은 등록된 `extensions` container 안에서만 허용한다.
+
+### 2.2 성공 envelope
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "90000000-0000-4000-8000-000000000001",
+  "result": {}
+}
+```
+
+### 2.3 오류 envelope
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "90000000-0000-4000-8000-000000000001",
+  "error": {
+    "code": "REVISION_CONFLICT",
+    "retryable": false,
+    "current_revision": 42
+  }
+}
+```
+
+허용 code:
+
+| HTTP | code | 의미 |
+| ---: | --- | --- |
+| 400 | `VALIDATION_FAILED` | 형식·범위·scope 불일치 |
+| 401 | `AUTH_INVALID` | token 없음·불일치 |
+| 403 | `DEVICE_REVOKED` | 폐기된 기기 |
+| 404 | `ENTITY_NOT_FOUND` | account 안에 target 없음 |
+| 409 | `REVISION_CONFLICT` | `base_revision` 불일치 |
+| 409 | `OPERATION_REPLAY_MISMATCH` | 같은 ID에 다른 request fingerprint |
+| 409 | `ATTACHMENT_STATE_CONFLICT` | 잘못된 attachment 상태 전이 |
+| 413 | `REQUEST_TOO_LARGE` | endpoint 상한 초과 |
+| 422 | `PROFILE_UNSUPPORTED` | 지원·고지된 fallback 없음 |
+| 429 | `RATE_LIMITED` | 호출 제한 |
+| 500 | `INTERNAL_ERROR` | content 없는 내부 오류 |
+| 503 | `STORAGE_UNAVAILABLE` | D1·R2 일시 실패 |
+
+서버 오류 본문에는 SQL, stack, object key, token 일부를 넣지 않는다.
+
+## 3. Device 인증 경계
+
+모든 sync·attachment endpoint는 다음 `AuthContext`를 먼저 만든다.
+
+```text
+AuthContext = {
+  account_id,
+  device_id,
+  registered_space_id,
+  key_generation,
+  revoked_at
+}
+```
+
+- request body의 `device_id`가 있으면 token의 값과 정확히 같아야 한다.
+- target `space_id` write 권한은 device 등록, owner space, active writer/generation authority를 함께 검사한다.
+- `PHONE_SPACE` 전용 group/worldline/relationship operation을 다른 space device가 만들면 거부한다.
+- 폐기된 token은 R2 download를 포함한 모든 endpoint에서 거부한다.
+- QR pairing·전체 복구 endpoint는 [E2EE 제안서](2026-08-27-sync-encryption-proposal.md) §4~5의 별도 인증 흐름을 사용하며 일반 device middleware를 우회하지 않는다.
+
+## 4. Sync endpoints
+
+### 4.1 `POST /v1/sync/operations`
+
+operation 하나를 적용한다.
+
+```json
+{
+  "protocol_version": 1,
+  "operation_id": "90000000-0000-4000-8000-000000000003",
+  "device_id": "80000000-0000-4000-8000-000000000001",
+  "op": "patch_room",
+  "entity_type": "room",
+  "target": {
+    "space_id": "MAC_SPACE",
+    "room_id": "10000000-0000-4000-8000-000000000002",
+    "worldline_id": null
+  },
+  "base_revision": 41,
+  "set": {
+    "status_message": "BASE64_ENVELOPE"
+  },
+  "clear": [],
+  "created_at": "2026-08-28T00:00:00Z"
+}
+```
+
+응답:
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "90000000-0000-4000-8000-000000000003",
+  "result": {
+    "status": "applied",
+    "operation_id": "90000000-0000-4000-8000-000000000003",
+    "server_seq": 10428,
+    "revision": 42
+  }
+}
+```
+
+같은 `operation_id`와 같은 request fingerprint면 `status = replayed`와 최초 결과를 돌려준다. fingerprint는 **검증 전에 받은 HTTP request body 원본 bytes**의 SHA-256이다. retry는 outbox에 보관한 동일 bytes를 다시 보내야 하며, 의미가 같더라도 JSON을 다시 직렬화해 bytes가 달라지면 replay mismatch다. 같은 ID에 fingerprint가 다르면 `OPERATION_REPLAY_MISMATCH`다.
+
+v1 허용 operation:
+
+- create/patch room
+- create immutable persona snapshot revision + CAS head advance
+- create immutable engine profile revision + room reference patch
+- create/extend checkpoint with CAS
+- create/patch turn·bubble
+- create/patch PHONE_SPACE group_state·worldline
+- create attachment metadata
+- `delete_turn` tombstone 정의만 유지하되 사용자 결정 15에 따라 초기 runtime에서는 거부
+
+whole-room·whole-message PUT, `delete_bubble`, client가 임의 발급한 `server_seq`는 거부한다.
+
+### 4.2 `GET /v1/sync/changes`
+
+```text
+GET /v1/sync/changes?after_seq=10400&limit=100
+```
+
+- `after_seq`는 마지막으로 완전히 적용한 account-wide cursor다.
+- `limit` 기본 100, 최대 500.
+- response는 `change_log` page와 각 identity의 **현재 canonical projection**을 함께 돌려준다.
+- 같은 entity가 page 안에 여러 번 나오면 identity를 deduplicate해 최신 projection 하나만 포함해도 된다.
+- projection의 `server_seq`가 page 마지막 sequence보다 클 수 있다. client는 entity revision/server_seq가 더 낮거나 같은 후속 event를 idempotently 무시한다.
+- tombstone은 영구 identity row로 유지해 bootstrap과 pull 모두에서 삭제를 재현한다.
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "90000000-0000-4000-8000-000000000010",
+  "result": {
+    "scanned_through_seq": 10427,
+    "account_high_watermark_seq": 10431,
+    "has_more": true,
+    "changes": [
+      {
+        "change_seq": 10427,
+        "entity_type": "room",
+        "identity": "OPAQUE_CANONICAL_IDENTITY",
+        "projection": "OPAQUE_WIRE_PROJECTION"
+      }
+    ]
+  }
+}
+```
+
+client는 page의 모든 projection을 local replica에 durable하게 적용한 뒤에만 cursor를 `scanned_through_seq`로 전진한다.
+
+### 4.3 `GET /v1/sync/bootstrap`
+
+새 기기나 remote replica 초기화용이다.
+
+```text
+GET /v1/sync/bootstrap?limit=200
+GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
+```
+
+- 첫 page가 `snapshot_high_watermark_seq`를 확정한다.
+- cursor는 high watermark, 마지막 entity type, 마지막 storage key를 canonical encoding하고 Worker secret으로 MAC한 opaque 값이다.
+- page는 `(entity_type, storage_key)` 순으로 안정적으로 정렬한다.
+- projection이 snapshot watermark보다 새 버전이어도 적용 가능하다. bootstrap 종료 뒤 `after_seq = snapshot_high_watermark_seq`로 pull하면 중복 event가 오지만 revision check로 무해하다.
+- cursor 변조·다른 account 재사용·만료는 `VALIDATION_FAILED`로 거부한다.
+- bootstrap 완료 전 remote 탭을 쓰기 가능 상태로 바꾸지 않는다.
+
+## 5. D1 transaction 계약
+
+### 5.1 operation 적용 순서
+
+1. device 인증과 body 형식·scope·field path를 검증한다.
+2. HTTP request body 원본 bytes의 SHA-256 fingerprint를 계산한다. 원본 body와 fingerprint는 로그에 쓰지 않는다.
+3. 기존 `(account_id, operation_id)`를 읽는다.
+   - fingerprint 같음: 최초 결과 반환
+   - fingerprint 다름: replay mismatch
+4. 신규 operation이면 D1 `batch()` 한 번에 다음 statement를 순서대로 실행한다.
+   1. `transaction_guard`에 base revision/existence 검증 결과를 삽입한다. false는 `CHECK` violation으로 전체 rollback한다.
+   2. account `next_server_seq`를 1 증가시킨다.
+   3. canonical row create/patch/tombstone을 적용한다.
+   4. `operation_log`에 fingerprint·결과 revision·할당 sequence를 삽입한다.
+   5. `change_log`에 identity·change kind·revision·sequence를 삽입한다.
+   6. 임시 guard row를 삭제한다.
+5. 동시에 같은 operation이 들어와 unique violation이 나면 transaction 전체가 rollback된다. 기존 operation을 다시 읽어 replay/mismatch로 응답한다.
+
+`batch()`는 statement를 순차 실행하고 하나가 실패하면 전체 sequence를 rollback한다. CAS mismatch가 단순히 `UPDATE 0 rows`로 끝나면 batch는 성공해 버리므로 **guard constraint가 필수**다.
+
+### 5.2 sequence 규칙
+
+- `server_seq`는 account 단위 `1...2^53-1`이다.
+- 성공한 신규 operation만 한 값을 소비한다.
+- replay, validation failure, CAS failure는 값을 소비하지 않는다.
+- 중복은 금지하고 gap은 허용한다.
+- 상한 도달 시 wrap하지 않고 fail-closed한다.
+- `change_log(account_id, server_seq)` index는 pull hot path다.
+
+### 5.3 read consistency
+
+v1은 read replication을 활성화하지 않는다. 활성화하는 후속 버전은 D1 Sessions API를 사용한다.
+
+- client는 마지막 `X-Sync-Bookmark`를 다음 request에 보낼 수 있다.
+- Worker는 bookmark가 없으면 `first-primary`, 있으면 해당 bookmark로 session을 연다.
+- response는 새 bookmark를 같은 header로 돌려준다.
+- bookmark는 `server_seq`를 대체하지 않는다. bookmark는 D1 sequential consistency, sequence는 앱 동기화 cursor다.
+
+## 6. Attachment·avatar endpoints
+
+R2 payload는 공개 URL로 노출하지 않고 Worker binding을 통해 stream한다. Workers Free request body 상한은 100MB이므로 v1 12MiB보다 크지만, 앱·Worker 규격은 더 작은 자체 상한을 적용한다.
+
+### 6.1 정확한 상한
+
+Android 현재 코드는 `12 * 1024 * 1024`를 사용한다. v1 source payload 상한은 **12,582,912 bytes**로 해석한다. 이 값은 Claude 검토가 끝난 뒤 E2EE 원문에 통합해야 하며, 현재 검토 중인 문서는 이 작업에서 수정하지 않는다.
+
+암호화된 R2 object의 최대 request byte는 attachment envelope 형식이 확정된 뒤 `MAX_ENCRYPTED_OBJECT_BYTES` 상수로 별도 고정한다. source 상한과 ciphertext 상한을 같은 숫자로 비교하지 않는다.
+
+### 6.2 상태 기계
+
+```text
+allocated → uploaded → ready
+    └──────────────→ abandoned
+ready → tombstoned → garbage_collected
+```
+
+### 6.3 endpoints
+
+| Method | Path | 역할 |
+| --- | --- | --- |
+| POST | `/v1/attachments` | D1 metadata를 `allocated`로 생성하고 난수 R2 key 반환 |
+| PUT | `/v1/attachments/{attachment_id}/content` | 인증 후 ciphertext stream을 R2에 저장 |
+| POST | `/v1/attachments/{attachment_id}/complete` | R2 `head()`의 size 존재 확인 후 D1을 `ready`로 변경 |
+| GET | `/v1/attachments/{attachment_id}/content` | ready·account·device 확인 후 R2 body stream 반환 |
+
+upload 규칙:
+
+- `Content-Length` 필수. 없거나 ciphertext 상한 초과면 body를 읽기 전에 거부한다.
+- client가 보낸 `ciphertext_hash`, `key_generation`, source byte size, ciphertext byte size를 metadata에 보존한다.
+- Worker는 v1 hot path에서 12MiB 전체를 buffer해 hash하지 않는다. AEAD 검증은 download client가 하고, Phase 2에서 streaming hash의 CPU 비용을 측정한다.
+- upload 성공 전 `ready`로 보이지 않는다.
+- complete는 R2 object 존재와 byte size를 확인한다. 실패하면 `uploaded/allocated` 상태를 유지해 재시도할 수 있다.
+- R2 성공 뒤 D1 complete가 실패한 orphan은 TTL cleanup 대상이지만 Phase 1에서는 삭제하지 않고 보고서로만 찾는다.
+- download response는 `Cache-Control: private, no-store`이며 object key를 외부 URL로 노출하지 않는다.
+
+## 7. Pairing·recovery 경계
+
+세부 cryptographic contract는 E2EE 제안서가 source of truth다. Worker API 구현 plan에는 다음 endpoint 군만 포함한다.
+
+- pairing session 생성: 기존 device 재인증 필요
+- claim 제출: QR bearer가 가능하되 claim 조회는 불가
+- claim 조회·승인: 기존 account device만 가능
+- package redeem: 승인된 claim의 verifier를 constant-time 검증하고 원자적으로 1회 소비
+- recovery lookup: 복구 문구에서 유도한 lookup/auth를 body로 전달
+
+pairing/recovery material은 sync operation log와 일반 request log에 들어가지 않는다.
+
+## 8. 관측성과 privacy
+
+허용 metric:
+
+- endpoint별 count·status·latency bucket
+- D1 rows read/written, batch duration
+- R2 bytes in/out, 상태별 attachment count
+- cursor lag(`account_high_watermark_seq - after_seq`)
+- validation/error code count
+
+금지 metric/log:
+
+- 암호문·hash·nonce·token·UUID 전체값
+- room/persona/message/attachment 이름 또는 본문
+- 복구·pairing secret
+- request/response body dump
+
+상관관계가 필요하면 request마다 random request id를 만들고, account/device는 process-local keyed hash의 짧은 값만 사용한다. 장기 사용자 추적용 identifier로 쓰지 않는다.
+
+## 9. Phase 1 API acceptance
+
+- 같은 operation 재시도는 동일 결과, 다른 payload는 mismatch
+- CAS 실패 시 canonical row·sequence·operation/change log가 모두 불변
+- concurrent identical operation은 하나만 적용
+- nullable worldline null/UUID가 D1 key와 E2EE AAD에서 같은 scope
+- pull page를 중간 crash 뒤 재적용해도 결과 동일
+- bootstrap 중 concurrent write가 있어도 bootstrap+pull 결과가 최신 상태
+- PHONE_SPACE 밖 group write 거부
+- plaintext log에 character relationship·content sentinel 없음
+- attachment 상태 전이·size·account access 제약
+- R2 성공/D1 실패와 D1 allocated/R2 실패를 합성해 복구 가능
+- Free plan 10ms CPU, 128MB memory, 50 subrequest 범위는 로컬·remote synthetic measurement 전까지 보장으로 선언하지 않음
+
+## 10. 공식 근거
+
+- [D1 `batch()` transaction](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)
+- [D1 limits와 single-threaded database](https://developers.cloudflare.com/d1/platform/limits/)
+- [D1 Sessions API와 bookmarks](https://developers.cloudflare.com/d1/best-practices/read-replication/)
+- [R2 Workers binding `get`·`put`](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/)
+- [Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Wrangler JSONC 권고](https://developers.cloudflare.com/workers/wrangler/configuration/)
