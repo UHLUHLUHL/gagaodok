@@ -39,7 +39,7 @@
 
 ### 계속할 계획
 
-Figma 기반 모션 계획은 [Android phone motion UI overhaul plan](docs/superpowers/plans/2026-08-21-android-phone-motion-ui-overhaul.md)에 있다.
+Figma 기반 모션 계획은 [Android phone motion UI overhaul plan](superpowers/plans/2026-08-21-android-phone-motion-ui-overhaul.md)에 있다.
 모든 Phase는 아직 미완료다. 이전에 Figma 한도 때문에 만들었던 로컬 HTML 시안과 그에 따른
 Compose 구현은 기준선에서 제거했으므로, 나중에 Figma에서 다시 설계·검증한다.
 
