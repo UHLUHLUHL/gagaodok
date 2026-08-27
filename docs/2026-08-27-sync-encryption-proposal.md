@@ -5,7 +5,8 @@
 - 최초 작성: 2026-08-27 (Claude Code, commit `3b449dc`)
 - 1차 개정: 2026-08-27 (Claude Code, commit `ea8b34f`)
 - 2차 개정: 2026-08-27 (Codex)
-- 상태: **교차검토 보정 반영 / Claude Code 재검토 대기 / 구현 승인 아님 / 합의문 E2EE 병합 대기**
+- 상태: **교차검토 보정 반영 / Claude Code 재검토 완료 / 잔여 보정 2건 / 구현 승인 아님 / 합의문 E2EE 병합 대기**
+- 재검토 결과: [`618d370`/`377b717` Claude Code 독립 재검토](2026-08-27-e2ee-2nd-revision-claude-review.md) — 두 커밋 승인, §3의 R1(pairing claim 열람 권한)·R2(HKDF 파생 단계)를 Phase 1 계약 확정 전에 반영할 것
 - 선행: [합의문](CROSS_DEVICE_SYNC_AGREEMENT.md), [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md), [Codex 교차검토](2026-08-27-sync-encryption-codex-review.md)
 - 이 문서를 쓰며 앱 코드·실제 대화 데이터·Cloudflare 리소스는 변경하지 않았다.
 

@@ -532,6 +532,7 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-27 | Codex | `8de019f`에서 E2EE 구현 규격 차단 4건, key 분리, clean-checkout link 문제 기록 |
 | 2026-08-27 | Claude Code 새 세션 | `8de019f` 승인; 문서 상태·pairing 파생·단일 generation 대가·tombstone 비보장 추가 지적 |
 | 2026-08-27 | Codex | E2EE 2차 보정과 문서 상태 동기화 작성; Claude Code 독립 재검토 대기 |
+| 2026-08-27 | Claude Code | `618d370`·`377b717` 독립 재검토 완료; LP v1 vector 재현과 clean-checkout 링크 0건 확인, pairing claim 열람 권한과 HKDF 파생 단계 2건 보정 요청 |
 
 ## 🔗 참고 자료
 
