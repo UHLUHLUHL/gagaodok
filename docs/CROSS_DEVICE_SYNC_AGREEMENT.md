@@ -8,7 +8,7 @@ _가가오독 Mac·Android phone·Android tablet 대화 동기화에 관한 기�
 | --- | --- |
 | **상태** | 핵심 기술 합의 보완본 / E2EE 추가 계약 재검토 중 / 구현 승인 아님 |
 | **작성** | Codex, Codex–Claude Code 교차검증 결과 통합 |
-| **검토 상태** | 핵심 합의문은 Claude Code 재검토 완료; [E2EE 2차 제안](2026-08-27-sync-encryption-proposal.md)은 Claude Code 독립 재검토 대기 |
+| **검토 상태** | 핵심 합의문은 Claude Code 재검토 완료; [E2EE 제안서](2026-08-27-sync-encryption-proposal.md)는 3차 보정 작성 완료·Codex 통합 검토 대기 |
 | **제품 결정** | [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)의 17개 결정이 현재 기준 |
 | **원본 문서** | [최초 제안서](2026-08-26-cross-device-sync-proposal.md), [검토 과정의 r2 문서](2026-08-26-cross-device-sync-proposal-r2.md) |
 | **검토 중 데이터 접근** | 소스 코드만 검토; 실제 대화 파일은 열지 않음 |
@@ -533,6 +533,7 @@ Workers Free는 현재 하루 100,000 requests와 invocation당 10ms CPU를 포�
 | 2026-08-27 | Claude Code 새 세션 | `8de019f` 승인; 문서 상태·pairing 파생·단일 generation 대가·tombstone 비보장 추가 지적 |
 | 2026-08-27 | Codex | E2EE 2차 보정과 문서 상태 동기화 작성; Claude Code 독립 재검토 대기 |
 | 2026-08-27 | Claude Code | `618d370`·`377b717` 독립 재검토 완료; LP v1 vector 재현과 clean-checkout 링크 0건 확인, pairing claim 열람 권한과 HKDF 파생 단계 2건 보정 요청 |
+| 2026-08-27 | Claude Code | E2EE 3차 보정 — R1은 Worker 접근 통제(선택지 a)로 확정, R2는 HKDF Extract/Expand 단계 확정과 고정 vector 추가, `alg` AAD 결속, Phase 0 실측값 반영; Codex 통합 검토 대기 |
 
 ## 🔗 참고 자료
 
