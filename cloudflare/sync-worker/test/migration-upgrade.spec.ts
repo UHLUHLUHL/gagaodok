@@ -48,7 +48,7 @@ async function expectRejected(run: () => Promise<unknown>): Promise<void> {
   expect(threw).toBe(true);
 }
 
-// Two rows written under the M01 schema, before the foreign key exists. They
+// Two rows written under the 0001 schema, before the foreign key exists. They
 // cover the nullable and non-null spelling of every optional column so the
 // rebuild has something to lose if it copies carelessly.
 const LEGACY_ROWS = [
@@ -75,7 +75,7 @@ const LEGACY_ROWS = [
 ];
 
 beforeAll(async () => {
-  // Step 1 — apply only M01, the schema that has no foreign key.
+  // Step 1 — apply only 0001, the schema that has no foreign key.
   await applyD1Migrations(db, migrationsUpTo("0001_account_device.sql"));
 
   const beforeFks = await db.prepare("PRAGMA foreign_key_list(device)").all();
@@ -109,7 +109,8 @@ beforeAll(async () => {
       .run();
   }
 
-  // Step 3 — upgrade to M02, which rebuilds `device` to add the foreign key.
+  // Step 3 — upgrade to 0002, which rebuilds `device` to add the foreign key.
+  // Still logical stage M01; only the physical migration number moves.
   await applyD1Migrations(db, env.TEST_MIGRATIONS);
 });
 
@@ -170,7 +171,7 @@ describe("0001 → 0002 upgrade preserves existing rows", () => {
   });
 });
 
-describe("0002 leaves the M01 schema guarantees intact", () => {
+describe("0002 leaves the 0001 schema guarantees intact", () => {
   it("keeps the composite primary key in the same order", async () => {
     const info = await db.prepare("PRAGMA table_info(device)").all<{
       name: string;
@@ -251,7 +252,7 @@ describe("0002 leaves the M01 schema guarantees intact", () => {
 });
 
 describe("0002 starts enforcing the account reference", () => {
-  it("now rejects an orphan device that M01 would have accepted", async () => {
+  it("now rejects an orphan device that 0001 would have accepted", async () => {
     const unknownAccount = "A0000000-0000-4000-8000-00000000000F";
     await expectRejected(() =>
       db

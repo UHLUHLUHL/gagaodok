@@ -1,6 +1,11 @@
--- M02 — device references account
+-- M01 (continued) — device references account
 --
--- Closes the hole M01 deliberately left open: without a reference constraint a
+-- Physical migration 0002, logical stage M01. The number in the filename is
+-- only the order in which migrations are applied; the logical stage is the
+-- account boundary that 0001_account_device.sql started. Logical M02 is the
+-- conversation scope (room, group_state, worldline) and arrives separately.
+--
+-- Closes the hole 0001 deliberately left open: without a reference constraint a
 -- device row could name an account_id that does not exist, which would make the
 -- account boundary a convention rather than something the database enforces.
 --

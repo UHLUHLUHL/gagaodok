@@ -131,7 +131,7 @@ describe("M00 — local migration harness", () => {
       .all<{ name: string }>();
     const names = rows.results.map((row) => row.name);
     expect(names).toEqual(["account", "device"]);
-    // M02..M06 entities must not exist yet.
+    // Logical M02..M06 entities must not exist yet.
     for (const later of ["room", "turn", "bubble", "attachment", "operation_log", "change_log"]) {
       expect(names).not.toContain(later);
     }
@@ -197,8 +197,9 @@ describe("M01 — schema objects exist", () => {
   });
 
   it("declares exactly one foreign key from device to account", async () => {
-    // M02 (0002_device_account_fk.sql) closes the orphan-device hole that
-    // M01 deliberately left open until its own constraints were proven.
+    // 0002_device_account_fk.sql closes the orphan-device hole that 0001
+    // deliberately left open until its own constraints were proven. Both
+    // files are logical stage M01: the account boundary.
     const fks = await db.prepare("PRAGMA foreign_key_list(device)").all<{
       table: string;
       from: string;
@@ -317,7 +318,7 @@ describe("M01 — device identity is scoped to its account", () => {
   });
 });
 
-describe("M02 — device is bound to a real account", () => {
+describe("M01 — device is bound to a real account", () => {
   it("rejects an orphan device", async () => {
     // No account row exists, so the insert must fail at the database rather
     // than relying on a handler remembering to look the account up first.
