@@ -127,6 +127,8 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M05: 기존 bubble attachment reference에 account-scoped FK를 소급하기로 확정
 - [x] M05: attachment DDL·create validator와 bubble·bubble extension rebuild fixture 통과 (`5299b27`)
 - [x] M06 선행 인증: canonical device token parsing·hash lookup·revoked 거부 local test 통과 (`fa49ed1`)
+- [x] M06 DDL 계약: next-unallocated sequence·single change table·entity별 checked identity·one operation/one event 확정
+- [ ] M06: `0008` ledger migration과 local stage fixture 통과
 - [ ] M06: revoked device write 거부와 exported operation table 재사용을 handler test로 증명
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.

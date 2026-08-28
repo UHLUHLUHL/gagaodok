@@ -326,11 +326,11 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
    - fingerprint 다름: replay mismatch
 4. 신규 operation이면 D1 `batch()` 한 번에 다음 statement를 순서대로 실행한다.
    1. `transaction_guard`에 base revision/existence 검증 결과를 삽입한다. false는 `CHECK` violation으로 전체 rollback한다.
-   2. account `next_server_seq`를 1 증가시킨다.
-   3. canonical row create/patch 또는 soft-delete tombstone을 적용한다. `delete_turn`은 turn과 모든 child bubble을 같은 batch에서 `is_tombstoned = 1`로 바꾸며 행을 삭제하지 않는다.
+   2. account의 현재 `next_server_seq`를 이번 operation에 할당한다. 값이 `2^53` 소진 sentinel이면 guard failure로 전체 rollback한다.
+   3. canonical row create/patch를 적용한다. 초기 runtime에서 `delete_turn`은 계속 거부한다.
    4. `operation_log`에 fingerprint·결과 revision·할당 sequence를 삽입한다.
-   5. `change_log`에 identity·change kind·revision·sequence를 삽입한다.
-   6. 임시 guard row를 삭제한다.
+   5. `change_log`에 canonical storage identity·change kind·revision·sequence를 한 행 삽입한다.
+   6. account `next_server_seq`를 1 증가시키고 guard row를 삭제한다.
 5. 동시에 같은 operation이 들어와 unique violation이 나면 transaction 전체가 rollback된다. 기존 operation을 다시 읽어 replay/mismatch로 응답한다.
 
 `batch()`는 statement를 순차 실행하고 하나가 실패하면 전체 sequence를 rollback한다. CAS mismatch가 단순히 `UPDATE 0 rows`로 끝나면 batch는 성공해 버리므로 **guard constraint가 필수**다.
@@ -353,6 +353,33 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 - 중복은 금지하고 gap은 허용한다.
 - 상한 도달 시 wrap하지 않고 fail-closed한다.
 - `change_log(account_id, server_seq)` index는 pull hot path다.
+
+`account.next_server_seq`는 이름 그대로 **다음 미할당 값**이다. 기존·신규 account의 초기값은 1이다. 실제 change에 할당 가능한 범위는 `1...2^53-1`이고, 내부 값 `2^53`은 모든 sequence가 소진됐다는 sentinel로만 허용한다. sentinel은 response·row `server_seq`·cursor에 쓰지 않는다. 할당한 값을 canonical row·두 ledger에 기록한 뒤 같은 batch 마지막에 1 증가시키므로 실패한 batch는 값도 소비하지 않는다.
+
+### 5.3.1 M06 ledger v1 row 계약
+
+`operation_log`는 `(account_id, operation_id)` primary key와 `request_fingerprint`, `entity_type`, `change_kind`, nullable `result_revision`, `server_seq`를 가진다. fingerprint는 lowercase SHA-256 hex이고 raw body를 저장하지 않는다. `result_revision`은 attachment처럼 revision이 없는 projection에서 null이며, replay response는 나머지 저장 값으로 재구성한다.
+
+`change_log`는 `(account_id, server_seq)` primary key를 유지한다. identity는 serialized JSON/blob/owner key가 아니라 다음 nullable plaintext column으로 저장한다: `space_id`, `room_id`, `worldline_key`, `turn_id`, `message_id`, `persona_snapshot_id`, `snapshot_revision`, `engine_profile_id`, `profile_revision`, `checkpoint_id`, `attachment_id`. `entity_type`별 `CHECK`가 canonical storage key에 필요한 축만 정확히 non-null이 되도록 강제한다. `worldline_key = ''`는 D1 내부 key 표현이며 API projection에서는 nullable `worldline_id`로 되돌린다.
+
+| entity_type | non-null identity column |
+| --- | --- |
+| `room`, `group_state` | `space_id`, `room_id` |
+| `worldline` | `space_id`, `room_id`, `worldline_key` |
+| `turn` | `space_id`, `room_id`, `worldline_key`, `turn_id` |
+| `bubble` | `space_id`, `room_id`, `worldline_key`, `turn_id`, `message_id` |
+| `persona_snapshot` | `space_id`, `persona_snapshot_id`, `snapshot_revision` |
+| `engine_profile` | `space_id`, `engine_profile_id`, `profile_revision` |
+| `checkpoint` | `space_id`, `room_id`, `worldline_key`, `checkpoint_id` |
+| `attachment` | `attachment_id` |
+
+표에 없는 identity column은 반드시 null이다. `account_id`는 모든 행의 PK 앞축이라 표에서 생략했다.
+
+`change_kind` v1 enum은 `upsert`, `tombstone`이다. 현재 runtime의 15개 operation은 모두 한 canonical projection owner를 가지므로 성공 operation 하나가 sequence 하나와 change row 하나를 만든다. `create_persona_snapshot`의 immutable row+head CAS는 persona snapshot projection 하나로 기록한다. 여러 child bubble까지 바꾸는 `delete_turn`은 runtime 금지를 유지하며, 이를 열기 전에 fan-out event·PK 계약을 별도로 확정한다.
+
+Identity column에는 polymorphic FK를 두지 않는다. entity별 shape는 `CHECK`로 강제하고 handler가 같은 batch에서 canonical row의 존재를 보장한다. v1 canonical row는 immutable 또는 tombstone 보존이며 physical delete가 금지돼 있으므로 dangling change identity가 생기지 않는다.
+
+`transaction_guard`는 영구 schema의 scratch table이다. `(account_id, operation_id)`를 key로 하고 `ok INTEGER NOT NULL CHECK (ok = 1)`을 둔다. handler는 scalar existence/revision predicate 결과를 insert하고 성공 batch 끝에서 삭제한다. false와 missing entity는 각각 CHECK/NOT NULL violation으로 batch 전체를 rollback하며, 실패 insert도 transaction rollback 때문에 남지 않는다.
 
 ### 5.4 read consistency
 

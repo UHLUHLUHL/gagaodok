@@ -90,6 +90,9 @@ fixture는 미래 D1 row의 완성형 schema가 아니다. 아직 고정되지 �
 - 같은 operation ID와 다른 fingerprint는 mismatch다.
 - concurrent identical operation은 한 번만 적용된다.
 - `account.next_server_seq`와 ledger 검증은 M06 전에는 수행 완료로 표시하지 않는다.
+- `next_server_seq`는 다음 미할당 값이며 초기값 1, 실제 최대 할당값 `2^53-1`, 내부 `2^53`은 소진 sentinel이다.
+- 성공한 v1 runtime operation 하나는 `change_log` 한 행과 sequence 하나를 만들며 `change_kind`는 `upsert|tombstone`이다.
+- change identity는 entity별 nullable storage-key 축의 정확한 non-null 조합을 검증하고 serialized identity나 실제 content를 포함하지 않는다.
 
 ### Attachment와 local R2
 

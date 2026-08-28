@@ -38,6 +38,7 @@ ENGINE_PROFILE = "C0000000-0000-4000-8000-0000000000E1"
 PERSONA_SNAPSHOT = "50000000-0000-4000-8000-000000000001"
 CHECKPOINT = "60000000-0000-4000-8000-000000000001"
 ATTACHMENT = "70000000-0000-4000-8000-000000000001"
+OPERATION = "90000000-0000-4000-8000-000000000001"
 
 MAX_ATTACHMENT_SOURCE_BYTES = 12_582_912
 ATTACHMENT_BINARY_ENVELOPE_OVERHEAD = 34
@@ -70,8 +71,8 @@ def build_synthetic_fixture() -> dict[str, Any]:
             "remote_resources_allowed": False,
         },
         "accounts": [
-            {"account_id": ACCOUNT_A},
-            {"account_id": ACCOUNT_B},
+            {"account_id": ACCOUNT_A, "next_server_seq": 2},
+            {"account_id": ACCOUNT_B, "next_server_seq": 1},
         ],
         "devices": [
             {
@@ -194,6 +195,37 @@ def build_synthetic_fixture() -> dict[str, Any]:
                 "server_seq": None,
             }
         ],
+        "operation_logs": [
+            {
+                "account_id": ACCOUNT_A,
+                "operation_id": OPERATION,
+                "request_fingerprint": "11" * 32,
+                "entity_type": "room",
+                "change_kind": "upsert",
+                "result_revision": 0,
+                "server_seq": 1,
+            }
+        ],
+        "change_logs": [
+            {
+                "account_id": ACCOUNT_A,
+                "server_seq": 1,
+                "entity_type": "room",
+                "change_kind": "upsert",
+                "revision": 0,
+                "space_id": "MAC_SPACE",
+                "room_id": ROOM_SHARED,
+                "worldline_key": None,
+                "turn_id": None,
+                "message_id": None,
+                "persona_snapshot_id": None,
+                "snapshot_revision": None,
+                "engine_profile_id": None,
+                "profile_revision": None,
+                "checkpoint_id": None,
+                "attachment_id": None,
+            }
+        ],
         "opaque_envelopes": {"minimal_v1_aes_gcm": _minimal_shape_envelope()},
     }
     validate_synthetic_fixture(fixture)
@@ -221,6 +253,10 @@ def validate_synthetic_fixture(fixture: dict[str, Any]) -> None:
         account_ids.add(canonical_uuid(account.get("account_id"), field="account_id"))
     if account_ids != {ACCOUNT_A, ACCOUNT_B}:
         raise ValueError("fixture must use the reserved synthetic account set")
+    for account in fixture.get("accounts", []):
+        next_seq = account.get("next_server_seq")
+        if isinstance(next_seq, bool) or not isinstance(next_seq, int) or not 1 <= next_seq <= 2**53:
+            raise ValueError("next server sequence is invalid")
 
     for collection in (
         "devices",
@@ -358,6 +394,78 @@ def validate_synthetic_fixture(fixture: dict[str, Any]) -> None:
             raise ValueError("attachment R2 object key is invalid")
         r2_keys.add(unique_key)
 
+    operation_keys = set()
+    operation_sequences = set()
+    for row in fixture.get("operation_logs", []):
+        if row.get("account_id") not in account_ids:
+            raise ValueError("operation log crosses the synthetic account boundary")
+        canonical_uuid(row.get("operation_id"), field="operation_id")
+        fingerprint = row.get("request_fingerprint")
+        if (
+            not isinstance(fingerprint, str)
+            or len(fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in fingerprint)
+        ):
+            raise ValueError("operation fingerprint is invalid")
+        if row.get("change_kind") not in {"upsert", "tombstone"}:
+            raise ValueError("operation change kind is invalid")
+        server_seq = row.get("server_seq")
+        if isinstance(server_seq, bool) or not isinstance(server_seq, int) or not 1 <= server_seq < 2**53:
+            raise ValueError("operation server sequence is invalid")
+        result_revision = row.get("result_revision")
+        if result_revision is not None and (
+            isinstance(result_revision, bool)
+            or not isinstance(result_revision, int)
+            or result_revision < 0
+            or result_revision >= 2**53
+        ):
+            raise ValueError("operation result revision is invalid")
+        key = (row.get("account_id"), row.get("operation_id"))
+        sequence = (row.get("account_id"), row.get("server_seq"))
+        if key in operation_keys or sequence in operation_sequences:
+            raise ValueError("operation ledger key is not unique")
+        operation_keys.add(key)
+        operation_sequences.add(sequence)
+
+    identity_columns = {
+        "space_id",
+        "room_id",
+        "worldline_key",
+        "turn_id",
+        "message_id",
+        "persona_snapshot_id",
+        "snapshot_revision",
+        "engine_profile_id",
+        "profile_revision",
+        "checkpoint_id",
+        "attachment_id",
+    }
+    identity_shapes = {
+        "room": {"space_id", "room_id"},
+        "group_state": {"space_id", "room_id"},
+        "worldline": {"space_id", "room_id", "worldline_key"},
+        "turn": {"space_id", "room_id", "worldline_key", "turn_id"},
+        "bubble": {"space_id", "room_id", "worldline_key", "turn_id", "message_id"},
+        "persona_snapshot": {"space_id", "persona_snapshot_id", "snapshot_revision"},
+        "engine_profile": {"space_id", "engine_profile_id", "profile_revision"},
+        "checkpoint": {"space_id", "room_id", "worldline_key", "checkpoint_id"},
+        "attachment": {"attachment_id"},
+    }
+    change_keys = set()
+    for row in fixture.get("change_logs", []):
+        if row.get("account_id") not in account_ids:
+            raise ValueError("change log crosses the synthetic account boundary")
+        if row.get("change_kind") not in {"upsert", "tombstone"}:
+            raise ValueError("change kind is invalid")
+        key = (row.get("account_id"), row.get("server_seq"))
+        if key in change_keys or key not in operation_sequences:
+            raise ValueError("change sequence is invalid")
+        change_keys.add(key)
+        expected = identity_shapes.get(row.get("entity_type"))
+        present = {column for column in identity_columns if row.get(column) is not None}
+        if expected is None or present != expected:
+            raise ValueError("change identity shape is invalid")
+
     encoded = fixture.get("opaque_envelopes", {}).get("minimal_v1_aes_gcm")
     if not isinstance(encoded, str):
         raise ValueError("minimal structural envelope is missing")
@@ -386,6 +494,8 @@ def _record_count(fixture: dict[str, Any]) -> int:
             "room_ai_state_refs",
             "checkpoints",
             "attachments",
+            "operation_logs",
+            "change_logs",
         )
     )
 

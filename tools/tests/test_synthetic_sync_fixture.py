@@ -189,6 +189,52 @@ class SyntheticSyncFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "attachment state"):
             validate_synthetic_fixture(self.fixture)
 
+    def test_m06_fixture_uses_next_unallocated_sequence_and_one_change(self):
+        accounts = {row["account_id"]: row for row in self.fixture["accounts"]}
+        operation = self.fixture["operation_logs"][0]
+        change = self.fixture["change_logs"][0]
+        self.assertEqual(operation["server_seq"], 1)
+        self.assertEqual(change["server_seq"], 1)
+        self.assertEqual(accounts[operation["account_id"]]["next_server_seq"], 2)
+        self.assertEqual(operation["change_kind"], "upsert")
+        self.assertEqual(len(self.fixture["operation_logs"]), 1)
+        self.assertEqual(len(self.fixture["change_logs"]), 1)
+
+    def test_m06_change_identity_has_exact_room_storage_axes(self):
+        change = self.fixture["change_logs"][0]
+        present = {
+            key
+            for key, value in change.items()
+            if value is not None
+            and key
+            in {
+                "space_id",
+                "room_id",
+                "worldline_key",
+                "turn_id",
+                "message_id",
+                "persona_snapshot_id",
+                "snapshot_revision",
+                "engine_profile_id",
+                "profile_revision",
+                "checkpoint_id",
+                "attachment_id",
+            }
+        }
+        self.assertEqual(present, {"space_id", "room_id"})
+
+    def test_validator_rejects_m06_identity_or_sequence_drift(self):
+        self.fixture["change_logs"][0]["attachment_id"] = (
+            "70000000-0000-4000-8000-000000000002"
+        )
+        with self.assertRaisesRegex(ValueError, "change identity"):
+            validate_synthetic_fixture(self.fixture)
+
+        self.fixture = build_synthetic_fixture()
+        self.fixture["accounts"][0]["next_server_seq"] = 0
+        with self.assertRaisesRegex(ValueError, "next server sequence"):
+            validate_synthetic_fixture(self.fixture)
+
     def test_validator_rejects_cross_space_room_ai_reference(self):
         self.fixture["room_ai_state_refs"][0]["space_id"] = "MAC_SPACE"
         with self.assertRaisesRegex(ValueError, "room AI state reference"):

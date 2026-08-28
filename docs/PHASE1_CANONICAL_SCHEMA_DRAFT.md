@@ -850,8 +850,9 @@ Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId
 | `bubble_extension_field` | `(…scope key…, turn_id, message_id, extension_key)` | — | 논리 `extension_field` family; bubble FK |
 | `persona_snapshot_extension_field` | `(account_id, space_id, persona_snapshot_id, snapshot_revision, extension_key)` | — | M04에서 owner와 함께 추가 |
 | `attachment` | `(account_id, attachment_id)` | `(account_id, r2_object_key)` | |
-| `operation_log` | `(account_id, operation_id)` | — | idempotency |
-| `change_log` | `(account_id, server_seq)` | — | account cursor |
+| `operation_log` | `(account_id, operation_id)` | `(account_id, server_seq)` | fingerprint·결과 replay; raw body 없음 |
+| `change_log` | `(account_id, server_seq)` | — | account cursor; entity별 checked identity 축 |
+| `transaction_guard` | `(account_id, operation_id)` | — | batch-local scratch row; 성공 끝에 삭제 |
 
 ### 14.2 nullable `worldline_id`를 키에 쓰는 문제
 
@@ -890,7 +891,11 @@ UPDATE room
 
 `server_seq`는 Worker가 **account 단위**로 매기는 단조 증가 값이며 클라이언트 pull의 단일 cursor가 된다. scope별 cursor는 room 생성·삭제와 새 scope 발견을 위해 별도 fan-out cursor가 필요하므로 v1에서 쓰지 않는다. 이 선택은 correctness contract이며 성능 보장은 아니다. 합성 Phase 2에서 동시 write·pagination·D1 CPU/latency를 측정하고, 한 DB가 query를 순차 처리한다는 D1 특성 때문에 병목이 확인될 때만 shard나 별도 sequencer를 검토한다.
 
-Worker는 같은 `operation_id`가 없을 때만 account row의 `next_server_seq`를 1 증가시키고, 같은 transaction의 canonical row·operation log·change log가 그 값을 읽게 한다. idempotent 재시도는 새 sequence를 소비하지 않는다. sequence는 중복 없이 증가하며 gap은 허용한다. 범위 상한에 도달하면 wrap하거나 0으로 돌아가지 않고 fail-closed한다. 동시 batch 두 개가 중복 sequence를 만들지 않는지 Phase 2에서 검증한다.
+Worker는 같은 `operation_id`가 없을 때만 account row의 현재 `next_server_seq`를 할당하고 같은 transaction의 canonical row·operation log·change log가 그 값을 쓰게 한 뒤 1 증가시킨다. 기존·신규 account의 초기값은 1이다. 실제 할당 범위는 `1...2^53-1`이고 내부의 `2^53`은 소진 sentinel로만 허용한다. idempotent 재시도는 새 sequence를 소비하지 않는다. sequence는 중복 없이 증가하며 gap은 허용한다. sentinel에 도달하면 wrap하거나 0으로 돌아가지 않고 fail-closed한다. 동시 batch 두 개가 중복 sequence를 만들지 않는지 Phase 2에서 검증한다.
+
+M06 v1의 `change_log`는 단일 account cursor table이다. entity identity를 opaque JSON/blob으로 직렬화하지 않고 canonical storage key 축을 nullable plaintext column으로 펼치며 `entity_type`별 `CHECK`로 정확한 non-null 조합을 강제한다. polymorphic FK는 두지 않는다. v1은 canonical row의 physical delete를 금지하고 handler가 canonical mutation과 change insert를 같은 batch로 적용하므로 이 선택이 dangling identity를 허용하지 않는다.
+
+성공한 runtime operation 하나는 `server_seq`와 change row를 각각 하나만 만든다. 여러 내부 row를 전진시키는 `create_persona_snapshot`은 persona snapshot projection 하나가 외부 owner다. turn과 모든 child bubble을 함께 tombstone하는 `delete_turn`은 초기 runtime에서 금지되며, 활성화 전에 fan-out event와 ledger key를 별도 revision으로 확정한다. `change_kind`는 v1에서 `upsert`와 `tombstone`만 허용한다.
 
 ---
 
