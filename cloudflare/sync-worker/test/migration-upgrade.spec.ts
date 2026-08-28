@@ -296,6 +296,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0005_versioned_ai_state.sql",
       "0006_attachment.sql",
       "0007_device_token.sql",
+      "0008_atomic_write_ledger.sql",
     ]);
   });
 
@@ -326,16 +327,19 @@ describe("0002 starts enforcing the account reference", () => {
       "attachment",
       "bubble",
       "bubble_extension_field",
+      "change_log",
       "checkpoint",
       "device",
       "engine_profile",
       "group_state",
+      "operation_log",
       "persona_snapshot",
       "persona_snapshot_extension_field",
       "persona_snapshot_head",
       "room",
       "room_ai_state_ref",
       "room_extension_field",
+      "transaction_guard",
       "turn",
       "turn_extension_field",
       "worldline",
