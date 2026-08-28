@@ -272,6 +272,15 @@ def build_synthetic_fixture() -> dict[str, Any]:
                 "change_rows_delta": 0,
                 "canonical_rows_delta": 0,
             },
+            {
+                "name": "cross_space_write",
+                "outcome": "AUTH_INVALID",
+                "sequence_before": 2,
+                "sequence_after": 2,
+                "operation_rows_delta": 0,
+                "change_rows_delta": 0,
+                "canonical_rows_delta": 0,
+            },
         ],
         "opaque_envelopes": {"minimal_v1_aes_gcm": _minimal_shape_envelope()},
     }
@@ -519,6 +528,7 @@ def validate_synthetic_fixture(fixture: dict[str, Any]) -> None:
         "different_fingerprint_replay": ("OPERATION_REPLAY_MISMATCH", 0, 0, 0),
         "cas_mismatch": ("REVISION_CONFLICT", 0, 0, 0),
         "revoked_device_write": ("DEVICE_REVOKED", 0, 0, 0),
+        "cross_space_write": ("AUTH_INVALID", 0, 0, 0),
     }
     scenarios = fixture.get("atomic_scenarios", [])
     if {row.get("name") for row in scenarios} != set(expected_scenarios):

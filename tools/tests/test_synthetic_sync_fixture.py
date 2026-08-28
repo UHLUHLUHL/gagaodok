@@ -259,6 +259,18 @@ class SyntheticSyncFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "consumed a sequence"):
             validate_synthetic_fixture(self.fixture)
 
+    def test_cross_space_write_is_an_atomic_auth_failure(self):
+        scenario = next(
+            row
+            for row in self.fixture["atomic_scenarios"]
+            if row["name"] == "cross_space_write"
+        )
+        self.assertEqual(scenario["outcome"], "AUTH_INVALID")
+        self.assertEqual(scenario["sequence_after"], scenario["sequence_before"])
+        self.assertEqual(scenario["operation_rows_delta"], 0)
+        self.assertEqual(scenario["change_rows_delta"], 0)
+        self.assertEqual(scenario["canonical_rows_delta"], 0)
+
     def test_validator_rejects_cross_space_room_ai_reference(self):
         self.fixture["room_ai_state_refs"][0]["space_id"] = "MAC_SPACE"
         with self.assertRaisesRegex(ValueError, "room AI state reference"):

@@ -127,6 +127,7 @@ AuthContext = {
 - request body의 `device_id`가 있으면 token의 값과 정확히 같아야 한다.
 - target `space_id` write 권한은 device 등록, owner space, active writer/generation authority를 함께 검사한다.
 - v1 operation write는 `target.space_id === AuthContext.registered_space_id`를 최소 선행 조건으로 강제한다. 같은 account token이어도 다른 등록 space의 canonical row를 쓰지 못한다. 향후 active-writer 위임은 이 조건을 조용히 우회하지 않고 별도 authority 계약으로만 확장한다.
+- `create_attachment`도 write이므로 이 equality를 적용한다. 이때 target space는 attachment identity가 아니라 `origin_space_id` provenance와 일치하는 생성 출처다. 반대로 ready attachment download는 §6 계약대로 같은 account의 유효한 device이면 허용하며 registered-space equality를 적용하지 않는다.
 - `PHONE_SPACE` 전용 group/worldline/relationship operation을 다른 space device가 만들면 거부한다.
 - 폐기된 token은 R2 download를 포함한 모든 endpoint에서 거부한다.
 - QR pairing·전체 복구 endpoint는 [E2EE 제안서](2026-08-27-sync-encryption-proposal.md) §4~5의 별도 인증 흐름을 사용하며 일반 device middleware를 우회하지 않는다.
