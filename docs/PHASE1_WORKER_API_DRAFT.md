@@ -276,6 +276,10 @@ Room 본체의 encrypted wire field → D1 column mapping은 `title→title_enc`
 
 `patch_room`의 engine/persona metadata pair는 `room_ai_state_ref`를 upsert/clear한다. `create_room`은 reference row를 만들지 않는다. 존재하지 않는 pair를 clear하는 것은 idempotent no-op이고, 두 pair가 모두 null이면 reference row를 삭제할 수 있다.
 
+`create_room`은 room 본체와 `room_extension_field`만 같은 transaction에서 만든다. `PHONE_SPACE` room이라고 해서 `group_state`나 `worldline`을 자동 생성하지 않는다. Worker는 암호화된 room payload로 group semantics를 판정할 수 없고, 두 entity는 각자의 명시적 create operation과 ledger event를 가져야 한다. 따라서 room만 존재하는 상태는 후속 `create_group_state`·`create_worldline`이 도착하기 전의 유효한 중간 상태다.
+
+Engine/persona exact-revision reference는 create payload에 싣지 않는다. 필요한 client는 room create가 성공한 뒤 `patch_room` metadata pair로 연결하며, 두 operation은 각각 revision과 `server_seq`를 소비한다. v1은 이를 하나의 암묵적 복합 create로 합치지 않는다.
+
 `avatar_ref`는 canonical 필드지만 v1 D1 projection과 operation metadata 경로가 아직 없으므로 현재 `patch_room`에서 지원하지 않는다. Validator가 avatar key를 받지 않으며 handler가 임의 column·attachment mapping을 발명하지 않는다. Avatar write를 열기 전에 별도 schema와 operation 계약을 확정한다.
 
 ### 4.2 `GET /v1/sync/changes`
