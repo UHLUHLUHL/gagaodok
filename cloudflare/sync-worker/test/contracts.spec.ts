@@ -296,7 +296,113 @@ describe("parseOperationRequest — identity validation", () => {
   });
 });
 
+describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () => {
+  // canonical schema §11: group chats and worldlines exist only on the phone.
+  // A null worldline_id is the room's default scope and stays legal in every
+  // canonical space; a non-null one names a worldline row, which only
+  // PHONE_SPACE can have. D1 states the same rule as a CHECK on `turn`.
+  const ROOM_SCOPED: ReadonlyArray<[string, string, Record<string, unknown>]> = [
+    ["create_room", "room", {}],
+    ["patch_room", "room", {}],
+    ["create_checkpoint", "checkpoint", { checkpoint_id: CHECKPOINT }],
+    ["patch_checkpoint", "checkpoint", { checkpoint_id: CHECKPOINT }],
+    ["create_turn", "turn", { turn_id: TURN }],
+    ["patch_turn", "turn", { turn_id: TURN }],
+    ["create_bubble", "bubble", { turn_id: TURN, message_id: MESSAGE }],
+    ["patch_bubble", "bubble", { turn_id: TURN, message_id: MESSAGE }],
+  ];
+
+  function build(
+    op: string,
+    entityType: string,
+    extra: Record<string, unknown>,
+    spaceId: string,
+    worldlineId: string | null,
+  ): Record<string, unknown> {
+    const isCreate = op.startsWith("create_");
+    return makeOperation({
+      op,
+      entity_type: entityType,
+      target: { space_id: spaceId, room_id: ROOM, worldline_id: worldlineId, ...extra },
+      base_revision: isCreate ? undefined : 41,
+      bubble_order: op === "create_bubble" ? 3 : undefined,
+      set: { title: validEnvelope() },
+    });
+  }
+
+  it.each(ROOM_SCOPED)(
+    "rejects %s in MAC_SPACE with a non-null worldline_id",
+    (op, entityType, extra) => {
+      expect(() =>
+        parseOperationRequest(build(op, entityType, extra, "MAC_SPACE", WORLDLINE)),
+      ).toThrowError("VALIDATION_FAILED");
+    },
+  );
+
+  it.each(ROOM_SCOPED)(
+    "rejects %s in TABLET_SPACE with a non-null worldline_id",
+    (op, entityType, extra) => {
+      expect(() =>
+        parseOperationRequest(build(op, entityType, extra, "TABLET_SPACE", WORLDLINE)),
+      ).toThrowError("VALIDATION_FAILED");
+    },
+  );
+
+  it.each(ROOM_SCOPED)("accepts %s in MAC_SPACE with a null worldline_id", (op, entityType, extra) => {
+    const parsed = parseOperationRequest(build(op, entityType, extra, "MAC_SPACE", null));
+    expect(parsed.target.worldline_id).toBeNull();
+    expect(parsed.worldline_key).toBe("");
+  });
+
+  it.each(ROOM_SCOPED)(
+    "accepts %s in TABLET_SPACE with a null worldline_id",
+    (op, entityType, extra) => {
+      expect(parseOperationRequest(build(op, entityType, extra, "TABLET_SPACE", null)).worldline_key).toBe(
+        "",
+      );
+    },
+  );
+
+  it.each(ROOM_SCOPED)(
+    "accepts %s in PHONE_SPACE with a non-null worldline_id",
+    (op, entityType, extra) => {
+      const parsed = parseOperationRequest(build(op, entityType, extra, "PHONE_SPACE", WORLDLINE));
+      expect(parsed.target.worldline_id).toBe(WORLDLINE);
+      expect(parsed.worldline_key).toBe(WORLDLINE);
+    },
+  );
+
+  it("applies the same rule to the schema-only delete_turn shape", () => {
+    // delete_turn is refused by the runtime gate regardless; this pins that its
+    // entity shape still treats worldline_id as nullable, not required.
+    expect(getEntityShape("turn").worldlineRule).toBe("nullable");
+  });
+});
+
 describe("parseOperationRequest — safe integers", () => {
+  it("rejects a numeric string as bubble_order", () => {
+    // D1's INTEGER affinity would convert "3" to 3 before any CHECK could see
+    // it, so the wire boundary is the only place this can be refused.
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op: "create_bubble",
+          entity_type: "bubble",
+          target: {
+            space_id: "MAC_SPACE",
+            room_id: ROOM,
+            worldline_id: null,
+            turn_id: TURN,
+            message_id: MESSAGE,
+          },
+          base_revision: undefined,
+          bubble_order: "3",
+          set: { text: validEnvelope() },
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
   it("rejects an unsafe bubble_order", () => {
     expect(() =>
       parseOperationRequest(

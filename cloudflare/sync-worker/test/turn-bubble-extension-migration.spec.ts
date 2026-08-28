@@ -208,11 +208,10 @@ async function insertRoomExtension(
   await db
     .prepare(
       `INSERT INTO room_extension_field
-         (account_id, space_id, room_id, extension_key, envelope_enc,
-          revision, server_seq, updated_at)
-       VALUES (?, ?, ?, ?, ?, 0, NULL, ?)`,
+         (account_id, space_id, room_id, extension_key, envelope_enc)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .bind(accountId, spaceId, roomId, key, envelope, TIMESTAMP)
+    .bind(accountId, spaceId, roomId, key, envelope)
     .run();
 }
 
@@ -229,10 +228,10 @@ async function insertTurnExtension(
     .prepare(
       `INSERT INTO turn_extension_field
          (account_id, space_id, room_id, worldline_key, turn_id, extension_key,
-          envelope_enc, revision, server_seq, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)`,
+          envelope_enc)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(accountId, spaceId, roomId, worldlineKey, turnId, key, envelope, TIMESTAMP)
+    .bind(accountId, spaceId, roomId, worldlineKey, turnId, key, envelope)
     .run();
 }
 
@@ -250,20 +249,10 @@ async function insertBubbleExtension(
     .prepare(
       `INSERT INTO bubble_extension_field
          (account_id, space_id, room_id, worldline_key, turn_id, message_id,
-          extension_key, envelope_enc, revision, server_seq, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)`,
+          extension_key, envelope_enc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(
-      accountId,
-      spaceId,
-      roomId,
-      worldlineKey,
-      turnId,
-      messageId,
-      key,
-      envelope,
-      TIMESTAMP,
-    )
+    .bind(accountId, spaceId, roomId, worldlineKey, turnId, messageId, key, envelope)
     .run();
 }
 
@@ -543,6 +532,24 @@ describe("M03 — turn identity", () => {
       .bind(TURN_1)
       .first<{ n: number }>();
     expect(row?.n).toBe(4);
+  });
+
+  it("rejects a named worldline outside PHONE_SPACE", async () => {
+    // canonical schema §11: worldline entities exist only on the phone. The
+    // default (null) scope stays legal everywhere.
+    await seedScope(ACCOUNT_A);
+    for (const space of ["MAC_SPACE", "TABLET_SPACE"]) {
+      await insertRoom(ACCOUNT_A, space, ROOM_1);
+      await expectRejected(() =>
+        insertTurn(ACCOUNT_A, space, ROOM_1, TURN_1, { worldlineId: WORLDLINE_1 }),
+      );
+      // …but the default worldline is accepted in that same space.
+      await insertTurn(ACCOUNT_A, space, ROOM_1, TURN_1);
+    }
+    const row = await db
+      .prepare("SELECT count(*) AS n FROM turn WHERE worldline_key = ''")
+      .first<{ n: number }>();
+    expect(row?.n).toBe(2);
   });
 
   it("returns every encrypted envelope byte-for-byte", async () => {
@@ -914,6 +921,43 @@ describe("M03 — extension tables are one per owner", () => {
       for (const fk of fks.results) {
         expect(fk.on_delete).toBe("RESTRICT");
         expect(fk.on_update).toBe("RESTRICT");
+      }
+    }
+  });
+
+  it("stores only owner identity, key and envelope — no independent metadata", async () => {
+    // An extension is owner-dependent storage, not a canonical entity: it is
+    // never an operation target, and its CAS revision and ordering cursor
+    // belong to the owning room/turn/bubble row. A revision or server_seq of
+    // its own would create a second source for both.
+    const expected: Record<string, string[]> = {
+      room_extension_field: ["account_id", "space_id", "room_id", "extension_key", "envelope_enc"],
+      turn_extension_field: [
+        "account_id",
+        "space_id",
+        "room_id",
+        "worldline_key",
+        "turn_id",
+        "extension_key",
+        "envelope_enc",
+      ],
+      bubble_extension_field: [
+        "account_id",
+        "space_id",
+        "room_id",
+        "worldline_key",
+        "turn_id",
+        "message_id",
+        "extension_key",
+        "envelope_enc",
+      ],
+    };
+    for (const [table, columns] of Object.entries(expected)) {
+      const info = await db.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>();
+      const actual = info.results.map((column) => column.name);
+      expect(actual.sort()).toEqual([...columns].sort());
+      for (const forbidden of ["revision", "server_seq", "updated_at"]) {
+        expect(actual).not.toContain(forbidden);
       }
     }
   });

@@ -150,6 +150,12 @@ CREATE TABLE turn (
             AND tombstone_operation_id IS NOT NULL)
     ),
 
+    -- A named worldline exists only on the phone (canonical schema 11): Mac and
+    -- tablet have no worldline entity at all. The default worldline is the null
+    -- id, so it stays legal in every canonical space. The Worker refuses the
+    -- same pair on the wire; this CHECK is what makes it true of the database.
+    CHECK (worldline_id IS NULL OR space_id = 'PHONE_SPACE'),
+
     PRIMARY KEY (account_id, space_id, room_id, worldline_key, turn_id),
 
     FOREIGN KEY (account_id, space_id, room_id)
@@ -321,6 +327,13 @@ CREATE TABLE bubble (
 --
 -- Each row holds exactly one key and one envelope, so patching one key never
 -- re-encrypts another and an unknown key survives byte-identical.
+--
+-- An extension row is owner-dependent storage, not a canonical entity: it is
+-- never an operation target, and set/clear always rides on the owning room,
+-- turn or bubble patch. So it carries no revision, no server_seq and no
+-- updated_at — CAS and account ordering have exactly one source, the owner row.
+-- Applying a set/clear together with the owner's revision bump, the operation
+-- log and the change log atomically is the M06 handler's job, not a trigger's.
 CREATE TABLE room_extension_field (
     account_id    TEXT NOT NULL,
     space_id      TEXT NOT NULL,
@@ -343,12 +356,6 @@ CREATE TABLE room_extension_field (
 
     -- Opaque. Required: an extension row without an envelope has no meaning.
     envelope_enc  TEXT NOT NULL,
-
-    revision      INTEGER NOT NULL DEFAULT 0
-                  CHECK (revision >= 0),
-    server_seq    INTEGER
-                  CHECK (server_seq IS NULL OR server_seq > 0),
-    updated_at    TEXT NOT NULL,
 
     PRIMARY KEY (account_id, space_id, room_id, extension_key),
 
@@ -382,12 +389,6 @@ CREATE TABLE turn_extension_field (
 
     envelope_enc  TEXT NOT NULL,
 
-    revision      INTEGER NOT NULL DEFAULT 0
-                  CHECK (revision >= 0),
-    server_seq    INTEGER
-                  CHECK (server_seq IS NULL OR server_seq > 0),
-    updated_at    TEXT NOT NULL,
-
     PRIMARY KEY (account_id, space_id, room_id, worldline_key, turn_id, extension_key),
 
     FOREIGN KEY (account_id, space_id, room_id, worldline_key, turn_id)
@@ -420,12 +421,6 @@ CREATE TABLE bubble_extension_field (
                   ),
 
     envelope_enc  TEXT NOT NULL,
-
-    revision      INTEGER NOT NULL DEFAULT 0
-                  CHECK (revision >= 0),
-    server_seq    INTEGER
-                  CHECK (server_seq IS NULL OR server_seq > 0),
-    updated_at    TEXT NOT NULL,
 
     PRIMARY KEY (
         account_id, space_id, room_id, worldline_key, turn_id, message_id, extension_key

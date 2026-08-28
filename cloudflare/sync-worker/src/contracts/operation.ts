@@ -424,6 +424,14 @@ function parseTarget(value: unknown, entityType: EntityType): OperationTarget {
       // no such thing as creating or patching "the null worldline".
       throw validationFailed();
     }
+    if (worldlineId !== null && target.space_id !== "PHONE_SPACE") {
+      // A named worldline is a PHONE_SPACE-only entity (canonical schema 11).
+      // The null default scope stays legal in every canonical space, so this
+      // is narrower than `phoneSpaceOnly`, which bans the whole operation.
+      // `worldline` operations are already phoneSpaceOnly, so this is the rule
+      // that covers room, checkpoint, turn and bubble targets.
+      throw validationFailed();
+    }
     target.worldline_id = worldlineId;
   }
 
