@@ -610,6 +610,177 @@ describe("parseOperationRequest — the M04 metadata allowlist table", () => {
   });
 });
 
+describe("parseOperationRequest — create_attachment metadata", () => {
+  // API draft §4.1.0 / canonical schema §7. The client declares sizes, hash and
+  // key generation as plaintext metadata; r2_object_key, state and server_seq
+  // are server-owned and must never arrive on the wire.
+  const MAX_SOURCE = 12_582_912;
+  const OVERHEAD = 34;
+
+  const REQUIRED = {
+    origin_space_id: "PHONE_SPACE",
+    kind: "attachment",
+    source_byte_size: 1024,
+    ciphertext_byte_size: 1024 + OVERHEAD,
+    ciphertext_hash: "b".repeat(64),
+    key_generation: 1,
+    created_at: "2026-08-28T00:00:00Z",
+  };
+
+  function attachment(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return makeOperation({
+      op: "create_attachment",
+      entity_type: "attachment",
+      target: { space_id: "PHONE_SPACE", attachment_id: ATTACHMENT },
+      base_revision: undefined,
+      set: {
+        file_name: validEnvelope(),
+        mime_type: validEnvelope(),
+        wrapped_file_key: validEnvelope(),
+      },
+      metadata_set: REQUIRED,
+      ...overrides,
+    });
+  }
+
+  it("accepts the documented shape", () => {
+    const parsed = parseOperationRequest(attachment());
+    expect(parsed.metadata_set.ciphertext_byte_size).toBe(1024 + OVERHEAD);
+    expect(Object.keys(parsed.set).sort()).toEqual([
+      "file_name",
+      "mime_type",
+      "wrapped_file_key",
+    ]);
+  });
+
+  it("requires every metadata field", () => {
+    for (const missing of Object.keys(REQUIRED)) {
+      const metadata = { ...REQUIRED };
+      delete (metadata as Record<string, unknown>)[missing];
+      expect(() => parseOperationRequest(attachment({ metadata_set: metadata }))).toThrowError(
+        "VALIDATION_FAILED",
+      );
+    }
+  });
+
+  it("requires origin_space_id to equal the target space", () => {
+    expect(() =>
+      parseOperationRequest(
+        attachment({ metadata_set: { ...REQUIRED, origin_space_id: "MAC_SPACE" } }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("binds ciphertext size to exactly source + 34 and bounds both", () => {
+    const sized = (source: number, ciphertext: number) =>
+      attachment({
+        metadata_set: {
+          ...REQUIRED,
+          source_byte_size: source,
+          ciphertext_byte_size: ciphertext,
+        },
+      });
+    expect(() => parseOperationRequest(sized(MAX_SOURCE, MAX_SOURCE + OVERHEAD))).not.toThrow();
+    expect(() => parseOperationRequest(sized(1, 1 + OVERHEAD))).not.toThrow();
+    for (const [source, ciphertext] of [
+      [1024, 1024],
+      [1024, 1024 + OVERHEAD - 1],
+      [1024, 1024 + OVERHEAD + 1],
+      [0, OVERHEAD],
+      [-1, OVERHEAD - 1],
+      [MAX_SOURCE + 1, MAX_SOURCE + 1 + OVERHEAD],
+    ] as ReadonlyArray<readonly [number, number]>) {
+      expect(() => parseOperationRequest(sized(source, ciphertext))).toThrowError(
+        "VALIDATION_FAILED",
+      );
+    }
+    // A non-integer size is refused before the arithmetic is trusted.
+    expect(() =>
+      parseOperationRequest(
+        attachment({ metadata_set: { ...REQUIRED, source_byte_size: 1024.5 } }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("rejects an unknown kind, a bad hash or another key generation", () => {
+    for (const kind of ["image", "ATTACHMENT", ""]) {
+      expect(() =>
+        parseOperationRequest(attachment({ metadata_set: { ...REQUIRED, kind } })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+    for (const hash of ["B".repeat(64), "b".repeat(63), "b".repeat(65), `${"b".repeat(63)}g`]) {
+      expect(() =>
+        parseOperationRequest(attachment({ metadata_set: { ...REQUIRED, ciphertext_hash: hash } })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+    for (const generation of [0, 2, "1"]) {
+      expect(() =>
+        parseOperationRequest(
+          attachment({ metadata_set: { ...REQUIRED, key_generation: generation } }),
+        ),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("refuses server-owned fields on the wire", () => {
+    for (const [key, value] of [
+      ["r2_object_key", "obj/70000000-0000-4000-8000-0000000000FF"],
+      ["state", "allocated"],
+      ["server_seq", 1],
+    ] as ReadonlyArray<readonly [string, unknown]>) {
+      expect(() =>
+        parseOperationRequest(attachment({ metadata_set: { ...REQUIRED, [key]: value } })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("refuses a non-empty metadata_clear", () => {
+    expect(() =>
+      parseOperationRequest(attachment({ metadata_clear: ["ciphertext_hash"] })),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("requires exactly the three encrypted fields", () => {
+    for (const missing of ["file_name", "mime_type", "wrapped_file_key"]) {
+      const set: Record<string, string> = {
+        file_name: validEnvelope(),
+        mime_type: validEnvelope(),
+        wrapped_file_key: validEnvelope(),
+      };
+      delete set[missing];
+      expect(() => parseOperationRequest(attachment({ set }))).toThrowError("VALIDATION_FAILED");
+    }
+    // An extra encrypted field, and an extension path, are both refused.
+    expect(() =>
+      parseOperationRequest(
+        attachment({
+          set: {
+            file_name: validEnvelope(),
+            mime_type: validEnvelope(),
+            wrapped_file_key: validEnvelope(),
+            summary_text: validEnvelope(),
+          },
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(
+        attachment({
+          set: {
+            file_name: validEnvelope(),
+            mime_type: validEnvelope(),
+            wrapped_file_key: validEnvelope(),
+            "android.attachment.extra": validEnvelope(),
+          },
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(attachment({ clear: ["file_name"] })),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+});
+
 describe("parseOperationRequest — create_persona_snapshot head CAS", () => {
   function snapshot(baseRevision: unknown, snapshotRevision: number): Record<string, unknown> {
     return makeOperation({
@@ -1036,7 +1207,21 @@ describe("parseOperationRequest — op/entity_type/target identity binding", () 
           entity_type: "attachment",
           base_revision: undefined,
           target: { space_id: "MAC_SPACE", attachment_id: ATTACHMENT },
-          set: { file_name: validEnvelope() },
+          // The create now declares its whole plaintext and encrypted shape.
+          set: {
+            file_name: validEnvelope(),
+            mime_type: validEnvelope(),
+            wrapped_file_key: validEnvelope(),
+          },
+          metadata_set: {
+            origin_space_id: "MAC_SPACE",
+            kind: "attachment",
+            source_byte_size: 1024,
+            ciphertext_byte_size: 1058,
+            ciphertext_hash: "c".repeat(64),
+            key_generation: 1,
+            created_at: "2026-08-28T00:00:00Z",
+          },
         }),
       ),
     ).not.toThrow();

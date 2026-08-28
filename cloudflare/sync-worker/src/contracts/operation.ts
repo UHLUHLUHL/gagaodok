@@ -294,6 +294,54 @@ function requireRevisionAtLeastOne(value: unknown): number {
   return revision;
 }
 
+/** Canonical schema §7.2: source ≤ 12,582,912 and ciphertext = source + 34. */
+export const MAX_ATTACHMENT_SOURCE_BYTES = 12_582_912;
+export const ATTACHMENT_ENVELOPE_OVERHEAD_BYTES = 34;
+export const MAX_ENCRYPTED_OBJECT_BYTES =
+  MAX_ATTACHMENT_SOURCE_BYTES + ATTACHMENT_ENVELOPE_OVERHEAD_BYTES;
+
+function requireAttachmentKind(value: unknown): string {
+  if (value !== "attachment" && value !== "avatar") {
+    throw validationFailed();
+  }
+  return value;
+}
+
+function requireSourceByteSize(value: unknown): number {
+  const size = requireSafeInteger(value);
+  if (size < 1 || size > MAX_ATTACHMENT_SOURCE_BYTES) {
+    throw validationFailed();
+  }
+  return size;
+}
+
+function requireCiphertextByteSize(value: unknown): number {
+  const size = requireSafeInteger(value);
+  // The equality against source_byte_size is checked once both are parsed;
+  // here only the absolute ceiling and the floor of a one-byte payload.
+  if (size < 1 + ATTACHMENT_ENVELOPE_OVERHEAD_BYTES || size > MAX_ENCRYPTED_OBJECT_BYTES) {
+    throw validationFailed();
+  }
+  return size;
+}
+
+function requireSha256Hex(value: unknown): string {
+  // Lowercase hex, exactly 64 characters. The Worker never recomputes this and
+  // never treats it as authenticity — the AEAD tag is what proves that, and
+  // only the downloading client checks it.
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value)) {
+    throw validationFailed();
+  }
+  return value;
+}
+
+function requireKeyGenerationOne(value: unknown): number {
+  if (value !== 1) {
+    throw validationFailed();
+  }
+  return value;
+}
+
 function requirePlaintextTag(value: unknown): string {
   // A compat tag is compared for equality and never parsed, so the only rule
   // is that it is a non-empty string of bounded length. No format is imposed.
@@ -309,6 +357,9 @@ const METADATA_PARSERS = {
   persona_snapshot_id: requireUuid,
   persona_snapshot_revision: requireRevisionAtLeastOne,
   owner_space_id: requireSpaceId,
+  // An attachment records where it was created; unlike owner_space_id this one
+  // is provenance only and never enters a key (canonical schema §7.1).
+  origin_space_id: requireSpaceId,
   created_by_device_id: requireUuid,
   created_at: requireRfc3339Utc,
   persona_schema_version: requireRevisionAtLeastOne,
@@ -317,6 +368,11 @@ const METADATA_PARSERS = {
   first_turn_id: requireUuid,
   last_turn_id: requireUuid,
   through_server_seq: requireRevisionAtLeastOne,
+  kind: requireAttachmentKind,
+  source_byte_size: requireSourceByteSize,
+  ciphertext_byte_size: requireCiphertextByteSize,
+  ciphertext_hash: requireSha256Hex,
+  key_generation: requireKeyGenerationOne,
 } as const satisfies Record<string, (value: unknown) => MetadataValue>;
 
 type MetadataField = keyof typeof METADATA_PARSERS;
@@ -391,6 +447,33 @@ const METADATA_RULES: Partial<Record<string, MetadataRule>> = {
 };
 
 const EMPTY_METADATA_RULE: MetadataRule = { required: [], optional: [], clearable: [] };
+
+// create_attachment declares its whole plaintext shape at allocation time. The
+// server owns r2_object_key, the initial `allocated` state and server_seq, so
+// none of the three is in this list and any of them on the wire is refused as
+// an unknown key.
+METADATA_RULES.create_attachment = {
+  required: [
+    "origin_space_id",
+    "kind",
+    "source_byte_size",
+    "ciphertext_byte_size",
+    "ciphertext_hash",
+    "key_generation",
+    "created_at",
+  ],
+  optional: [],
+  clearable: [],
+};
+
+/**
+ * Operations whose encrypted `set` is a fixed, complete field list rather than
+ * a patch. An attachment's name, type and wrapped key are written once at
+ * creation; a missing one would leave a row that can never be decrypted.
+ */
+const REQUIRED_ENCRYPTED_FIELDS: Partial<Record<string, readonly string[]>> = {
+  create_attachment: ["file_name", "mime_type", "wrapped_file_key"],
+};
 
 export interface OperationTarget {
   space_id: SpaceId;
@@ -721,6 +804,36 @@ export function parseOperationRequest(value: unknown): OperationRequest {
 
   const metadata = parseMetadata(value["metadata_set"], value["metadata_clear"], operation);
   const parsedSet = parseSet(value["set"]);
+
+  const requiredEncrypted = REQUIRED_ENCRYPTED_FIELDS[operation];
+  if (requiredEncrypted !== undefined) {
+    const provided = Object.keys(parsedSet).sort();
+    if (provided.length !== requiredEncrypted.length) {
+      throw validationFailed();
+    }
+    for (const [index, field] of [...requiredEncrypted].sort().entries()) {
+      if (provided[index] !== field) {
+        throw validationFailed();
+      }
+    }
+  }
+
+  if (operation === "create_attachment") {
+    // The origin is provenance for the very space that is allocating, so a
+    // mismatch means the request describes two different spaces at once.
+    if (metadata.set.origin_space_id !== target.space_id) {
+      throw validationFailed();
+    }
+    // v1 encrypts an attachment as one AEAD message with fixed overhead, so
+    // this is an equality rather than a bound. Chunked AEAD would need its own
+    // manifest contract and is out of scope.
+    if (
+      metadata.set.ciphertext_byte_size !==
+      (metadata.set.source_byte_size as number) + ATTACHMENT_ENVELOPE_OVERHEAD_BYTES
+    ) {
+      throw validationFailed();
+    }
+  }
   const parsedClear = parseClear(value["clear"], new Set(Object.keys(parsedSet)));
 
   const request: OperationRequest = {

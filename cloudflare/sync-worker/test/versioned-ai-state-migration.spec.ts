@@ -38,6 +38,11 @@ const MAX_SAFE = 9007199254740991;
 
 const db = env.DB;
 
+// Stage contract: apply migrations up to and including this stage's own and no
+// further, so a later stage cannot invalidate what this file asserts about M04
+// (AGENTS.md stage-spec rule).
+const STAGE_MIGRATIONS = () => migrationsUpTo(AI_STATE_MIGRATION);
+
 function migrationsUpTo(name: string): D1Migration[] {
   const index = env.TEST_MIGRATIONS.findIndex((migration) => migration.name === name);
   expect(index).toBeGreaterThanOrEqual(0);
@@ -309,7 +314,7 @@ beforeAll(async () => {
     .first<{ n: number }>();
   expect(before?.n).toBe(0);
 
-  await applyD1Migrations(db, env.TEST_MIGRATIONS);
+  await applyD1Migrations(db, STAGE_MIGRATIONS());
 
   for (const table of ["account", "device", "room", "turn"]) {
     const row = await db.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>();
@@ -355,7 +360,7 @@ describe("M04 — migration order and preservation", () => {
   });
 
   it("is a no-op when applied again", async () => {
-    await applyD1Migrations(db, env.TEST_MIGRATIONS);
+    await applyD1Migrations(db, STAGE_MIGRATIONS());
     const row = await db.prepare("SELECT count(*) AS n FROM d1_migrations").first<{ n: number }>();
     expect(row?.n).toBe(5);
   });
@@ -446,7 +451,7 @@ describe("M04 — migration order and preservation", () => {
         "INSERT INTO scratch_should_not_survive (x) SELECT x FROM table_that_does_not_exist",
       ],
     };
-    await expectRejected(() => applyD1Migrations(db, [...env.TEST_MIGRATIONS, failing]));
+    await expectRejected(() => applyD1Migrations(db, [...STAGE_MIGRATIONS(), failing]));
     const table = await db
       .prepare(
         "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'scratch_should_not_survive'",

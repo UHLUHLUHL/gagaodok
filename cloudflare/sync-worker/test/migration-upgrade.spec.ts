@@ -293,6 +293,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0003_conversation_scope.sql",
       "0004_turn_bubble_extension.sql",
       "0005_versioned_ai_state.sql",
+      "0006_attachment.sql",
     ]);
   });
 
@@ -320,6 +321,7 @@ describe("0002 starts enforcing the account reference", () => {
     // conversation-scope tables are expected to be here.
     expect(rows.results.map((row) => row.name)).toEqual([
       "account",
+      "attachment",
       "bubble",
       "bubble_extension_field",
       "checkpoint",
