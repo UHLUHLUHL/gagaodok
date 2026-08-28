@@ -35,6 +35,11 @@ const CONVERSATION_SCOPE_MIGRATION = "0003_conversation_scope.sql";
 
 const db = env.DB;
 
+// This file is a *stage* contract: it applies the migrations up to and
+// including its own and no further, so a later stage adding tables, triggers or
+// ledger rows cannot invalidate what it asserts about this one.
+const STAGE_MIGRATIONS = () => migrationsUpTo("0003_conversation_scope.sql");
+
 function migrationsUpTo(name: string): D1Migration[] {
   const index = env.TEST_MIGRATIONS.findIndex((migration) => migration.name === name);
   expect(index).toBeGreaterThanOrEqual(0);
@@ -151,7 +156,7 @@ beforeAll(async () => {
     .first<{ n: number }>();
   expect(before?.n).toBe(0);
 
-  await applyD1Migrations(db, env.TEST_MIGRATIONS);
+  await applyD1Migrations(db, STAGE_MIGRATIONS());
 });
 
 // The plugin isolates storage per test *file*. Within this file the tests
@@ -178,7 +183,7 @@ describe("M02 — 0001 → 0002 → 0003 applies in order", () => {
   });
 
   it("is a no-op when applied again", async () => {
-    await applyD1Migrations(db, env.TEST_MIGRATIONS);
+    await applyD1Migrations(db, STAGE_MIGRATIONS());
     const row = await db.prepare("SELECT count(*) AS n FROM d1_migrations").first<{ n: number }>();
     expect(row?.n).toBe(3);
   });
@@ -572,7 +577,7 @@ describe("M02 — a failing migration leaves nothing behind", () => {
     };
 
     await expectRejected(() =>
-      applyD1Migrations(db, [...env.TEST_MIGRATIONS, failing]),
+      applyD1Migrations(db, [...STAGE_MIGRATIONS(), failing]),
     );
 
     const table = await db

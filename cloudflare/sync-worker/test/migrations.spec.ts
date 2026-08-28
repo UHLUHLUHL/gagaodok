@@ -130,29 +130,28 @@ describe("M00 — local migration harness", () => {
       )
       .all<{ name: string }>();
     const names = rows.results.map((row) => row.name);
-    // M01 (0001, 0002), M02 (0003) and M03 (0004). Each stage has its own
-    // contract file; this one only pins the set of tables that exists.
+    // M01 (0001, 0002), M02 (0003), M03 (0004) and M04 (0005). Each stage has
+    // its own contract file; this one only pins the set of tables that exists.
     expect(names).toEqual([
       "account",
       "bubble",
       "bubble_extension_field",
+      "checkpoint",
       "device",
+      "engine_profile",
       "group_state",
+      "persona_snapshot",
+      "persona_snapshot_extension_field",
+      "persona_snapshot_head",
       "room",
+      "room_ai_state_ref",
       "room_extension_field",
       "turn",
       "turn_extension_field",
       "worldline",
     ]);
-    // Logical M04..M06 entities must not exist yet.
-    for (const later of [
-      "engine_profile",
-      "persona_snapshot",
-      "checkpoint",
-      "attachment",
-      "operation_log",
-      "change_log",
-    ]) {
+    // Logical M05..M06 entities must not exist yet.
+    for (const later of ["attachment", "operation_log", "change_log"]) {
       expect(names).not.toContain(later);
     }
   });

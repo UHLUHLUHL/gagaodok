@@ -45,6 +45,11 @@ const MAX_BUBBLE_ORDER = 9007199254740991;
 
 const db = env.DB;
 
+// This file is a *stage* contract: it applies the migrations up to and
+// including its own and no further, so a later stage adding tables, triggers or
+// ledger rows cannot invalidate what it asserts about this one.
+const STAGE_MIGRATIONS = () => migrationsUpTo("0004_turn_bubble_extension.sql");
+
 // Row counts and one envelope read immediately after 0004 is applied. beforeEach
 // truncates before every test, so survival has to be captured, not re-read.
 const survivingRows: Record<string, number> = {};
@@ -295,7 +300,7 @@ beforeAll(async () => {
     .first<{ n: number }>();
   expect(before?.n).toBe(0);
 
-  await applyD1Migrations(db, env.TEST_MIGRATIONS);
+  await applyD1Migrations(db, STAGE_MIGRATIONS());
 
   for (const table of ["account", "device", "room", "group_state", "worldline"]) {
     const row = await db.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>();
@@ -354,7 +359,7 @@ describe("M03 — migration order and stability", () => {
   });
 
   it("is a no-op when applied again", async () => {
-    await applyD1Migrations(db, env.TEST_MIGRATIONS);
+    await applyD1Migrations(db, STAGE_MIGRATIONS());
     const row = await db.prepare("SELECT count(*) AS n FROM d1_migrations").first<{ n: number }>();
     expect(row?.n).toBe(4);
   });
@@ -415,7 +420,7 @@ describe("M03 — migration order and stability", () => {
         "INSERT INTO scratch_should_not_survive (x) SELECT x FROM table_that_does_not_exist",
       ],
     };
-    await expectRejected(() => applyD1Migrations(db, [...env.TEST_MIGRATIONS, failing]));
+    await expectRejected(() => applyD1Migrations(db, [...STAGE_MIGRATIONS(), failing]));
 
     const table = await db
       .prepare(

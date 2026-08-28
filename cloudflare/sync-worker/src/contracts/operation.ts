@@ -263,7 +263,99 @@ const ALLOWED_TOP_LEVEL_FIELDS = new Set([
   "clear",
   "created_at",
   "bubble_order",
+  "metadata_set",
+  "metadata_clear",
 ]);
+
+// ---------------------------------------------------------------------------
+// Plaintext metadata patch — API draft §4.1.0.
+//
+// `set`/`clear` carry encrypted envelopes and extension keys. The canonical
+// metadata D1 must read as identity, foreign key or range cannot be ciphertext,
+// so it travels here instead, under a per-operation allowlist with a typed
+// parser for every key. Both fields are always present; an operation that
+// changes no metadata still spells `{}` and `[]`.
+//
+// An operation absent from this table allows no metadata at all. The M03
+// entities are deliberately left empty: their plaintext columns are set at
+// create time by the handler, and inventing a patch surface for them here
+// would be a contract this project has not written down.
+// ---------------------------------------------------------------------------
+
+type MetadataValue = string | number;
+
+function requireRevisionAtLeastOne(value: unknown): number {
+  const revision = requireSafeInteger(value);
+  if (revision < 1) {
+    // A version chain starts at 1; revision 0 means "no revision yet", which
+    // is a head state, never a row.
+    throw validationFailed();
+  }
+  return revision;
+}
+
+function requirePlaintextTag(value: unknown): string {
+  // A compat tag is compared for equality and never parsed, so the only rule
+  // is that it is a non-empty string of bounded length. No format is imposed.
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) {
+    throw validationFailed();
+  }
+  return value;
+}
+
+const METADATA_PARSERS = {
+  engine_profile_id: requireUuid,
+  engine_profile_revision: requireRevisionAtLeastOne,
+  persona_snapshot_id: requireUuid,
+  persona_snapshot_revision: requireRevisionAtLeastOne,
+  owner_space_id: requireSpaceId,
+  created_by_device_id: requireUuid,
+  created_at: requireRfc3339Utc,
+  persona_schema_version: requireRevisionAtLeastOne,
+  checkpoint_schema_version: requireRevisionAtLeastOne,
+  compaction_compat_tag: requirePlaintextTag,
+  first_turn_id: requireUuid,
+  last_turn_id: requireUuid,
+  through_server_seq: requireRevisionAtLeastOne,
+} as const satisfies Record<string, (value: unknown) => MetadataValue>;
+
+type MetadataField = keyof typeof METADATA_PARSERS;
+
+/** Fields that are only ever written or cleared together. */
+const METADATA_PAIRS: readonly (readonly [MetadataField, MetadataField])[] = [
+  ["engine_profile_id", "engine_profile_revision"],
+  ["persona_snapshot_id", "persona_snapshot_revision"],
+  ["first_turn_id", "last_turn_id"],
+];
+
+const CHECKPOINT_METADATA = [
+  "first_turn_id",
+  "last_turn_id",
+  "through_server_seq",
+  "checkpoint_schema_version",
+  "compaction_compat_tag",
+  "owner_space_id",
+  "created_by_device_id",
+  "created_at",
+] as const;
+
+const METADATA_ALLOWLIST: Partial<Record<string, readonly MetadataField[]>> = {
+  patch_room: [
+    "engine_profile_id",
+    "engine_profile_revision",
+    "persona_snapshot_id",
+    "persona_snapshot_revision",
+  ],
+  create_engine_profile: ["compaction_compat_tag"],
+  create_persona_snapshot: [
+    "owner_space_id",
+    "created_by_device_id",
+    "created_at",
+    "persona_schema_version",
+  ],
+  create_checkpoint: CHECKPOINT_METADATA,
+  patch_checkpoint: CHECKPOINT_METADATA,
+};
 
 export interface OperationTarget {
   space_id: SpaceId;
@@ -287,6 +379,8 @@ export interface OperationRequest {
   entity_type: EntityType;
   target: OperationTarget;
   worldline_key: string;
+  metadata_set: Record<string, MetadataValue>;
+  metadata_clear: string[];
   base_revision?: number;
   bubble_order?: number;
   set: Record<string, string>;
@@ -328,6 +422,12 @@ function assertCanonicalFieldPath(path: string): void {
     return;
   }
   if (!/^[a-z][a-z0-9_]*$/.test(path)) {
+    throw validationFailed();
+  }
+  if (Object.prototype.hasOwnProperty.call(METADATA_PARSERS, path)) {
+    // A plaintext metadata field never travels as ciphertext. Accepting it
+    // here would give one canonical fact two wire paths, one of which D1
+    // could not read.
     throw validationFailed();
   }
 }
@@ -438,6 +538,57 @@ function parseTarget(value: unknown, entityType: EntityType): OperationTarget {
   return target;
 }
 
+function parseMetadata(
+  setValue: unknown,
+  clearValue: unknown,
+  operation: OperationName,
+): { set: Record<string, MetadataValue>; clear: string[] } {
+  if (!isPlainObject(setValue) || !Array.isArray(clearValue)) {
+    // Both are mandatory and explicit: an absent key would be ambiguous
+    // between "no metadata change" and "old client".
+    throw validationFailed();
+  }
+  const allowed = new Set<string>(METADATA_ALLOWLIST[operation] ?? []);
+
+  const set: Record<string, MetadataValue> = {};
+  for (const [key, raw] of Object.entries(setValue)) {
+    if (!allowed.has(key)) {
+      throw validationFailed();
+    }
+    set[key] = METADATA_PARSERS[key as MetadataField](raw);
+  }
+
+  const clear: string[] = [];
+  const seen = new Set<string>();
+  for (const key of clearValue) {
+    if (typeof key !== "string" || !allowed.has(key) || seen.has(key)) {
+      throw validationFailed();
+    }
+    if (key in set) {
+      // The same field cannot be written and cleared by one operation.
+      throw validationFailed();
+    }
+    seen.add(key);
+    clear.push(key);
+  }
+
+  for (const [left, right] of METADATA_PAIRS) {
+    if (!allowed.has(left)) {
+      continue;
+    }
+    // A reference is meaningless as one half: an id without its revision no
+    // longer names an exact immutable row.
+    if (left in set !== right in set) {
+      throw validationFailed();
+    }
+    if (seen.has(left) !== seen.has(right)) {
+      throw validationFailed();
+    }
+  }
+
+  return { set, clear };
+}
+
 function parseSet(value: unknown): Record<string, string> {
   if (value === undefined) {
     throw validationFailed();
@@ -521,6 +672,7 @@ export function parseOperationRequest(value: unknown): OperationRequest {
     throw validationFailed();
   }
 
+  const metadata = parseMetadata(value["metadata_set"], value["metadata_clear"], operation);
   const parsedSet = parseSet(value["set"]);
   const parsedClear = parseClear(value["clear"], new Set(Object.keys(parsedSet)));
 
@@ -532,13 +684,27 @@ export function parseOperationRequest(value: unknown): OperationRequest {
     entity_type: spec.entityType,
     target,
     worldline_key: worldlineKey(target.worldline_id ?? null),
+    metadata_set: metadata.set,
+    metadata_clear: metadata.clear,
     set: parsedSet,
     clear: parsedClear,
     created_at: requireRfc3339Utc(value["created_at"]),
   };
 
-  if (PATCH_KINDS.has(spec.kind)) {
+  if (PATCH_KINDS.has(spec.kind) || operation === "create_persona_snapshot") {
     request.base_revision = requireSafeInteger(value["base_revision"]);
+    if (operation === "create_persona_snapshot") {
+      // The create carries the head CAS: it inserts an immutable revision and
+      // advances persona_snapshot_head in one M06 transaction. The head is 0
+      // before the first snapshot exists, so the chain is 0→1 and then always
+      // exactly one step (canonical schema §5.1).
+      if (request.base_revision < 0) {
+        throw validationFailed();
+      }
+      if (target.snapshot_revision !== request.base_revision + 1) {
+        throw validationFailed();
+      }
+    }
   } else if (value["base_revision"] !== undefined) {
     throw validationFailed();
   }

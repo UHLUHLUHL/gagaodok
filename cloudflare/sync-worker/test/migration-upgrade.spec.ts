@@ -292,6 +292,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0002_device_account_fk.sql",
       "0003_conversation_scope.sql",
       "0004_turn_bubble_extension.sql",
+      "0005_versioned_ai_state.sql",
     ]);
   });
 
@@ -321,9 +322,15 @@ describe("0002 starts enforcing the account reference", () => {
       "account",
       "bubble",
       "bubble_extension_field",
+      "checkpoint",
       "device",
+      "engine_profile",
       "group_state",
+      "persona_snapshot",
+      "persona_snapshot_extension_field",
+      "persona_snapshot_head",
       "room",
+      "room_ai_state_ref",
       "room_extension_field",
       "turn",
       "turn_extension_field",

@@ -61,6 +61,8 @@ function makeOperation(overrides: Record<string, unknown> = {}): Record<string, 
     base_revision: 41,
     set: { status_message: validEnvelope() },
     clear: [],
+    metadata_set: {},
+    metadata_clear: [],
     created_at: "2026-08-28T00:00:00Z",
     ...overrides,
   };
@@ -292,6 +294,189 @@ describe("parseOperationRequest — identity validation", () => {
     ).toThrowError("VALIDATION_FAILED");
     expect(() =>
       parseOperationRequest(makeOperation({ relationship_policy: "none" })),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+});
+
+describe("parseOperationRequest — plaintext metadata is separate from encrypted set", () => {
+  // API draft §4.1.0: `set`/`clear` carry encrypted envelopes and extension
+  // keys; the plaintext canonical metadata D1 has to check as identity, FK or
+  // range travels in `metadata_set`/`metadata_clear`.
+  const ENGINE_REF = {
+    engine_profile_id: ENGINE_PROFILE,
+    engine_profile_revision: 3,
+  };
+
+  it("requires both metadata fields to be present explicitly", () => {
+    for (const missing of ["metadata_set", "metadata_clear"]) {
+      const operation = makeOperation();
+      delete operation[missing];
+      expect(() => parseOperationRequest(operation)).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("accepts empty metadata and returns it as empty, not undefined", () => {
+    const parsed = parseOperationRequest(makeOperation());
+    expect(parsed.metadata_set).toEqual({});
+    expect(parsed.metadata_clear).toEqual([]);
+  });
+
+  it("accepts the room reference pair on patch_room", () => {
+    const parsed = parseOperationRequest(makeOperation({ metadata_set: ENGINE_REF }));
+    expect(parsed.metadata_set).toEqual(ENGINE_REF);
+    // The encrypted set is untouched by the metadata path.
+    expect(Object.keys(parsed.set)).toEqual(["status_message"]);
+  });
+
+  it("rejects an unknown metadata key", () => {
+    for (const key of ["room_id", "revision", "server_seq", "title", "engineProfileId"]) {
+      expect(() =>
+        parseOperationRequest(makeOperation({ metadata_set: { [key]: 1 } })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("rejects a metadata key on an operation that allows none", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op: "patch_turn",
+          entity_type: "turn",
+          target: { space_id: "MAC_SPACE", room_id: ROOM, worldline_id: null, turn_id: TURN },
+          metadata_set: ENGINE_REF,
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("rejects the same field in metadata_set and metadata_clear", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          metadata_set: ENGINE_REF,
+          metadata_clear: ["engine_profile_id"],
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("rejects a duplicate or unknown metadata_clear entry", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({ metadata_clear: ["engine_profile_id", "engine_profile_id"] }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(makeOperation({ metadata_clear: ["nonsense"] })),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("requires an id/revision pair to move together", () => {
+    for (const half of [
+      { engine_profile_id: ENGINE_PROFILE },
+      { engine_profile_revision: 3 },
+      { persona_snapshot_id: PERSONA_SNAPSHOT },
+      { persona_snapshot_revision: 2 },
+    ]) {
+      expect(() => parseOperationRequest(makeOperation({ metadata_set: half }))).toThrowError(
+        "VALIDATION_FAILED",
+      );
+    }
+    // Clearing is the same rule: a room never keeps half a reference.
+    expect(() =>
+      parseOperationRequest(makeOperation({ metadata_clear: ["engine_profile_id"] })),
+    ).toThrowError("VALIDATION_FAILED");
+    const parsed = parseOperationRequest(
+      makeOperation({ metadata_clear: ["engine_profile_id", "engine_profile_revision"] }),
+    );
+    expect(parsed.metadata_clear).toEqual([
+      "engine_profile_id",
+      "engine_profile_revision",
+    ]);
+  });
+
+  it("rejects a revision below 1 or not an integer", () => {
+    for (const bad of [0, -1, 1.5, "3", null]) {
+      expect(() =>
+        parseOperationRequest(
+          makeOperation({
+            metadata_set: { engine_profile_id: ENGINE_PROFILE, engine_profile_revision: bad },
+          }),
+        ),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("refuses a metadata field smuggled into the encrypted set", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({ set: { engine_profile_id: validEnvelope() } }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+});
+
+describe("parseOperationRequest — create_persona_snapshot head CAS", () => {
+  function snapshot(baseRevision: unknown, snapshotRevision: number): Record<string, unknown> {
+    return makeOperation({
+      op: "create_persona_snapshot",
+      entity_type: "persona_snapshot",
+      target: {
+        space_id: "PHONE_SPACE",
+        persona_snapshot_id: PERSONA_SNAPSHOT,
+        snapshot_revision: snapshotRevision,
+      },
+      base_revision: baseRevision,
+      set: { description: validEnvelope() },
+      metadata_set: {
+        owner_space_id: "PHONE_SPACE",
+        created_by_device_id: DEVICE,
+        created_at: "2026-08-28T00:00:00Z",
+        persona_schema_version: 1,
+      },
+    });
+  }
+
+  it("accepts the first snapshot as base 0 → revision 1", () => {
+    expect(parseOperationRequest(snapshot(0, 1)).base_revision).toBe(0);
+  });
+
+  it("accepts a later snapshot only as base + 1", () => {
+    expect(parseOperationRequest(snapshot(4, 5)).base_revision).toBe(4);
+    const mismatched: ReadonlyArray<readonly [number, number]> = [
+      [0, 2],
+      [4, 4],
+      [4, 6],
+      [5, 1],
+    ];
+    for (const [base, target] of mismatched) {
+      expect(() => parseOperationRequest(snapshot(base, target))).toThrowError(
+        "VALIDATION_FAILED",
+      );
+    }
+  });
+
+  it("requires base_revision even though it is a create", () => {
+    const operation = snapshot(0, 1);
+    delete operation.base_revision;
+    expect(() => parseOperationRequest(operation)).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("still refuses base_revision on the other create operations", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op: "create_engine_profile",
+          entity_type: "engine_profile",
+          target: {
+            space_id: "MAC_SPACE",
+            engine_profile_id: ENGINE_PROFILE,
+            profile_revision: 2,
+          },
+          base_revision: 1,
+          set: { mode: validEnvelope() },
+        }),
+      ),
     ).toThrowError("VALIDATION_FAILED");
   });
 });
@@ -543,7 +728,8 @@ describe("parseOperationRequest — op/entity_type/target identity binding", () 
         makeOperation({
           op: "create_persona_snapshot",
           entity_type: "persona_snapshot",
-          base_revision: undefined,
+          // The create now carries the head CAS: 0 → 1 for a first snapshot.
+          base_revision: 0,
           target: {
             space_id: "PHONE_SPACE",
             persona_snapshot_id: PERSONA_SNAPSHOT,
