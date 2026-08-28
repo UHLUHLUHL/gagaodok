@@ -283,20 +283,21 @@ describe("0002 starts enforcing the account reference", () => {
     expect(fks.results[0]?.on_update).toBe("RESTRICT");
   });
 
-  it("records both migrations in the ledger exactly once", async () => {
+  it("records every applied migration in the ledger exactly once", async () => {
     const rows = await db
       .prepare("SELECT name FROM d1_migrations ORDER BY name")
       .all<{ name: string }>();
     expect(rows.results.map((row) => row.name)).toEqual([
       "0001_account_device.sql",
       "0002_device_account_fk.sql",
+      "0003_conversation_scope.sql",
     ]);
   });
 
   it("is a no-op when applied again", async () => {
     await applyD1Migrations(db, env.TEST_MIGRATIONS);
     const rows = await db.prepare("SELECT count(*) AS n FROM d1_migrations").first<{ n: number }>();
-    expect(rows?.n).toBe(2);
+    expect(rows?.n).toBe(env.TEST_MIGRATIONS.length);
     // The rebuild must not have run twice and lost the rows.
     const devices = await db.prepare("SELECT count(*) AS n FROM device").first<{ n: number }>();
     expect(devices?.n).toBe(LEGACY_ROWS.length);
@@ -313,6 +314,14 @@ describe("0002 starts enforcing the account reference", () => {
           ORDER BY name`,
       )
       .all<{ name: string }>();
-    expect(rows.results.map((row) => row.name)).toEqual(["account", "device"]);
+    // The rebuild scaffolding table 0002 creates must be gone; the later
+    // conversation-scope tables are expected to be here.
+    expect(rows.results.map((row) => row.name)).toEqual([
+      "account",
+      "device",
+      "group_state",
+      "room",
+      "worldline",
+    ]);
   });
 });

@@ -116,7 +116,7 @@ describe("M00 — local migration harness", () => {
     expect(after?.n).toBe(before?.n);
   });
 
-  it("creates only the M01 tables, not later migrations' tables", async () => {
+  it("creates the tables of every applied stage and nothing later", async () => {
     const rows = await db
       .prepare(
         // `_cf_METADATA` is D1's own bookkeeping table and `d1_migrations`
@@ -130,9 +130,18 @@ describe("M00 — local migration harness", () => {
       )
       .all<{ name: string }>();
     const names = rows.results.map((row) => row.name);
-    expect(names).toEqual(["account", "device"]);
-    // Logical M02..M06 entities must not exist yet.
-    for (const later of ["room", "turn", "bubble", "attachment", "operation_log", "change_log"]) {
+    // M01 (0001, 0002) plus M02 (0003). The conversation-scope tables have
+    // their own contract file; this one only pins the set that exists.
+    expect(names).toEqual(["account", "device", "group_state", "room", "worldline"]);
+    // Logical M03..M06 entities must not exist yet.
+    for (const later of [
+      "turn",
+      "bubble",
+      "extension_field",
+      "attachment",
+      "operation_log",
+      "change_log",
+    ]) {
       expect(names).not.toContain(later);
     }
   });
