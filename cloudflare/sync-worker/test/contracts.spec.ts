@@ -851,9 +851,14 @@ describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () =
   // A null worldline_id is the room's default scope and stays legal in every
   // canonical space; a non-null one names a worldline row, which only
   // PHONE_SPACE can have. D1 states the same rule as a CHECK on `turn`.
-  const ROOM_SCOPED: ReadonlyArray<[string, string, Record<string, unknown>]> = [
+  const ROOM_ENTITY: ReadonlyArray<[string, string, Record<string, unknown>]> = [
     ["create_room", "room", {}],
     ["patch_room", "room", {}],
+  ];
+  // Entities that keep the `nullable` rule: a named worldline is a legal
+  // target axis for them on the phone. `room` is not one of them — its D1
+  // identity has no worldline column at all (see the null-only describe below).
+  const WORLDLINE_NULLABLE: ReadonlyArray<[string, string, Record<string, unknown>]> = [
     ["create_checkpoint", "checkpoint", { checkpoint_id: CHECKPOINT }],
     ["patch_checkpoint", "checkpoint", { checkpoint_id: CHECKPOINT }],
     ["create_turn", "turn", { turn_id: TURN }],
@@ -861,6 +866,7 @@ describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () =
     ["create_bubble", "bubble", { turn_id: TURN, message_id: MESSAGE }],
     ["patch_bubble", "bubble", { turn_id: TURN, message_id: MESSAGE }],
   ];
+  const ROOM_SCOPED = [...ROOM_ENTITY, ...WORLDLINE_NULLABLE];
 
   function build(
     op: string,
@@ -914,7 +920,7 @@ describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () =
     },
   );
 
-  it.each(ROOM_SCOPED)(
+  it.each(WORLDLINE_NULLABLE)(
     "accepts %s in PHONE_SPACE with a non-null worldline_id",
     (op, entityType, extra) => {
       const parsed = parseOperationRequest(build(op, entityType, extra, "PHONE_SPACE", WORLDLINE));
@@ -927,6 +933,57 @@ describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () =
     // delete_turn is refused by the runtime gate regardless; this pins that its
     // entity shape still treats worldline_id as nullable, not required.
     expect(getEntityShape("turn").worldlineRule).toBe("nullable");
+  });
+});
+
+describe("parseOperationRequest — room targets are worldline null-only", () => {
+  // A room's D1 identity is (account_id, space_id, room_id): there is no
+  // worldline axis. Accepting a non-null worldline_id would let one physical
+  // row be addressed two ways and would produce a change_log identity the
+  // 0008 room CHECK forbids (worldline_key must be NULL). This is the same
+  // ambiguity §4.1.2 closed for group_state, but room keeps the explicit
+  // `null` key so the wire shape and the §4.1 example stay unchanged.
+  function roomTarget(op: string, worldline: unknown, omit = false): Record<string, unknown> {
+    const target: Record<string, unknown> = { space_id: "PHONE_SPACE", room_id: ROOM };
+    if (!omit) {
+      target["worldline_id"] = worldline;
+    }
+    return makeOperation({
+      op,
+      entity_type: "room",
+      target,
+      base_revision: op === "patch_room" ? 41 : undefined,
+      set: { title: validEnvelope() },
+    });
+  }
+
+  it.each(["create_room", "patch_room"])("declares %s's entity shape as null-only", () => {
+    expect(getEntityShape("room").worldlineRule).toBe("null-only");
+  });
+
+  it.each(["create_room", "patch_room"])(
+    "rejects a non-null worldline_id on %s even in PHONE_SPACE",
+    (op) => {
+      expect(() => parseOperationRequest(roomTarget(op, WORLDLINE))).toThrowError("VALIDATION_FAILED");
+    },
+  );
+
+  it.each(["create_room", "patch_room"])("still requires the explicit key on %s", (op) => {
+    expect(() => parseOperationRequest(roomTarget(op, null, true))).toThrowError("VALIDATION_FAILED");
+  });
+
+  it.each(["create_room", "patch_room"])("still accepts an explicit null on %s", (op) => {
+    const parsed = parseOperationRequest(roomTarget(op, null));
+    expect(parsed.target.worldline_id).toBeNull();
+    expect(parsed.worldline_key).toBe("");
+  });
+
+  it("leaves the other worldline rules untouched", () => {
+    expect(getEntityShape("group_state").worldlineRule).toBe("absent");
+    expect(getEntityShape("worldline").worldlineRule).toBe("required");
+    for (const entity of ["checkpoint", "turn", "bubble"] as const) {
+      expect(getEntityShape(entity).worldlineRule).toBe("nullable");
+    }
   });
 });
 

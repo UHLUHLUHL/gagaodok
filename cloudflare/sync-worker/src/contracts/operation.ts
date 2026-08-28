@@ -55,6 +55,7 @@ type TargetFieldName =
 
 type WorldlineRule =
   | "nullable" // conversation-scope entities: null means the default worldline
+  | "null-only" // the key is required and must be null: room has no worldline axis
   | "required" // the target IS a specific worldline; null is meaningless here
   | "absent"; // the entity's D1 key has no worldline component at all
 
@@ -67,7 +68,12 @@ interface EntityShape {
 }
 
 const ENTITY_SHAPES = {
-  room: { required: ["room_id"], worldlineRule: "nullable", roomScoped: true },
+  // A room's D1 identity is (account_id, space_id, room_id) — no worldline
+  // column. The key stays on the wire so the shape matches the other
+  // room-scoped targets, but a non-null value would address one physical row
+  // two ways and could not be written to change_log, whose room branch
+  // requires worldline_key IS NULL (migration 0008).
+  room: { required: ["room_id"], worldlineRule: "null-only", roomScoped: true },
   persona_snapshot: {
     required: ["persona_snapshot_id", "snapshot_revision"],
     worldlineRule: "absent",
@@ -637,6 +643,9 @@ function parseTarget(value: unknown, entityType: EntityType): OperationTarget {
       throw validationFailed();
     }
     const worldlineId = requireNullableWorldlineId(value["worldline_id"]);
+    if (shape.worldlineRule === "null-only" && worldlineId !== null) {
+      throw validationFailed();
+    }
     if (shape.worldlineRule === "required" && worldlineId === null) {
       // A worldline operation addresses a specific worldline row; there is
       // no such thing as creating or patching "the null worldline".
