@@ -36,6 +36,10 @@ These rules add only Gagaodok-specific constraints to the global contract.
 
 - Treat commits and canonical `docs/` files as durable context. Handoffs should
   name commit hashes and decisions, not paste full reports or routine logs.
+- A migration stage spec must apply migrations only through its own physical
+  migration when it asserts an exact table, trigger, or ledger snapshot. A later
+  stage may update a shared latest-schema spec, but must not make an earlier
+  stage spec depend on migrations that did not exist at that stage.
 - After a committed handoff, recommend a new task at a clear phase or feature
   boundary when the old context is no longer useful.
 - Create a new review document only for a durable decision, blocker, or gate.

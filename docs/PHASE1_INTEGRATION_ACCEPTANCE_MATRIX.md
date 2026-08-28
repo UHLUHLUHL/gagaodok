@@ -55,7 +55,10 @@ flowchart TB
 | E2EE key·AAD·pairing 계약 | [E2EE 제안서](2026-08-27-sync-encryption-proposal.md), vector test | ✅ | Worker pairing endpoint test |
 | canonical field ownership·extension | canonical schema, Python contract fixture | ✅ | D1 field·extension row 구현 |
 | Worker health·기본 boundary | `2fa06b3`의 local Worker 71 tests | ✅ | D1 연결 뒤 health 회귀 test |
-| operation target·field envelope 검사 | [Worker validator 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md) | 🟡 | group-state scope·canonical Base64·table export 보정 |
+| operation target·field envelope 검사 | `e83bce1`, [Worker validator 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md) | ✅ | handler가 exported operation table 재사용 |
+| M00~M02 local D1 schema | `def5260`, `515c036`, `381000f` | ✅ | M03 owner별 extension table 구현 |
+| M03 turn·bubble·extension schema | `8bd7f68`, `6bffb35` | ✅ | M04 versioned AI state preflight |
+| M04 versioned AI state contract | `3c462b5` 0005 DDL·immutable trigger·local fixture | 🟡 | metadata create/patch allowlist 보정 후 최종 승인 |
 | D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md) | 🟡 | migration + local D1 batch test |
 | R2 attachment state machine | Worker API 초안 | 🟡 | encrypted size·local R2 test |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
@@ -72,20 +75,22 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] operation별 `op`·`entity_type`·target ID·revision 규칙을 table-driven validator로 고정
 - [x] 초기 runtime에서 `delete_turn`·`delete_bubble` 거부
 - [x] 평문 top-level `relationship_policy` 제거
-- [ ] canonical Base64를 decode→re-encode equality까지 검사
+- [x] canonical Base64를 decode→re-encode equality까지 검사 (`e83bce1`)
 - [x] 실제 RFC 3339 UTC 날짜·시간 값 검사
 - [x] 기존 health·content-free error·배포 방지 test 유지
-- [ ] `group_state` target에서 `worldline_id`를 금지
-- [ ] 후속 handler가 operation table을 복제하지 않도록 read-only 재사용 경로 제공
+- [x] `group_state` target에서 `worldline_id`를 금지 (`e83bce1`)
+- [x] 후속 handler가 operation table을 복제하지 않도록 read-only 재사용 경로 제공 (`e83bce1`)
 
 ### D1 persistence boundary
 
-- [ ] migration 순서와 table별 primary·unique·`CHECK` contract 확정
-- [ ] `worldline_key = COALESCE(worldline_id, '')` 일치 test
+- [x] M00 harness와 M01 account/device·FK local migration (`def5260`, `515c036`)
+- [x] M02 room·group_state·worldline primary·FK·`CHECK` contract (`381000f`)
+- [x] `worldline_key = COALESCE(worldline_id, '')` 일치 test (`381000f`)
 - [ ] tombstone 행이 identity·`bubble_order`를 계속 보존하는 test
 - [ ] CAS failure가 canonical row·sequence·operation/change log 전체를 rollback하는 test
 - [ ] idempotent replay가 sequence를 추가 소비하지 않는 test
-- [ ] tenant/account 경계와 attachment state transition test
+- [x] M01·M02 tenant/account 경계를 D1 FK로 강제
+- [ ] attachment state transition test
 
 ### Integration evidence
 
@@ -105,11 +110,11 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 | 담당 | 현재 소유 범위 | 완료 산출물 |
 | --- | --- | --- |
-| Claude Code | `cloudflare/sync-worker/`, Worker API operation shape, relationship policy 경계, `.gitignore`의 `node_modules/` | validator 보정 커밋과 local test 결과 |
-| Codex | 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), 통합 판정 | D1 구현 선행 조건·acceptance 기준·다음 작업 분배 |
+| Claude Code | `cloudflare/sync-worker/`의 M03 migration·focused test | turn·bubble·owner별 extension table schema 커밋 |
+| Codex | canonical schema, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test, 통합 판정 | owner-table 결정 유지·M03 commit 위험 검토 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-Claude Code의 다음 커밋이 도착하면 Codex는 이 표의 🔴·🟡 항목을 다시 대조하고, 통과한 것만 ✅로 바꾼다.
+Claude Code의 preflight blocker에 따라 Codex는 논리 `extension_field`를 owner별 물리 table로 분리했고 `6bffb35`에서 owner 종속 metadata와 named-worldline PHONE-only 경계를 보정했다. M03은 승인됐으며 다음 gate는 M04 immutable revision·head/checkpoint CAS·room reference migration 순서다.
 
 ## 🔗 관련 문서
 

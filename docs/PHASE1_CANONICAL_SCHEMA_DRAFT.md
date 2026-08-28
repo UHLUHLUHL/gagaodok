@@ -159,8 +159,8 @@ E2EE AAD에는 이 값을 UInt64BE로 인코딩하지만 v1의 유효 범위는 
 | `title` | 🔒 canonical | 방 이름 |
 | `status_message` | 🔒 canonical | |
 | `music_title`, `music_artist` | 🔒 canonical | |
-| `engine_profile` | canonical (§4) | |
-| `persona_snapshot_ref` | canonical (§5) | |
+| `engine_profile_ref` | ⬜ canonical metadata (§4) | exact immutable revision reference |
+| `persona_snapshot_ref` | ⬜ canonical metadata (§5) | exact immutable revision reference |
 | `avatar_ref` | canonical (§7) | R2 참조 |
 | `revision` | ⬜ canonical | CAS |
 | `unread_count`, `is_unread` | **local-only** | 기기별 상태 |
@@ -216,6 +216,22 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 `extensions`는 **다른 플랫폼이 모르는 필드를 그대로 보존하는 자리**다. 키는 소유 플랫폼을 접두사로 붙여 충돌을 막는다.
 
 **통합 결정:** extension key는 `<owner>.<entity>.<field>` 형식의 소문자 dotted namespace를 쓴다. 각 segment는 `[a-z][a-z0-9_]*`이며 예시는 `android.room_profile.base_affection`이다. 값은 **key마다 별도 봉투로 암호화**하고 patch도 key 단위로 수행한다. 서버와 모르는 클라이언트는 key와 암호문 byte를 해석하지 않고 그대로 보존한다. extension 전체를 한 봉투로 묶어 known key 하나를 고칠 때 unknown key까지 재암호화하는 방식은 금지한다.
+
+**2026-08-28 확정 — 논리 entity와 D1 물리 table.** `extension_field`는 모든 owner에 공통인 **논리적 family 이름**이며, D1에서 서로 다른 owner identity를 nullable column과 polymorphic FK로 한 table에 억지로 합치지 않는다. owner마다 자신의 실제 primary key를 그대로 앞에 둔 물리 table을 사용한다.
+
+| 논리 owner | D1 물리 table | Primary key와 parent 경계 | 단계 |
+| --- | --- | --- | --- |
+| `room` | `room_extension_field` | `(account_id, space_id, room_id, extension_key)`; 같은 key의 `room` FK | M03 |
+| `turn` | `turn_extension_field` | `(account_id, space_id, room_id, worldline_key, turn_id, extension_key)`; 같은 key의 `turn` FK | M03 |
+| `bubble` | `bubble_extension_field` | `(account_id, space_id, room_id, worldline_key, turn_id, message_id, extension_key)`; 같은 key의 `bubble` FK | M03 |
+| `persona_snapshot` | `persona_snapshot_extension_field` | persona snapshot의 실제 revision identity + `extension_key`; 같은 owner FK | M04 |
+
+- M03의 owner set은 그 시점에 존재하는 `room`·`turn`·`bubble` 세 종류다.
+- 각 물리 table은 `owner_type`, serialized `owner_key`, JSON identity blob, sentinel UUID를 두지 않는다. table 자체가 owner type이고 composite FK가 tenant·scope·owner 존재를 실제로 강제한다.
+- 각 extension row는 owner identity·`extension_key`·opaque envelope만 가진다. 독립 `revision`·`server_seq`·`updated_at`을 두지 않으며 owner row가 CAS와 ordering의 유일한 source다.
+- envelope column은 owner patch에 포함된 key 하나의 opaque 값을 그대로 저장한다. extension 전용 operation을 만들지 않으며 handler는 검증된 owning operation에서 어느 table을 쓸지 결정한다.
+- `clear`의 row 삭제와 patch 원자성은 handler 단계다. DDL trigger가 ciphertext를 해석하거나 extension 의미를 추론하지 않는다.
+- 향후 새 canonical owner가 extension을 필요로 하면 기존 table을 nullable axis로 rebuild하지 않고 해당 owner 전용 table을 그 owner의 migration 단계에 추가한다.
 
 ### 3.4 Turn과 bubble canonical 필드
 
@@ -283,6 +299,17 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 
 **통합 결정:** `engine_profile`은 별도 versioned entity로 두고 room은 `(engine_profile_id, profile_revision)`을 정확히 참조한다. profile revision은 immutable이다. 변경은 기존 행을 덮어쓰지 않고 새 revision을 만든 뒤, 대상 room의 reference를 field patch로 바꾼다. 여러 room이 같은 revision을 참조할 수 있지만 한 room의 변경이 다른 room에 암묵적으로 전파되어서는 안 된다.
 
+**2026-08-28 확정 — revision과 room reference의 물리 경계.** `profile_revision`은 `1...2^53-1`이며 engine profile row는 D1 `UPDATE`를 거부하는 immutable revision이다. 별도 engine head table은 두지 않는다. Room의 engine/persona reference는 서버가 exact-revision FK를 검사해야 하므로 암호문이 아니라 평문 canonical metadata다. D1은 기존 room과 child graph를 rebuild하지 않고 다음 1:1 table로 정규화한다.
+
+```text
+room_ai_state_ref PK/FK = (account_id, space_id, room_id)
+```
+
+- engine pair는 `(engine_profile_id, engine_profile_revision)` 둘 다 null 또는 둘 다 non-null이고, non-null이면 같은 account/space의 exact engine revision을 FK로 참조한다.
+- persona pair도 `(persona_snapshot_id, persona_snapshot_revision)` 둘 다 null 또는 둘 다 non-null이고, 같은 account/space의 exact snapshot revision을 FK로 참조한다.
+- 두 pair가 모두 null이면 row를 삭제해도 되며, M06 handler는 room revision CAS와 reference row 변경을 같은 batch에 넣는다.
+- 이것은 logical room object를 D1에서 두 행으로 정규화한 표현일 뿐 wire projection에서는 room reference로 합쳐서 내려준다.
+
 **통합 결정:** v1에서 `relationship_policy = group`은 `PHONE_SPACE`에만 허용한다. 이는 group/worldline과 하트가 PHONE_SPACE 백업 안에만 존재한다는 사용자 결정 4·9의 경계다.
 
 **2026-08-28 검사 경계 보정(Claude Code):** `relationship_policy`는 §4 표에서 이미 🔒(암호화 대상)이므로 **Worker가 이 값 자체를 읽거나 검사할 수 없다.** "Worker와 client 양쪽에서 거부한다"는 이전 표현은 두 계층이 같은 것을 검사한다고 오해할 수 있어 다음으로 나눈다.
@@ -315,6 +342,13 @@ persona_snapshot_identity = (account_id, space_id, persona_snapshot_id, snapshot
 2. room profile은 AI request에 실제로 쓴 `persona_snapshot_id`와 `snapshot_revision`을 정확히 참조한다.
 3. **write 권한은 `owner_space_id`가 결정한다.** `created_by_device_id`는 provenance이며 단독 권한 근거가 아니다.
 4. **다른 플랫폼이 모르는 extension은 서버가 보존하며, 공통 필드 patch가 이를 삭제하면 안 된다.**
+
+**2026-08-28 확정 — snapshot/head CAS.** `snapshot_revision`은 `1...2^53-1`이고 immutable snapshot row는 D1 `UPDATE`를 거부한다. v1에서 `owner_space_id = space_id`를 강제하며 다른 space가 소유하는 snapshot은 만들지 않는다. `persona_snapshot_head`는 `(account_id, space_id, persona_snapshot_id)` 하나에 `current_snapshot_revision`만 저장하고 이것이 head CAS version을 겸한다.
+
+- 최초 `create_persona_snapshot`은 `base_revision = 0`, `snapshot_revision = 1`이어야 하며 immutable row와 head를 함께 만든다.
+- 후속 생성은 `base_revision = 현재 current_snapshot_revision`, `snapshot_revision = base_revision + 1`이어야 하며 새 immutable row 삽입과 head 전진을 같은 M06 transaction에서 수행한다.
+- 별도 mutable `head_revision`을 두지 않는다. idempotency와 concurrent create rollback은 M06 operation ledger가 담당한다.
+- `persona_snapshot_extension_field`는 snapshot exact revision을 owner로 하며 owner identity·key·envelope만 가진다.
 
 Android `PersonaStyle`의 저장 필드는 `description`·`samples`·`styleGuide`·`isEnabled`·`suppressedExpressions`·`sampleEvidence` 여섯 개다. 앞 넷은 canonical 공통 필드, 뒤 둘은 extension으로 옮긴다.
 
@@ -361,6 +395,12 @@ checkpoint_identity = (account_id, conversation_scope, checkpoint_id)
 | Compatibility | ⬜ `checkpoint_schema_version`, 🔒 `compaction_profile_id`, 🔒 `compaction_contract_fingerprint`, ⬜ `compaction_compat_tag` |
 | Provenance | ⬜ `owner_space_id`, ⬜ `created_by_device_id`, ⬜ `created_at` |
 | Concurrency | ⬜ `revision`, 갱신 요청의 `base_revision` |
+
+Checkpoint는 turn·bubble과 같은 conversation scope 규칙을 쓴다. 따라서 `worldline_id = null`인 default checkpoint는 세 canonical space에서 허용하지만, non-null named-worldline checkpoint는 `PHONE_SPACE`에서만 허용한다. Worker의 공통 room-scoped target validator와 D1 checkpoint CHECK가 같은 규칙을 강제해야 한다.
+
+`first_turn_id`와 `last_turn_id`는 둘 다 null이거나 둘 다 non-null이다. non-null이면 checkpoint와 같은 scope의 turn을 각각 composite FK로 참조한다. `through_server_seq`는 M06 전에는 null을 허용하고, 값이 있으면 `1...2^53-1`이다. legacy unversioned digest도 같은 table을 쓰며 null range/sequence를 허용한다. checkpoint `revision`은 0부터 시작하는 mutable CAS version이고 create는 base revision 없이 revision 0을 만들며 patch가 현재 revision과 `base_revision`을 비교한다.
+
+`owner_space_id = space_id`를 v1에서 강제하고 `created_by_device_id`는 같은 account의 device provenance로 저장한다. generation authority의 실제 write 허용 판정은 handler 책임이다.
 
 ### 6.1 generation authority 규칙
 
@@ -674,6 +714,13 @@ Phase 0 실측도 이와 일치한다. 단톡방·worldline은 `PHONE_SPACE`에�
 
 `worldline` entity는 반대다. target이 세계선 행 자신을 가리키므로 `worldline_id`가 필수이고 `null`일 수 없다.
 
+**2026-08-28 확정 — named worldline의 space 경계.** conversation scope의 `worldline_id = null`은 기본 scope이므로 `MAC_SPACE`·`PHONE_SPACE`·`TABLET_SPACE`에서 모두 허용한다. 반면 non-null `worldline_id`는 phone 전용 worldline을 가리키므로 `PHONE_SPACE`에서만 허용한다.
+
+- Worker는 room-scoped target의 평문 `space_id`와 nullable `worldline_id`를 함께 검사해 MAC/TABLET의 named scope를 거부한다.
+- D1 `turn`은 `CHECK (worldline_id IS NULL OR space_id = 'PHONE_SPACE')`와 `worldline_key = COALESCE(worldline_id, '')`를 함께 강제한다.
+- bubble은 parent turn FK의 `worldline_key`를 따르며 nullable ID를 중복 저장하지 않는다.
+- default scope에는 대응하는 `worldline` row가 없으므로 turn이 worldline table을 직접 FK로 참조하지 않는다.
+
 ---
 
 ## 12. 결정적인 legacy `turn_id`
@@ -780,7 +827,10 @@ Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId
 | `persona_snapshot_head` | `(account_id, space_id, persona_snapshot_id)` | — | 현재 revision을 CAS로 전진 |
 | `engine_profile` | `(account_id, space_id, engine_profile_id, profile_revision)` | — | immutable revision 행 |
 | `checkpoint` | `(…scope key…, checkpoint_id)` | — | mutable revision은 CAS |
-| `extension_field` | `(…owner identity…, extension_key)` | — | key별 암호문 봉투 |
+| `room_extension_field` | `(account_id, space_id, room_id, extension_key)` | — | 논리 `extension_field` family; room FK |
+| `turn_extension_field` | `(…scope key…, turn_id, extension_key)` | — | 논리 `extension_field` family; turn FK |
+| `bubble_extension_field` | `(…scope key…, turn_id, message_id, extension_key)` | — | 논리 `extension_field` family; bubble FK |
+| `persona_snapshot_extension_field` | `(account_id, space_id, persona_snapshot_id, snapshot_revision, extension_key)` | — | M04에서 owner와 함께 추가 |
 | `attachment` | `(account_id, attachment_id)` | `(account_id, r2_object_key)` | |
 | `operation_log` | `(account_id, operation_id)` | — | idempotency |
 | `change_log` | `(account_id, server_seq)` | — | account cursor |

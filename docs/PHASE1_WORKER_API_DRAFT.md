@@ -149,6 +149,8 @@ operation 하나를 적용한다.
     "worldline_id": null
   },
   "base_revision": 41,
+  "metadata_set": {},
+  "metadata_clear": [],
   "set": {
     "status_message": "BASE64_ENVELOPE"
   },
@@ -174,6 +176,30 @@ operation 하나를 적용한다.
 
 같은 `operation_id`와 같은 request fingerprint면 `status = replayed`와 최초 결과를 돌려준다. fingerprint는 **검증 전에 받은 HTTP request body 원본 bytes**의 SHA-256이다. retry는 outbox에 보관한 동일 bytes를 다시 보내야 하며, 의미가 같더라도 JSON을 다시 직렬화해 bytes가 달라지면 replay mismatch다. 같은 ID에 fingerprint가 다르면 `OPERATION_REPLAY_MISMATCH`다.
 
+### 4.1.0 encrypted field와 plaintext metadata patch
+
+`set`·`clear`는 encrypted field와 extension envelope에만 사용한다. D1이 identity·FK·ordering을 검사해야 하는 평문 canonical metadata는 별도 `metadata_set`·`metadata_clear`를 사용한다.
+
+- 두 object/list는 모든 operation에 명시적으로 존재하며 사용하지 않을 때 각각 `{}`·`[]`다.
+- Worker는 entity·operation별 metadata key allowlist와 value type/range를 검사한다. unknown key, 중복 clear, set/clear 동시 지정은 fail-closed다.
+- create operation의 `metadata_clear`는 항상 빈 배열이어야 한다. 아직 존재하지 않는 row의 metadata를 clear하는 의미를 만들지 않는다.
+- ID/revision pair와 checkpoint range pair는 함께 set하거나 함께 clear해야 한다.
+- metadata는 로그에 값을 출력하지 않는다. raw-body fingerprint는 metadata를 포함한 최초 request bytes 전체에 대해 계산한다.
+
+M04 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create request의 `metadata_set`에 반드시 있어야 하고, `선택 set`은 생략할 수 있다. 표에 없는 key는 허용하지 않는다.
+
+| operation | 필수 `metadata_set` | 선택 `metadata_set` | 허용 `metadata_clear` |
+| --- | --- | --- | --- |
+| `patch_room` | 없음 | `engine_profile_id` + `engine_profile_revision`; `persona_snapshot_id` + `persona_snapshot_revision` | 같은 두 pair만 pair 단위로 허용 |
+| `create_engine_profile` | 없음 | `compaction_compat_tag` | 없음 (`[]`만 허용) |
+| `create_persona_snapshot` | `owner_space_id`, `created_by_device_id`, `created_at`, `persona_schema_version` | 없음 | 없음 (`[]`만 허용) |
+| `create_checkpoint` | `checkpoint_schema_version`, `owner_space_id`, `created_by_device_id`, `created_at` | `first_turn_id` + `last_turn_id`; `through_server_seq`; `compaction_compat_tag` | 없음 (`[]`만 허용) |
+| `patch_checkpoint` | 없음 | `first_turn_id` + `last_turn_id`; `through_server_seq`; `checkpoint_schema_version`; `compaction_compat_tag` | 같은 optional fields만 허용하며 range는 pair 단위 |
+
+`owner_space_id`·`created_by_device_id`·`created_at`은 생성 provenance이므로 `patch_checkpoint`가 바꾸거나 지우지 못한다. encrypted segments·summary·profile/fingerprint는 계속 `set`·`clear`를 사용한다. `create_persona_snapshot`은 위 필수 metadata와 `base_revision`을 받고, 최초 `(base=0,target=1)` 또는 연속 `(target=base+1)`만 허용한다.
+
+`compaction_compat_tag`는 문법을 해석하지 않는 opaque plaintext equality tag이며 UTF-16 code unit 기준 1~256자의 문자열만 받는다. 이 길이 제한은 transport/validator 경계일 뿐 hash·encoding 형식을 뜻하지 않는다.
+
 ### 4.1.1 operation별 identity shape (2026-08-28, Claude Code 보정)
 
 `entity_type`은 자유 문자열이 아니라 `op`이 정확히 하나로 결정하는 값이다. `target`이 가질 수 있는 필드도 entity마다 다르며, 다른 entity의 ID가 섞이면 거부한다. 이 표가 `cloudflare/sync-worker/src/contracts/operation.ts`의 `OPERATION_SPECS`·`ENTITY_SHAPES`와 **정확히 같은 내용의 단일 source**다. 코드가 검증 구현이고 이 표는 그 구현이 따르는 계약이다.
@@ -182,7 +208,7 @@ operation 하나를 적용한다.
 | --- | --- | --- | --- | --- | --- |
 | `create_room` | `room` | create | `room_id` | nullable | |
 | `patch_room` | `room` | patch | `room_id` | nullable | `base_revision` 필수 |
-| `create_persona_snapshot` | `persona_snapshot` | create | `persona_snapshot_id`, `snapshot_revision` | **없음** | `room_id` 금지. identity가 `(account_id, space_id, persona_snapshot_id, snapshot_revision)`이라 room에 종속되지 않는다 |
+| `create_persona_snapshot` | `persona_snapshot` | create+head CAS | `persona_snapshot_id`, `snapshot_revision` | **없음** | `room_id` 금지. `base_revision` 필수; 최초 0→1 또는 target=base+1 |
 | `create_engine_profile` | `engine_profile` | create | `engine_profile_id`, `profile_revision` | **없음** | `room_id` 금지. identity가 `(account_id, space_id, engine_profile_id, profile_revision)`이다 |
 | `create_checkpoint` | `checkpoint` | create | `room_id`, `checkpoint_id` | nullable | |
 | `patch_checkpoint` | `checkpoint` | patch | `room_id`, `checkpoint_id` | nullable | `base_revision` 필수 (연장 CAS) |
