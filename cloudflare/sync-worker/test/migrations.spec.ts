@@ -130,14 +130,25 @@ describe("M00 — local migration harness", () => {
       )
       .all<{ name: string }>();
     const names = rows.results.map((row) => row.name);
-    // M01 (0001, 0002) plus M02 (0003). The conversation-scope tables have
-    // their own contract file; this one only pins the set that exists.
-    expect(names).toEqual(["account", "device", "group_state", "room", "worldline"]);
-    // Logical M03..M06 entities must not exist yet.
-    for (const later of [
-      "turn",
+    // M01 (0001, 0002), M02 (0003) and M03 (0004). Each stage has its own
+    // contract file; this one only pins the set of tables that exists.
+    expect(names).toEqual([
+      "account",
       "bubble",
-      "extension_field",
+      "bubble_extension_field",
+      "device",
+      "group_state",
+      "room",
+      "room_extension_field",
+      "turn",
+      "turn_extension_field",
+      "worldline",
+    ]);
+    // Logical M04..M06 entities must not exist yet.
+    for (const later of [
+      "engine_profile",
+      "persona_snapshot",
+      "checkpoint",
       "attachment",
       "operation_log",
       "change_log",

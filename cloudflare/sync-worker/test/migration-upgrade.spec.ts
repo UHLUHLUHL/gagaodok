@@ -291,6 +291,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0001_account_device.sql",
       "0002_device_account_fk.sql",
       "0003_conversation_scope.sql",
+      "0004_turn_bubble_extension.sql",
     ]);
   });
 
@@ -318,9 +319,14 @@ describe("0002 starts enforcing the account reference", () => {
     // conversation-scope tables are expected to be here.
     expect(rows.results.map((row) => row.name)).toEqual([
       "account",
+      "bubble",
+      "bubble_extension_field",
       "device",
       "group_state",
       "room",
+      "room_extension_field",
+      "turn",
+      "turn_extension_field",
       "worldline",
     ]);
   });
