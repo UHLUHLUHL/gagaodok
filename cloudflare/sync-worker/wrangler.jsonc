@@ -17,7 +17,11 @@
     {
       "binding": "DB",
       "database_name": "gagaodok-sync-local",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Local-only. `wrangler d1 migrations apply --remote` is never run;
+      // the test harness reads this directory with readD1Migrations() and
+      // applies it to the local Miniflare database.
+      "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
