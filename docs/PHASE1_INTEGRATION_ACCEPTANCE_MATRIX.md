@@ -62,7 +62,8 @@ flowchart TB
 | M05 attachment persistence | `5299b27` DDL·validator·bubble FK rebuild, Codex focused 50 tests 중 M05 포함 | ✅ | M06 ledger 뒤 local R2 endpoint |
 | Device token auth boundary | `fa49ed1` canonical token/hash/revoked local boundary, Codex focused auth review | ✅ | M06 handler·attachment route에 연결 |
 | M06 ledger DDL | `d33ee67`, `4a8bf26`; Codex focused 45 tests | ✅ | operation handler atomic batch |
-| D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md), `0008` ledger | 🟡 | auth·replay·CAS handler test |
+| patch_room atomic handler | `8d7a8fd`, `f712c8e`; Codex focused 202 tests | ✅ | create_room과 나머지 operation family 확장 |
+| D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md), `0008` ledger, patch_room first slice | 🟡 | 모든 runtime-enabled operation dispatch |
 | R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약, `5299b27` persistence | 🟡 | M06 ledger 뒤 local R2 state transition test |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
@@ -97,6 +98,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] M01·M02 tenant/account 경계를 D1 FK로 강제
 - [x] M05 attachment DDL·bubble account-scoped FK rebuild (`5299b27`)
 - [x] M06 account sequence·operation/change ledger·transaction guard DDL (`4a8bf26`)
+- [x] patch_room CAS failure·replay·revoked write의 전체 rollback (`f712c8e`)
 - [ ] attachment state transition test
 
 ### Integration evidence
@@ -117,11 +119,11 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 | 담당 | 현재 소유 범위 | 완료 산출물 |
 | --- | --- | --- |
-| Claude Code | `cloudflare/sync-worker/`의 M06 operation handler read-only preflight | transaction architecture·첫 vertical slice 경계 |
-| Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | replay·CAS·revoked atomic scenario와 통합 판정 |
+| Claude Code | `cloudflare/sync-worker/`의 runtime operation transaction service | entity family별 atomic handler와 focused tests |
+| Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M05, device token 인증 경계, M06 ledger DDL은 승인됐다. 다음 gate는 operation handler가 인증·raw-body fingerprint·replay·CAS·canonical mutation·sequence·두 ledger·guard cleanup을 한 atomic batch로 묶는 local 증거다. R2 endpoint의 실제 상태 전이와 orphan 처리는 이 write 경계 뒤 검증한다.
+M03~M05, device token 인증, M06 ledger DDL과 patch_room first slice는 승인됐다. HTTP route는 runtime-enabled operation 대부분을 거부하는 반쪽 endpoint로 먼저 열지 않는다. `create_room`부터 entity family별 transaction service를 확장하고 공용 dispatch가 계약과 일치한 뒤 §2.2 response envelope를 연결한다.
 
 ## 🔗 관련 문서
 

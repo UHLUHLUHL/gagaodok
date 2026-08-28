@@ -27,7 +27,8 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M05 persistence | `5299b27` attachment DDL·validator·bubble FK rebuild | 완료 |
 | device auth boundary | `fa49ed1` canonical token hash lookup·revoked 거부 | 완료; route 연결은 M06 이후 |
 | M06 ledger persistence | `4a8bf26` account sequence·operation/change log·guard | 완료 |
-| M06 operation handler | 미구현 | transaction preflight 대기 |
+| M06 patch_room handler | `8d7a8fd`, `f712c8e` auth·replay·CAS·atomic batch | 완료 |
+| M06 remaining handlers | create_room 포함 runtime operation family | 구현 대기 |
 | local R2 attachment flow | source 12,582,912 / binary ciphertext 12,582,946 계약·합성 metadata fixture | M06 ledger·endpoint 대기 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 
