@@ -1,6 +1,9 @@
 package com.sapiens.gagaodok.ui.screens
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
@@ -79,11 +82,13 @@ import androidx.compose.ui.window.PopupProperties
 import com.sapiens.gagaodok.ui.clickableNoRipple
 import com.sapiens.gagaodok.model.AttachmentType
 import com.sapiens.gagaodok.model.ChatAttachment
+import com.sapiens.gagaodok.service.ExifOrientation
 import com.sapiens.gagaodok.service.ImageBudget
 import com.sapiens.gagaodok.ui.Metrics
 import com.sapiens.gagaodok.ui.components.Hairline
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import android.provider.OpenableColumns
 import java.util.Locale
@@ -616,16 +621,38 @@ internal fun readAttachment(context: android.content.Context, uri: Uri): ChatAtt
     // 아무 크기로나 줄이면 한 푼도 못 아낍니다(`ImageBudget` 설명).
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    val target = ImageBudget.plan(bounds.outWidth, bounds.outHeight)
+    val orientation = runCatching {
+        ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.ORIENTATION_NORMAL
+        )
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+    val transform = ExifOrientation.transform(orientation)
+    val orientedSize = transform.orientedSize(bounds.outWidth, bounds.outHeight)
+    val target = ImageBudget.plan(orientedSize.width, orientedSize.height)
+    val decodeTarget = if (transform.rotationDegrees == 90 || transform.rotationDegrees == 270) {
+        ImageBudget.Plan(target.height, target.width, target.tiles)
+    } else {
+        target
+    }
 
     // 통째로 펼치지 않고 목표에 가깝게 읽습니다. 1200만 화소면 48MB입니다.
     val options = BitmapFactory.Options().apply {
-        inSampleSize = ImageBudget.sampleSize(bounds.outWidth, bounds.outHeight, target)
+        inSampleSize = ImageBudget.sampleSize(bounds.outWidth, bounds.outHeight, decodeTarget)
     }
     val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return null
-    val scaled = if (decoded.width > target.width || decoded.height > target.height) {
-        android.graphics.Bitmap.createScaledBitmap(decoded, target.width, target.height, true)
-    } else decoded
+    val oriented = if (transform.rotationDegrees != 0 || transform.flipHorizontal) {
+        val matrix = Matrix().apply {
+            if (transform.flipHorizontal) setScale(-1f, 1f)
+            if (transform.rotationDegrees != 0) postRotate(transform.rotationDegrees.toFloat())
+        }
+        Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+    } else {
+        decoded
+    }
+    val scaled = if (oriented.width > target.width || oriented.height > target.height) {
+        Bitmap.createScaledBitmap(oriented, target.width, target.height, true)
+    } else oriented
 
     val stream = ByteArrayOutputStream()
     scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, stream)
