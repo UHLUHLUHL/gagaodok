@@ -103,36 +103,73 @@ export function requireRfc3339Utc(value: unknown): string {
   return value;
 }
 
-/** Standard padded Base64 charset+padding shape (canonical form only). */
+/** Standard padded Base64 charset+padding shape. Necessary, not sufficient. */
 const CANONICAL_BASE64_PATTERN =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
 
-export function isCanonicalBase64(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length % 4 === 0 &&
-    CANONICAL_BASE64_PATTERN.test(value)
-  );
-}
-
 /**
- * Decode canonical Base64 to raw bytes using the Workers-global `atob`.
- * Callers must confirm `isCanonicalBase64()` first; a non-canonical string
- * can still make `atob` throw, which this turns into `ApiError`.
+ * Decode a Base64 string to raw bytes with the Workers-global `atob`.
+ * Internal: the shape check must already have passed.
  */
-export function decodeCanonicalBase64(value: string): Uint8Array {
-  let binary: string;
-  try {
-    binary = atob(value);
-  } catch {
-    throw validationFailed();
-  }
+function decodeToBytes(value: string): Uint8Array {
+  const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+/** Re-encode raw bytes with the standard padded Base64 encoder. */
+function encodeFromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+/**
+ * True only for the single canonical padded-Base64 spelling of some bytes.
+ *
+ * The charset/padding regex alone is not enough. In a final quantum the bits
+ * that fall past the encoded bytes are discarded on decode, so several
+ * distinct strings decode to the same value — `"QQ=="` and `"QR=="` both
+ * decode to `0x41`. Accepting both would break the "canonical wire
+ * representation" contract and, more concretely, the operation replay
+ * fingerprint: two byte-different bodies would carry identical ciphertext.
+ *
+ * So after the shape check this decodes and re-encodes with the standard
+ * encoder and requires byte-for-byte equality with the input. Only the
+ * spelling the encoder itself produces survives.
+ */
+export function isCanonicalBase64(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length % 4 !== 0 ||
+    !CANONICAL_BASE64_PATTERN.test(value)
+  ) {
+    return false;
+  }
+  try {
+    return encodeFromBytes(decodeToBytes(value)) === value;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decode canonical Base64 to raw bytes.
+ * Callers must confirm `isCanonicalBase64()` first; anything `atob` rejects
+ * is turned into `ApiError` rather than escaping as a runtime error.
+ */
+export function decodeCanonicalBase64(value: string): Uint8Array {
+  try {
+    return decodeToBytes(value);
+  } catch {
+    throw validationFailed();
+  }
 }
 
 /**

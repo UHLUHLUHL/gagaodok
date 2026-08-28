@@ -5,6 +5,10 @@ import {
   RUNTIME_ENABLED_OPERATIONS,
   SCHEMA_OPERATIONS,
   assertOperationBodySize,
+  getEntityShape,
+  getOperationSpec,
+  isRuntimeEnabledOperation,
+  isSchemaOperation,
   parseOperationRequest,
 } from "../src/contracts/operation";
 import {
@@ -649,7 +653,7 @@ describe("parseOperationRequest — PHONE_SPACE restriction", () => {
             op,
             entity_type: "group_state",
             base_revision: op.startsWith("patch") ? 1 : undefined,
-            target: { space_id: space, room_id: ROOM, worldline_id: null },
+            target: { space_id: space, room_id: ROOM },
           }),
         ),
       ).toThrowError("VALIDATION_FAILED");
@@ -671,16 +675,195 @@ describe("parseOperationRequest — PHONE_SPACE restriction", () => {
     }
   });
 
-  it("accepts group_state inside PHONE_SPACE", () => {
+  it("accepts group_state inside PHONE_SPACE without any worldline_id", () => {
     expect(() =>
       parseOperationRequest(
         makeOperation({
           op: "patch_group_state",
           entity_type: "group_state",
-          target: { space_id: "PHONE_SPACE", room_id: ROOM, worldline_id: null },
+          target: { space_id: "PHONE_SPACE", room_id: ROOM },
         }),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("R1 — group_state identity has no worldline dimension", () => {
+  it("declares group_state as worldline-absent", () => {
+    expect(getEntityShape("group_state").worldlineRule).toBe("absent");
+  });
+
+  it.each(["create_group_state", "patch_group_state"])(
+    "rejects %s when worldline_id is present at all",
+    (op) => {
+      // A group_state row is room-level: (account_id, PHONE_SPACE, room_id).
+      // Allowing worldline_id would let the same row be addressed by two
+      // different targets (null vs a UUID), so the handler could not tell
+      // which value belongs to the identity.
+      for (const worldlineId of [null, WORLDLINE]) {
+        expect(() =>
+          parseOperationRequest(
+            makeOperation({
+              op,
+              entity_type: "group_state",
+              base_revision: op.startsWith("patch") ? 1 : undefined,
+              target: { space_id: "PHONE_SPACE", room_id: ROOM, worldline_id: worldlineId },
+            }),
+          ),
+        ).toThrowError("VALIDATION_FAILED");
+      }
+    },
+  );
+
+  it("accepts create_group_state with only space_id and room_id", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op: "create_group_state",
+          entity_type: "group_state",
+          base_revision: undefined,
+          target: { space_id: "PHONE_SPACE", room_id: ROOM },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("derives an empty worldline_key for group_state", () => {
+    const parsed = parseOperationRequest(
+      makeOperation({
+        op: "patch_group_state",
+        entity_type: "group_state",
+        target: { space_id: "PHONE_SPACE", room_id: ROOM },
+      }),
+    );
+    expect(parsed.worldline_key).toBe("");
+    expect(parsed.target.worldline_id).toBeUndefined();
+  });
+
+  it("keeps worldline entities worldline-scoped (contrast with group_state)", () => {
+    expect(getEntityShape("worldline").worldlineRule).toBe("required");
+  });
+});
+
+describe("R2 — canonical Base64 rejects non-zero padding bits", () => {
+  it("rejects a two-pad string whose unused bits are not zero", () => {
+    // "QQ==" decodes to 0x41. "QR==" decodes to the same byte because the
+    // trailing 4 bits of 'R' are discarded, so both are the same value but
+    // only "QQ==" is the canonical spelling.
+    expect(atob("QQ==")).toBe(atob("QR=="));
+    expect(isCanonicalBase64("QQ==")).toBe(true);
+    expect(isCanonicalBase64("QR==")).toBe(false);
+  });
+
+  it("rejects a one-pad string whose unused bits are not zero", () => {
+    // "QUJ=" vs "QUI=": the last 2 bits of the third character are unused.
+    expect(atob("QUI=")).toBe(atob("QUJ="));
+    expect(isCanonicalBase64("QUI=")).toBe(true);
+    expect(isCanonicalBase64("QUJ=")).toBe(false);
+  });
+
+  it("accepts every canonical re-encoding round trip", () => {
+    for (let length = 1; length <= 32; length += 1) {
+      const bytes = new Uint8Array(length);
+      for (let index = 0; index < length; index += 1) {
+        bytes[index] = (index * 7 + 3) & 0xff;
+      }
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      const encoded = btoa(binary);
+      expect(isCanonicalBase64(encoded)).toBe(true);
+    }
+  });
+
+  it("rejects a non-canonical envelope at the operation boundary", () => {
+    // Build a valid 34-byte envelope, then corrupt only its padding bits.
+    const canonical = validEnvelope(16);
+    expect(isCanonicalBase64(canonical)).toBe(true);
+    const decoded = decodeCanonicalBase64(canonical);
+    expect(decoded.length).toBe(34);
+    // 34 bytes -> 2 leftover bytes -> one '=' of padding, so the character
+    // before the pad carries unused bits we can flip.
+    expect(canonical.endsWith("=")).toBe(true);
+    const padIndex = canonical.indexOf("=");
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const lastChar = canonical[padIndex - 1] as string;
+    const lastValue = alphabet.indexOf(lastChar);
+    // Set a bit that decoding discards; the byte output is unchanged.
+    const corruptedValue = lastValue | 0b000001;
+    const corrupted =
+      canonical.slice(0, padIndex - 1) +
+      (alphabet[corruptedValue] as string) +
+      canonical.slice(padIndex);
+    if (corrupted !== canonical) {
+      expect(atob(corrupted)).toBe(atob(canonical));
+      expect(isCanonicalBase64(corrupted)).toBe(false);
+      expect(() =>
+        parseOperationRequest(makeOperation({ set: { status_message: corrupted } })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+});
+
+describe("R3 — operation table is exported read-only for handlers", () => {
+  it("derives schema and runtime operation lists from one source", () => {
+    expect(SCHEMA_OPERATIONS.length).toBe(16);
+    expect(RUNTIME_ENABLED_OPERATIONS.length).toBe(15);
+    // Runtime is a strict subset of schema, differing only by delete_turn.
+    for (const op of RUNTIME_ENABLED_OPERATIONS) {
+      expect(SCHEMA_OPERATIONS as readonly string[]).toContain(op);
+    }
+    const missing = (SCHEMA_OPERATIONS as readonly string[]).filter(
+      (op) => !(RUNTIME_ENABLED_OPERATIONS as readonly string[]).includes(op),
+    );
+    expect(missing).toEqual(["delete_turn"]);
+  });
+
+  it("exposes every schema operation through the accessor", () => {
+    for (const op of SCHEMA_OPERATIONS) {
+      const spec = getOperationSpec(op);
+      expect(spec.entityType).toBeTruthy();
+      expect(["create", "patch", "delete"]).toContain(spec.kind);
+      // Every operation's entity must resolve to a declared shape.
+      expect(getEntityShape(spec.entityType).required.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("reports phone-space restriction through the accessor", () => {
+    for (const op of ["create_group_state", "patch_group_state", "create_worldline", "patch_worldline"] as const) {
+      expect(getOperationSpec(op).phoneSpaceOnly).toBe(true);
+    }
+    for (const op of ["patch_room", "create_attachment", "create_turn"] as const) {
+      expect(getOperationSpec(op).phoneSpaceOnly).toBe(false);
+    }
+  });
+
+  it("rejects an unknown operation name through the accessor", () => {
+    expect(() => getOperationSpec("not_an_operation" as never)).toThrowError("VALIDATION_FAILED");
+    expect(() => getEntityShape("not_an_entity" as never)).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("provides membership predicates that agree with the lists", () => {
+    expect(isSchemaOperation("delete_turn")).toBe(true);
+    expect(isRuntimeEnabledOperation("delete_turn")).toBe(false);
+    expect(isSchemaOperation("patch_room")).toBe(true);
+    expect(isRuntimeEnabledOperation("patch_room")).toBe(true);
+    expect(isSchemaOperation("delete_bubble")).toBe(false);
+    expect(isRuntimeEnabledOperation("delete_bubble")).toBe(false);
+  });
+
+  it("hands out frozen structures that a handler cannot mutate", () => {
+    const spec = getOperationSpec("patch_room");
+    expect(Object.isFrozen(spec)).toBe(true);
+    const shape = getEntityShape("room");
+    expect(Object.isFrozen(shape)).toBe(true);
+    expect(Object.isFrozen(shape.required)).toBe(true);
+    expect(Object.isFrozen(SCHEMA_OPERATIONS)).toBe(true);
+    expect(Object.isFrozen(RUNTIME_ENABLED_OPERATIONS)).toBe(true);
+    // A handler that tries to widen a rule must not affect the validator.
+    expect(() => {
+      (spec as { phoneSpaceOnly: boolean }).phoneSpaceOnly = true;
+    }).toThrowError();
+    expect(getOperationSpec("patch_room").phoneSpaceOnly).toBe(false);
   });
 });
 

@@ -85,7 +85,13 @@ const ENTITY_SHAPES = {
     worldlineRule: "nullable",
     roomScoped: true,
   },
-  group_state: { required: ["room_id"], worldlineRule: "nullable", roomScoped: true },
+  // A group_state row is room-level: its D1 identity is
+  // (account_id, PHONE_SPACE, room_id) with no worldline component. The
+  // currently selected worldline lives inside the row as the encrypted
+  // `active_worldline_id` field, never in the target. Allowing a target
+  // `worldline_id` here would let one row be addressed two ways (null vs a
+  // UUID) and leave the handler unable to say which belongs to the identity.
+  group_state: { required: ["room_id"], worldlineRule: "absent", roomScoped: true },
   worldline: { required: ["room_id", "worldline_id"], worldlineRule: "required", roomScoped: true },
   attachment: { required: ["attachment_id"], worldlineRule: "absent", roomScoped: false },
 } as const satisfies Record<string, EntityShape>;
@@ -165,16 +171,83 @@ const OPERATION_SPECS = {
 
 export type OperationName = keyof typeof OPERATION_SPECS;
 
-/** Every operation the schema defines, including ones withheld at runtime. */
-export const SCHEMA_OPERATIONS = Object.keys(OPERATION_SPECS) as readonly OperationName[];
+export type { EntityType };
+
+/**
+ * Freeze a table and the arrays inside it so a downstream handler cannot
+ * widen a rule at runtime. `as const` is a compile-time guarantee only; a
+ * D1 handler reached through `getOperationSpec()` would otherwise be able to
+ * flip `phoneSpaceOnly` on the very object the validator consults.
+ */
+function deepFreezeTable<T extends Record<string, Record<string, unknown>>>(table: T): T {
+  for (const entry of Object.values(table)) {
+    for (const value of Object.values(entry)) {
+      if (Array.isArray(value)) {
+        Object.freeze(value);
+      }
+    }
+    Object.freeze(entry);
+  }
+  return Object.freeze(table);
+}
+
+deepFreezeTable(ENTITY_SHAPES as unknown as Record<string, Record<string, unknown>>);
+deepFreezeTable(OPERATION_SPECS as unknown as Record<string, Record<string, unknown>>);
+
+/**
+ * Every operation the schema defines, including ones withheld at runtime.
+ *
+ * This and `RUNTIME_ENABLED_OPERATIONS` are both derived from
+ * `OPERATION_SPECS`, so the two lists cannot drift apart.
+ */
+export const SCHEMA_OPERATIONS: readonly OperationName[] = Object.freeze(
+  Object.keys(OPERATION_SPECS) as OperationName[],
+);
 
 /**
  * Operations the v1 runtime actually accepts. `delete_turn` is schema-defined
  * but refused until the delete feature flag opens (user decision 15).
  */
-export const RUNTIME_ENABLED_OPERATIONS = SCHEMA_OPERATIONS.filter(
-  (op) => op !== "delete_turn",
-) as readonly OperationName[];
+export const RUNTIME_ENABLED_OPERATIONS: readonly OperationName[] = Object.freeze(
+  SCHEMA_OPERATIONS.filter((op) => op !== "delete_turn"),
+);
+
+const SCHEMA_OPERATION_SET: ReadonlySet<string> = new Set(SCHEMA_OPERATIONS);
+const RUNTIME_OPERATION_SET: ReadonlySet<string> = new Set(RUNTIME_ENABLED_OPERATIONS);
+
+export function isSchemaOperation(value: unknown): value is OperationName {
+  return typeof value === "string" && SCHEMA_OPERATION_SET.has(value);
+}
+
+export function isRuntimeEnabledOperation(value: unknown): value is OperationName {
+  return typeof value === "string" && RUNTIME_OPERATION_SET.has(value);
+}
+
+/**
+ * Read-only accessor for the operation rule table.
+ *
+ * The D1 handler layer resolves an already-validated operation's entity type,
+ * kind, and scope restriction through this instead of re-declaring the rules,
+ * so there is exactly one source for the contract. The returned object is
+ * frozen.
+ */
+export function getOperationSpec(op: OperationName): Readonly<OperationSpec> {
+  if (!isSchemaOperation(op)) {
+    throw validationFailed();
+  }
+  return OPERATION_SPECS[op];
+}
+
+/**
+ * Read-only accessor for an entity's target shape: which identity fields the
+ * target must carry and how it treats `worldline_id`. Frozen, same reason.
+ */
+export function getEntityShape(entityType: EntityType): Readonly<EntityShape> {
+  if (!Object.prototype.hasOwnProperty.call(ENTITY_SHAPES, entityType)) {
+    throw validationFailed();
+  }
+  return ENTITY_SHAPES[entityType];
+}
 
 const PATCH_KINDS = new Set(["patch", "delete"]);
 

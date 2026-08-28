@@ -38,12 +38,34 @@ X-Protocol-Version: 1
 
 **2026-08-28 보정(Claude Code):** "base64 envelope"는 JavaScript `string.length`만 재는 것이 아니라 다음을 모두 만족해야 통과한다.
 
-1. 표준 padded Base64의 canonical 형식(charset·패딩 위치·길이가 4의 배수)이다.
+1. 표준 padded Base64의 **canonical** 형식이다. charset·패딩 위치·4의 배수 길이를 확인하는 것만으로는 부족하다. 마지막 quantum에서 실제 byte를 넘어가는 bit는 decode 때 버려지므로 서로 다른 문자열이 같은 byte로 풀린다(`"QQ=="`와 `"QR=="`은 둘 다 `0x41`). 그래서 decode한 뒤 표준 encoder로 **다시 encode해 입력과 byte-for-byte 같은지**까지 확인하고, encoder가 내놓는 철자 하나만 통과시킨다. 이것을 허용하면 같은 ciphertext를 담은 body가 byte 수준에서 여러 개가 되어 §4.1의 replay fingerprint 계약이 약해진다.
 2. decode한 byte 길이가 E2EE 제안서 §7.1 봉투의 최소 크기 **34 byte**(`version` 1 + `alg` 1 + `key_generation` 4 + `nonce` 12 + GCM tag 16, 평문이 0 byte일 때의 하한) 이상이다.
 3. decode한 첫 byte(`version`)와 둘째 byte(`alg`)가 v1이 지원하는 값(`0x01`, `0x01`)이다.
 4. `1,900,000 bytes` 상한은 이 canonical Base64 문자열 자체의 길이에 적용한다. canonical 형식이 아닌 문자열은 길이 검사 전에 먼저 거부되므로, 상한 검사와 원본 HTTP body 상한(`2,000,000 bytes`, §5.1)은 서로 다른 두 경계를 각각 검증한다.
 
 이 네 단계를 통과하지 못하면 오류에 실패한 필드의 값이나 path를 넣지 않고 `VALIDATION_FAILED`만 돌려준다.
+
+#### 암호 검증 책임 경계 (2026-08-28 확정)
+
+위 네 단계는 **구조 검사이지 암호 검증이 아니다.** 계층별 책임을 혼동하면 "Worker가 검사했으니 안전하다"는 잘못된 결론이 나오므로 경계를 명시한다.
+
+| 계층 | 하는 일 | 하지 않는 일 |
+| --- | --- | --- |
+| **Worker** | canonical Base64 여부, envelope 최소 크기(34 byte), `version`·`alg` byte, 크기 상한, identity·scope·권한 경계 | 복호화, AAD 조립·대조, AEAD tag 검증, nonce 검사 |
+| **Swift·Kotlin client crypto** | nonce 생성과 재사용 방지, canonical AAD 조립과 일치 확인, AEAD tag 검증, key 파생 | — |
+| **D1 handler** | envelope byte를 **받은 그대로 보존**, identity·CAS·idempotency 처리 | 복호화, ciphertext 재직렬화, AAD 내용 추론, unknown extension 제거 |
+
+**Worker와 D1 handler는 ciphertext를 복호화하지 않으며 AAD 내용을 검사하지도 추론하지도 않는다.** 키가 없으므로 할 수도 없다. 따라서 nonce가 재사용됐는지, AAD가 실제 scope와 일치하는지는 **오직 키를 가진 client만 판정할 수 있다.** Worker의 통과는 "봉투 모양이 규격에 맞다"는 뜻일 뿐 "내용이 정품이다"라는 뜻이 아니다.
+
+D1은 envelope byte를 있는 그대로 저장한다. 평문으로 decode하거나 JSON을 다시 직렬화하지 않으며, 모르는 extension key도 byte 단위로 보존한다.
+
+#### Attachment identity와 `space_id`의 역할 (2026-08-28 확정)
+
+- attachment의 canonical identity와 D1 primary key는 **`(account_id, attachment_id)`**다.
+- operation target의 `space_id`는 **identity의 일부가 아니다.** 생성 출처를 기록하고 device 권한을 검사하기 위한 평문 metadata다.
+- D1 row에는 `origin_space_id`로 저장하되 **primary key·unique key에는 넣지 않는다.**
+- 다운로드 권한은 같은 account의 유효한 device token으로 검사한다. room UUID를 attachment identity에 억지로 넣지 않는다.
+- 따라서 `create_attachment`의 target에서 **`room_id`와 `worldline_id`는 금지**된다(§4.1.1).
 
 ### 2.2 성공 envelope
 
@@ -168,8 +190,8 @@ operation 하나를 적용한다.
 | `patch_turn` | `turn` | patch | `room_id`, `turn_id` | nullable | `base_revision` 필수 |
 | `create_bubble` | `bubble` | create | `room_id`, `turn_id`, `message_id` | nullable | top-level `bubble_order` 필수 |
 | `patch_bubble` | `bubble` | patch | `room_id`, `turn_id`, `message_id` | nullable | `base_revision` 필수 |
-| `create_group_state` | `group_state` | create | `room_id` | nullable | **`PHONE_SPACE` 전용** |
-| `patch_group_state` | `group_state` | patch | `room_id` | nullable | **`PHONE_SPACE` 전용**, `base_revision` 필수 |
+| `create_group_state` | `group_state` | create | `room_id` | **없음** | **`PHONE_SPACE` 전용**. 아래 §4.1.2 참조 |
+| `patch_group_state` | `group_state` | patch | `room_id` | **없음** | **`PHONE_SPACE` 전용**, `base_revision` 필수 |
 | `create_worldline` | `worldline` | create | `room_id`, `worldline_id` | **필수(non-null)** | **`PHONE_SPACE` 전용**. target이 세계선 자신을 가리키므로 기본 세계선(null) 개념이 없다 |
 | `patch_worldline` | `worldline` | patch | `room_id`, `worldline_id` | **필수(non-null)** | **`PHONE_SPACE` 전용**, `base_revision` 필수 |
 | `create_attachment` | `attachment` | create | `attachment_id` | **없음** | `room_id`·`worldline_id` 금지. identity가 `(account_id, attachment_id)`다 |
@@ -180,6 +202,31 @@ operation 하나를 적용한다.
 v1 runtime이 실제로 받아들이는 operation(`RUNTIME_ENABLED_OPERATIONS`)은 위 표에서 `delete_turn`을 제외한 15개다. `delete_turn`은 schema에는 있지만(`SCHEMA_OPERATIONS`) 삭제 기능 flag가 열리기 전에는 형식이 완전히 올바른 요청도 `VALIDATION_FAILED`로 거부한다.
 
 whole-room·whole-message PUT, `delete_bubble`(schema에 아예 없음), client가 임의 발급한 `server_seq`는 거부한다.
+
+### 4.1.2 `group_state`에 `worldline_id`가 없는 이유 (2026-08-28 확정)
+
+`group_state`는 **room 전체의 상태를 담는 한 행**이며 D1 identity가 `(account_id, PHONE_SPACE, room_id)`다. worldline 차원이 없다.
+
+따라서 `create_group_state`·`patch_group_state`의 `target`에 `worldline_id`가 **있으면(값이 `null`이든 UUID든) 거부한다.**
+
+이유는 편의가 아니라 identity 모호성이다. `worldline_id`를 허용하면 같은 room-level 행 하나를 `worldline_id: null`인 target과 `worldline_id: <UUID>`인 target 두 가지로 지칭할 수 있게 되고, handler는 그 값을 identity에 넣어야 하는지 아닌지 판단할 근거가 없다. `worldline_key`가 `''`와 UUID 사이를 오가면 D1 primary key도 흔들린다.
+
+현재 선택된 세계선은 행 **안**의 암호화된 `active_worldline_id` field로만 존재한다(canonical schema §11.1, E2EE 제안서 §8.2). Worker는 이 값을 읽지 않으며, 각 write가 자기 canonical `worldline_id`를 평문으로 명시하므로 서버 routing에도 필요하지 않다.
+
+대조: `create_worldline`·`patch_worldline`은 target이 **세계선 행 자신**을 가리키므로 `worldline_id`가 필수이고 `null`일 수 없다. 두 entity를 헷갈리지 않도록 validator에서도 서로 다른 규칙(`absent` vs `required`)으로 분리했다.
+
+### 4.1.3 operation 규칙표의 단일 source (2026-08-28)
+
+위 표는 `cloudflare/sync-worker/src/contracts/operation.ts`의 `OPERATION_SPECS`·`ENTITY_SHAPES`와 같은 내용이며, 후속 D1 handler는 **이 규칙을 다시 선언하지 않고** 다음 read-only 경로로 조회한다.
+
+| export | 용도 |
+| --- | --- |
+| `getOperationSpec(op)` | 검증 완료된 operation의 `entityType`·`kind`·`phoneSpaceOnly`·`requiresBubbleOrder` |
+| `getEntityShape(entityType)` | 그 entity의 필수 target 필드와 `worldlineRule` |
+| `SCHEMA_OPERATIONS` / `RUNTIME_ENABLED_OPERATIONS` | 16개 / 15개 목록. 둘 다 `OPERATION_SPECS`에서 파생되므로 갈라질 수 없다 |
+| `isSchemaOperation()` / `isRuntimeEnabledOperation()` | 목록 멤버십 판정 |
+
+반환되는 객체와 배열은 모두 `Object.freeze`돼 있다. `as const`는 compile-time 보장일 뿐이라, handler가 런타임에 `phoneSpaceOnly`를 뒤집으면 validator가 참조하는 바로 그 객체가 바뀌기 때문이다. 규칙을 바꿔야 하면 표 자체를 고치고 이 문서를 함께 갱신한다.
 
 ### 4.2 `GET /v1/sync/changes`
 

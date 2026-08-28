@@ -439,6 +439,12 @@ Phase 0에서 발견한 digest는 Mac 1개, phone 3개이며 **모두 policy 식
 
 **R2 객체에 공개 접근 경로를 만들지 않는다.** 앱이 첨부를 요청하면 Worker가 device token을 검증한 뒤에만 단기 유효 경로를 발급하거나 중계한다. 기기 종속이 아니라 **계정에 속한 기기임이 증명되면 어느 기기에서든 접근 가능**하다.
 
+**2026-08-28 확정 — identity에서 `space_id`의 위치.** attachment의 canonical identity와 D1 primary key는 **`(account_id, attachment_id)`**이며 `space_id`를 포함하지 않는다(§14.1과 일치).
+
+- ⬜ `origin_space_id`는 **생성 출처 기록과 device 권한 검사용 평문 metadata**로 저장하되 primary·unique key에는 넣지 않는다.
+- sync operation의 `create_attachment` target에는 `space_id`와 `attachment_id`만 온다. **`room_id`와 `worldline_id`는 금지**한다(Worker API 초안 §4.1.1).
+- 다운로드 권한은 같은 account의 유효한 device token으로 판정한다. 한 첨부가 여러 방에서 참조될 수 있으므로 room UUID를 identity에 억지로 넣지 않는다.
+
 ### 7.2 12MB v1 상한
 
 Phase 0 실측값이다.
@@ -661,6 +667,12 @@ Phase 0 실측도 이와 일치한다. 단톡방·worldline은 `PHONE_SPACE`에�
 | `worldline` | `revision`, `server_seq` | ⬜ CAS·ordering |
 
 `participants`와 `participant_hearts`는 unknown member 보존이 가능한 canonical payload로 직렬화한다. 둘의 participant reference 값은 §13.2에 따라 암호화한다. `active_worldline_id`는 다음 message의 canonical scope를 결정하므로 local-only 선택 상태로 두지 않되, 서버 routing에는 각 write가 명시한 scope만 필요하므로 값은 암호화한다. **그러나 각 write의 평문 `worldline_id`와 timestamp를 관찰하면 서버가 최근 active worldline을 추론할 수 있으므로, 암호화가 선택 상태를 완전히 숨긴다고 보장하지 않는다.** `group_state`·`worldline` create/patch는 `PHONE_SPACE`가 아니면 거부한다.
+
+**2026-08-28 확정 — `group_state` target에는 `worldline_id`가 없다.** `group_state`의 identity는 위 표대로 `(account_id, PHONE_SPACE, room_id)`이며 worldline 차원이 없다. 따라서 sync operation의 `target`에 `worldline_id`가 **있으면 값이 `null`이든 UUID든 거부한다**(Worker API 초안 §4.1.2).
+
+이것은 형식 문제가 아니라 identity 모호성 때문이다. `worldline_id`를 허용하면 같은 room-level 행 하나를 `null`인 target과 UUID인 target 두 가지로 지칭할 수 있고, `worldline_key`가 `''`와 UUID 사이를 오가면서 §14.2의 D1 primary key가 흔들린다. 현재 선택된 세계선은 **행 안의 암호화된 `active_worldline_id`로만** 존재하며 target에는 절대 나타나지 않는다.
+
+`worldline` entity는 반대다. target이 세계선 행 자신을 가리키므로 `worldline_id`가 필수이고 `null`일 수 없다.
 
 ---
 
