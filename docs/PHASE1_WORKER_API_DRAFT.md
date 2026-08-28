@@ -216,8 +216,8 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 
 | `op` | `entity_type` | 종류 | `target` 필수 필드 | `worldline_id` | 비고 |
 | --- | --- | --- | --- | --- | --- |
-| `create_room` | `room` | create | `room_id` | nullable | |
-| `patch_room` | `room` | patch | `room_id` | nullable | `base_revision` 필수 |
+| `create_room` | `room` | create | `room_id` | **null-only** | 키는 필수이며 값은 반드시 `null`; room storage identity에는 worldline 축이 없음 |
+| `patch_room` | `room` | patch | `room_id` | **null-only** | 키는 필수이며 값은 반드시 `null`; `base_revision` 필수 |
 | `create_persona_snapshot` | `persona_snapshot` | create+head CAS | `persona_snapshot_id`, `snapshot_revision` | **없음** | `room_id` 금지. `base_revision` 필수; 최초 0→1 또는 target=base+1 |
 | `create_engine_profile` | `engine_profile` | create | `engine_profile_id`, `profile_revision` | **없음** | `room_id` 금지. identity가 `(account_id, space_id, engine_profile_id, profile_revision)`이다 |
 | `create_checkpoint` | `checkpoint` | create | `room_id`, `checkpoint_id` | nullable | |
@@ -233,7 +233,7 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 | `create_attachment` | `attachment` | create | `attachment_id` | **없음** | `room_id`·`worldline_id` 금지. identity가 `(account_id, attachment_id)`다 |
 | `delete_turn` | `turn` | delete | `room_id`, `turn_id` | nullable | **schema에만 정의. 사용자 결정 15에 따라 초기 runtime은 형식이 올바른 요청도 거부한다** |
 
-"없음"은 그 필드를 target에 넣으면 `VALIDATION_FAILED`라는 뜻이다(예: `create_attachment`에 `worldline_id`를 넣으면 거부). "nullable"은 명시적으로 `null`이거나 대문자 UUID여야 하며, 키 자체가 없으면(즉 `worldline_id`를 아예 안 보내면) 모호하므로 거부한다.
+"없음"은 그 필드를 target에 넣으면 `VALIDATION_FAILED`라는 뜻이다(예: `create_attachment`에 `worldline_id`를 넣으면 거부). "nullable"은 명시적으로 `null`이거나 대문자 UUID여야 하며, 키 자체가 없으면 모호하므로 거부한다. "null-only"도 키를 반드시 보내지만 값은 `null`만 허용한다. Room은 API object shape에는 nullable `worldline_id`를 유지하되 D1 identity가 `(account_id, space_id, room_id)`뿐이므로 non-null 값으로 같은 row를 두 방식으로 지칭하지 못하게 한다.
 
 v1 runtime이 실제로 받아들이는 operation(`RUNTIME_ENABLED_OPERATIONS`)은 위 표에서 `delete_turn`을 제외한 15개다. `delete_turn`은 schema에는 있지만(`SCHEMA_OPERATIONS`) 삭제 기능 flag가 열리기 전에는 형식이 완전히 올바른 요청도 `VALIDATION_FAILED`로 거부한다.
 
@@ -251,6 +251,8 @@ whole-room·whole-message PUT, `delete_bubble`(schema에 아예 없음), client�
 
 대조: `create_worldline`·`patch_worldline`은 target이 **세계선 행 자신**을 가리키므로 `worldline_id`가 필수이고 `null`일 수 없다. 두 entity를 헷갈리지 않도록 validator에서도 서로 다른 규칙(`absent` vs `required`)으로 분리했다.
 
+Room도 물리 identity에 worldline 축이 없지만 canonical room wire object가 `worldline_id: null`을 명시하므로 `absent`가 아니라 `null-only` 규칙을 사용한다. `create_room`·`patch_room` target은 키 누락과 non-null 값을 모두 거부한다. 따라서 `change_log`의 room identity도 `space_id`, `room_id`만 갖는다.
+
 ### 4.1.3 operation 규칙표의 단일 source (2026-08-28)
 
 위 표는 `cloudflare/sync-worker/src/contracts/operation.ts`의 `OPERATION_SPECS`·`ENTITY_SHAPES`와 같은 내용이며, 후속 D1 handler는 **이 규칙을 다시 선언하지 않고** 다음 read-only 경로로 조회한다.
@@ -263,6 +265,16 @@ whole-room·whole-message PUT, `delete_bubble`(schema에 아예 없음), client�
 | `isSchemaOperation()` / `isRuntimeEnabledOperation()` | 목록 멤버십 판정 |
 
 반환되는 객체와 배열은 모두 `Object.freeze`돼 있다. `as const`는 compile-time 보장일 뿐이라, handler가 런타임에 `phoneSpaceOnly`를 뒤집으면 validator가 참조하는 바로 그 객체가 바뀌기 때문이다. 규칙을 바꿔야 하면 표 자체를 고치고 이 문서를 함께 갱신한다.
+
+### 4.1.4 `patch_room` v1 storage mapping
+
+Room 본체의 encrypted wire field → D1 column mapping은 `title→title_enc`, `status_message→status_message_enc`, `music_title→music_title_enc`, `music_artist→music_artist_enc` 네 개다. Handler는 이 fixed map을 소유하며 문법 validator만으로 임의 column 이름을 만들지 않는다.
+
+`extensions.<namespace>.<entity>.<field>`은 같은 operation의 `room_extension_field` mutation이며 room 본체·revision·ledger와 같은 batch에 들어간다. 이를 무시하거나 별도 transaction으로 적용하지 않는다.
+
+`patch_room`의 engine/persona metadata pair는 `room_ai_state_ref`를 upsert/clear한다. `create_room`은 reference row를 만들지 않는다. 존재하지 않는 pair를 clear하는 것은 idempotent no-op이고, 두 pair가 모두 null이면 reference row를 삭제할 수 있다.
+
+`avatar_ref`는 canonical 필드지만 v1 D1 projection과 operation metadata 경로가 아직 없으므로 현재 `patch_room`에서 지원하지 않는다. Validator가 avatar key를 받지 않으며 handler가 임의 column·attachment mapping을 발명하지 않는다. Avatar write를 열기 전에 별도 schema와 operation 계약을 확정한다.
 
 ### 4.2 `GET /v1/sync/changes`
 

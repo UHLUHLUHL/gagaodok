@@ -172,6 +172,8 @@ E2EE AAD에는 이 값을 UInt64BE로 인코딩하지만 v1의 유효 범위는 
 | render·search·object cache | **local-only** | |
 | `avatar_image_file_name` | **local-only** | 파일 payload 없는 local pointer |
 
+Room row의 물리 identity는 `(account_id, space_id, room_id)`이며 worldline 축이 없다. Wire object는 `worldline_id: null` 키를 유지하지만 `create_room`·`patch_room` target에서 non-null 값은 금지한다. `avatar_ref`는 canonical 장기 필드이나 v1 Worker의 D1 projection/write 경로는 아직 열지 않으며, 별도 schema·operation 계약 전에는 handler가 이를 받지 않는다.
+
 `last_message_time`은 E2EE 제안서 §8.5에 따라 **평문 timestamp의 최대값으로 계산**하며 별도 평문 콘텐츠 필드를 만들지 않는다.
 
 ### 3.2 whole-room PUT 금지
