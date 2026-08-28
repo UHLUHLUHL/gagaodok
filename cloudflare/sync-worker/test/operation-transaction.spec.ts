@@ -26,12 +26,14 @@ const DEVICE_OTHER = "B0000000-0000-4000-8000-000000000002";
 const DEVICE_REVOKED = "B0000000-0000-4000-8000-000000000003";
 const ROOM = "10000000-0000-4000-8000-0000000000AF";
 const MISSING_ROOM = "10000000-0000-4000-8000-0000000000B0";
+const MAC_ROOM = "10000000-0000-4000-8000-0000000000C1";
 const ENGINE_PROFILE = "C0000000-0000-4000-8000-0000000000E1";
 const PERSONA_SNAPSHOT = "50000000-0000-4000-8000-0000000000EF";
 const OPERATION = "90000000-0000-4000-8000-000000000003";
 const OPERATION_2 = "90000000-0000-4000-8000-000000000004";
 const TIMESTAMP = "2026-08-28T00:00:00Z";
 const SPACE = "PHONE_SPACE";
+const OTHER_SPACE = "MAC_SPACE";
 const EXHAUSTED_SENTINEL = 9007199254740992;
 
 function syntheticTokenBytes(seed: number): Uint8Array {
@@ -152,6 +154,15 @@ async function insertFixtures(): Promise<void> {
     .run();
   await db
     .prepare(
+      `INSERT INTO room
+         (account_id, space_id, room_id, title_enc, status_message_enc,
+          music_title_enc, music_artist_enc, revision, server_seq, created_at, updated_at)
+       VALUES (?, ?, ?, ?, NULL, NULL, NULL, 4, NULL, ?, ?)`,
+    )
+    .bind(ACCOUNT, OTHER_SPACE, MAC_ROOM, envelope(220), TIMESTAMP, TIMESTAMP)
+    .run();
+  await db
+    .prepare(
       `INSERT INTO engine_profile (account_id, space_id, engine_profile_id, profile_revision)
        VALUES (?, ?, ?, 1)`,
     )
@@ -170,10 +181,7 @@ async function insertFixtures(): Promise<void> {
 
 /** The whole mutable surface of this slice, for before/after comparison. */
 async function snapshot(): Promise<string> {
-  const room = await db
-    .prepare("SELECT * FROM room WHERE account_id = ? AND space_id = ? AND room_id = ?")
-    .bind(ACCOUNT, SPACE, ROOM)
-    .first();
+  const rooms = await db.prepare("SELECT * FROM room ORDER BY space_id, room_id").all();
   const extensions = await db
     .prepare("SELECT * FROM room_extension_field ORDER BY extension_key")
     .all();
@@ -183,7 +191,7 @@ async function snapshot(): Promise<string> {
   const changes = await db.prepare("SELECT * FROM change_log ORDER BY server_seq").all();
   const guards = await db.prepare("SELECT * FROM transaction_guard").all();
   return JSON.stringify({
-    room,
+    rooms: rooms.results,
     extensions: extensions.results,
     ref: ref.results,
     account,
@@ -560,6 +568,94 @@ describe("applyOperationRequest — refusals leave nothing behind", () => {
       "VALIDATION_FAILED",
       "unmapped room field",
     );
+  });
+});
+
+describe("applyOperationRequest — registered space boundary", () => {
+  // The token proves one device in one space. Same account is not authority:
+  // a phone token that could patch the Mac's canonical rows would let one
+  // compromised device rewrite every space (API draft §3, contract bdccd5c).
+  function crossSpaceBody(overrides: BodyOverrides = {}): Record<string, unknown> {
+    return patchRoomBody({
+      // The body device_id is the authenticated phone device and the target
+      // worldline is null, so target space is the only thing wrong here.
+      target: { space_id: OTHER_SPACE, room_id: MAC_ROOM, worldline_id: null },
+      ...overrides,
+    });
+  }
+
+  it("refuses a phone token patching a MAC_SPACE room", async () => {
+    const before = await snapshot();
+    await expectApiError(
+      () => applyOperationRequest(makeRequest(crossSpaceBody()), db),
+      "AUTH_INVALID",
+      "cross-space write",
+    );
+    expect(await snapshot()).toBe(before);
+  });
+
+  it("leaves every ledger, sequence and guard untouched", async () => {
+    const before = await snapshot();
+    await expectApiError(
+      () =>
+        applyOperationRequest(
+          makeRequest(
+            crossSpaceBody({
+              set: { title: envelope(30), "extensions.kakao.room.mood": envelope(31) },
+              metadata_set: { engine_profile_id: ENGINE_PROFILE, engine_profile_revision: 1 },
+            }),
+          ),
+          db,
+        ),
+      "AUTH_INVALID",
+      "cross-space write with a full payload",
+    );
+    expect(await snapshot()).toBe(before);
+    expect(await guardCount()).toBe(0);
+    const account = await db
+      .prepare("SELECT next_server_seq FROM account WHERE account_id = ?")
+      .bind(ACCOUNT)
+      .first<{ next_server_seq: number }>();
+    expect(account?.next_server_seq).toBe(1);
+  });
+
+  it("refuses before the replay lookup, so it is not a ledger oracle", async () => {
+    // A pre-existing log row for this operation_id in the other space. If the
+    // space check ran after the replay lookup, this would answer with that
+    // row's sequence and revision — a read of another space's ledger.
+    await db
+      .prepare(
+        `INSERT INTO operation_log
+           (account_id, operation_id, request_fingerprint, entity_type, change_kind,
+            result_revision, server_seq)
+         VALUES (?, ?, ?, 'room', 'upsert', 41, 7)`,
+      )
+      .bind(ACCOUNT, OPERATION, "a".repeat(64))
+      .run();
+
+    let caught: unknown;
+    try {
+      await applyOperationRequest(makeRequest(crossSpaceBody()), db);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as { code?: string }).code).toBe("AUTH_INVALID");
+    const serialised = JSON.stringify({
+      code: (caught as { code?: string }).code,
+      detail: (caught as { detail?: unknown }).detail,
+      message: (caught as Error).message,
+    });
+    for (const leak of ["41", "7", MAC_ROOM, OTHER_SPACE, ACCOUNT, "a".repeat(8)]) {
+      expect(serialised).not.toContain(leak);
+    }
+  });
+
+  it("still allows a patch inside the device's own space", async () => {
+    const result = await applyOperationRequest(
+      makeRequest(patchRoomBody({ set: { title: envelope(32) } })),
+      db,
+    );
+    expect(result.status).toBe("applied");
   });
 });
 

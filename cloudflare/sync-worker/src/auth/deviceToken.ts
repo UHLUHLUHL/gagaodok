@@ -188,3 +188,24 @@ export function assertAuthenticatedDeviceId(auth: AuthContext, requestDeviceId: 
     throw authInvalid();
   }
 }
+
+/**
+ * A v1 device writes canonical rows for the space it is registered in, and no
+ * other (API draft §3).
+ *
+ * Sharing an account is not authority: a phone token that could patch a
+ * MAC_SPACE row would let one compromised or misconfigured device rewrite
+ * every space's canonical state, and the write would be indistinguishable
+ * from the Mac's own. Read paths are a separate question — this is the write
+ * boundary only.
+ *
+ * The refusal is the bare AUTH_INVALID that a device_id mismatch produces, for
+ * the same reason: saying which space was expected turns the error into a map
+ * of the account's other devices. Delegated writers (an "active writer" that
+ * may act for another space) need their own contract and do not exist in v1.
+ */
+export function assertAuthenticatedWriteSpace(auth: AuthContext, targetSpaceId: SpaceId): void {
+  if (auth.registered_space_id !== targetSpaceId) {
+    throw authInvalid();
+  }
+}

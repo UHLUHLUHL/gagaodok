@@ -1,4 +1,8 @@
-import { assertAuthenticatedDeviceId, authenticateDevice } from "../auth/deviceToken";
+import {
+  assertAuthenticatedDeviceId,
+  assertAuthenticatedWriteSpace,
+  authenticateDevice,
+} from "../auth/deviceToken";
 import { ApiError, validationFailed } from "../contracts/error";
 import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationRequest } from "../contracts/operation";
 import { applyPatchRoom } from "../storage/operationTransaction";
@@ -86,6 +90,10 @@ export async function applyOperationRequest(
 
   const operation = parseOperationRequest(parsedJson);
   assertAuthenticatedDeviceId(auth, operation.device_id);
+  // Before any storage read. The replay lookup answers with a stored
+  // sequence and revision, so running it first would let a phone token read
+  // the Mac's ledger by guessing an operation_id.
+  assertAuthenticatedWriteSpace(auth, operation.target.space_id);
 
   if (operation.op !== "patch_room") {
     // This slice implements one operation. Every other runtime-enabled op is

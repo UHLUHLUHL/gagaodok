@@ -3,6 +3,7 @@ import type { D1Migration } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   assertAuthenticatedDeviceId,
+  assertAuthenticatedWriteSpace,
   authenticateDevice,
   hashDeviceToken,
   parseDeviceAuthorization,
@@ -74,7 +75,7 @@ async function expectApiError(run: () => Promise<unknown>, code: string): Promis
     detail: (caught as { detail?: unknown }).detail,
     message: (caught as Error).message,
   });
-  for (const secret of [ACCOUNT_A, DEVICE_1, "gdt1_"]) {
+  for (const secret of [ACCOUNT_A, DEVICE_1, "gdt1_", "PHONE_SPACE", "MAC_SPACE"]) {
     expect(serialised).not.toContain(secret);
   }
 }
@@ -306,5 +307,49 @@ describe("assertAuthenticatedDeviceId", () => {
 
   it("refuses any other device id", async () => {
     await expectApiError(async () => assertAuthenticatedDeviceId(auth, DEVICE_2), "AUTH_INVALID");
+  });
+});
+
+describe("assertAuthenticatedWriteSpace", () => {
+  // API draft §3 and the bdccd5c contract: a v1 device writes canonical rows
+  // for the space it is registered in and no other. A valid token for the
+  // same account is not authority over another space's rows.
+  function contextFor(spaceId: string) {
+    return {
+      account_id: ACCOUNT_A,
+      device_id: DEVICE_1,
+      registered_space_id: spaceId as never,
+      key_generation: 1,
+      revoked_at: null,
+    };
+  }
+
+  it("allows a device to write its own space", () => {
+    expect(() => assertAuthenticatedWriteSpace(contextFor("PHONE_SPACE"), "PHONE_SPACE")).not.toThrow();
+  });
+
+  it.each(["MAC_SPACE", "TABLET_SPACE"] as const)(
+    "refuses a PHONE_SPACE device writing %s",
+    (target) => {
+      expect(() => assertAuthenticatedWriteSpace(contextFor("PHONE_SPACE"), target)).toThrowError(
+        "AUTH_INVALID",
+      );
+    },
+  );
+
+  it.each(["PHONE_SPACE", "TABLET_SPACE"] as const)(
+    "refuses a MAC_SPACE device writing %s",
+    (target) => {
+      expect(() => assertAuthenticatedWriteSpace(contextFor("MAC_SPACE"), target)).toThrowError(
+        "AUTH_INVALID",
+      );
+    },
+  );
+
+  it("names neither space, nor the account, nor the device in the error", async () => {
+    await expectApiError(
+      async () => assertAuthenticatedWriteSpace(contextFor("PHONE_SPACE"), "MAC_SPACE"),
+      "AUTH_INVALID",
+    );
   });
 });
