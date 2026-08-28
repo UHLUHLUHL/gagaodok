@@ -130,6 +130,15 @@ AuthContext = {
 - 폐기된 token은 R2 download를 포함한 모든 endpoint에서 거부한다.
 - QR pairing·전체 복구 endpoint는 [E2EE 제안서](2026-08-27-sync-encryption-proposal.md) §4~5의 별도 인증 흐름을 사용하며 일반 device middleware를 우회하지 않는다.
 
+### 3.1 Device token v1 wire·storage 계약
+
+- token은 CSPRNG 32 byte이며 wire 표기는 `gdt1_` + padding 없는 canonical Base64URL 43자다.
+- header는 `Authorization: Device <token>` 한 경로만 사용한다. URL·query·body fallback은 금지한다.
+- D1에는 decoded 32 byte의 SHA-256 lowercase hex만 `device.token_hash`로 저장하며 raw token은 저장·로그하지 않는다.
+- `token_hash`는 account를 가로질러 전역 unique다. request가 account를 고르지 않고 hash lookup 결과가 account를 결정한다.
+- malformed·unknown token은 `401 AUTH_INVALID`, 유효하지만 `revoked_at`이 non-null인 token은 `403 DEVICE_REVOKED`다. 이 구분은 폐기된 기기가 재연결 흐름으로 전환할 수 있게 하기 위한 명시 계약이다.
+- physical migration `0007_device_token.sql`은 논리 M-stage가 아니라 M06 handler 전에 필요한 cross-cutting 인증 경계다. token 발급·pairing은 이 migration의 범위가 아니다.
+
 ## 4. Sync endpoints
 
 ### 4.1 `POST /v1/sync/operations`

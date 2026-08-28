@@ -24,8 +24,10 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M03 turn·bubble·extension | `8bd7f68`, `6bffb35` | 완료 |
 | M04 versioned AI state | `3c462b5`, `b2a93c6` | 완료 |
 | M03~M04 persistence | `8bd7f68`, `6bffb35`, `3c462b5`, `b2a93c6` | 완료 |
-| M05~M06 persistence | attachment migration·handler 미구현 | 대기 |
-| local R2 attachment flow | source 12,582,912 / binary ciphertext 12,582,946 계약·합성 metadata fixture | DDL·endpoint 대기 |
+| M05 persistence | `5299b27` attachment DDL·validator·bubble FK rebuild | 완료 |
+| device auth boundary | `fa49ed1` canonical token hash lookup·revoked 거부 | 완료; route 연결은 M06 이후 |
+| M06 persistence | operation/change ledger·handler 미구현 | preflight 대기 |
+| local R2 attachment flow | source 12,582,912 / binary ciphertext 12,582,946 계약·합성 metadata fixture | M06 ledger·endpoint 대기 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 
 물리 migration 파일 `0002_device_account_fk.sql`은 논리 M02가 아니라 **M01 account boundary의 FK 보완**이다. 논리 M02는 `room`·`group_state`·`worldline`이다.
@@ -55,7 +57,7 @@ fixture는 미래 D1 row의 완성형 schema가 아니다. 아직 고정되지 �
 | P2-02 | M02 | room parent FK, PHONE-only group/worldline, checked `worldline_key` | 진입 가능 |
 | P2-03 | M03 | turn/bubble key, scope-wide `bubble_order`, tombstone·unknown extension 보존 | M03 커밋 승인 |
 | P2-04 | M04 | immutable engine/persona revision, mutable head/checkpoint CAS | M04 커밋 승인 |
-| P2-05 | M05 + local R2 | attachment identity, size 상한, lifecycle, orphan 보고 | ciphertext 상한 확정과 local R2 구현 |
+| P2-05 | M05 + local R2 | attachment identity, size 상한, lifecycle, orphan 보고 | DDL 완료; M06 뒤 local R2 구현 |
 | P2-06 | M06 handler | atomic row·sequence·operation/change log, replay, CAS rollback | M06 migration·handler 구현 |
 | P2-07 | pull/bootstrap | stable pagination, tombstone projection, crash 뒤 재적용 | pull handler 구현 |
 | P2-08 | crypto clients | Swift↔Kotlin fixed-vector 교차 복호화와 AAD 일치 | 두 client crypto 구현 |

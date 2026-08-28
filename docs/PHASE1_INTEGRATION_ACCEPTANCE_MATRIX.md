@@ -59,8 +59,10 @@ flowchart TB
 | M00~M02 local D1 schema | `def5260`, `515c036`, `381000f` | ✅ | M03 owner별 extension table 구현 |
 | M03 turn·bubble·extension schema | `8bd7f68`, `6bffb35` | ✅ | M04 versioned AI state preflight |
 | M04 versioned AI state contract | `3c462b5`, `b2a93c6` DDL·metadata validator·320 tests | ✅ | M05 attachment migration |
+| M05 attachment persistence | `5299b27` DDL·validator·bubble FK rebuild, Codex focused 50 tests 중 M05 포함 | ✅ | M06 ledger 뒤 local R2 endpoint |
+| Device token auth boundary | `fa49ed1` canonical token/hash/revoked local boundary, Codex focused auth review | ✅ | M06 handler·attachment route에 연결 |
 | D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md) | 🟡 | migration + local D1 batch test |
-| R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약 | 🟡 | M05 DDL·validator·local R2 test |
+| R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약, `5299b27` persistence | 🟡 | M06 ledger 뒤 local R2 state transition test |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
 | 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | Worker·D1 synthetic test 통과 뒤 |
@@ -81,6 +83,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] 기존 health·content-free error·배포 방지 test 유지
 - [x] `group_state` target에서 `worldline_id`를 금지 (`e83bce1`)
 - [x] 후속 handler가 operation table을 복제하지 않도록 read-only 재사용 경로 제공 (`e83bce1`)
+- [x] canonical device token parse·hash lookup·revoked 거부 경계 (`fa49ed1`)
 
 ### D1 persistence boundary
 
@@ -91,6 +94,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [ ] CAS failure가 canonical row·sequence·operation/change log 전체를 rollback하는 test
 - [ ] idempotent replay가 sequence를 추가 소비하지 않는 test
 - [x] M01·M02 tenant/account 경계를 D1 FK로 강제
+- [x] M05 attachment DDL·bubble account-scoped FK rebuild (`5299b27`)
 - [ ] attachment state transition test
 
 ### Integration evidence
@@ -111,11 +115,11 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 | 담당 | 현재 소유 범위 | 완료 산출물 |
 | --- | --- | --- |
-| Claude Code | `cloudflare/sync-worker/`의 M05 migration·validator·focused test | attachment schema·bubble FK rebuild 커밋 |
-| Codex | canonical schema, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test, 통합 판정 | M05 size·state·FK 결정 유지·commit 위험 검토 |
+| Claude Code | `cloudflare/sync-worker/`의 M06 read-only preflight, 이후 확정 계약에 따른 migration·focused test | ledger 모호성 보고 후 bounded implementation commit |
+| Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | M06 ledger·sequence·replay·rollback 계약 확정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03과 M04는 승인됐다. 다음 gate는 M05 attachment metadata와 create validator, 기존 bubble reference의 account-scoped FK rebuild다. R2 endpoint의 실제 상태 전이와 orphan 처리는 이 migration commit 뒤 별도 local handler 단계에서 검증한다.
+M03~M05와 device token 인증 경계는 승인됐다. 다음 gate는 M06 operation/change ledger와 account-wide sequence의 local atomicity다. R2 endpoint의 실제 상태 전이와 orphan 처리는 M06 write 경계 뒤 별도 local handler 단계에서 검증한다.
 
 ## 🔗 관련 문서
 

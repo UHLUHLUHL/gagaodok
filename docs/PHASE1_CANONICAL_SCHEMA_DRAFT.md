@@ -117,13 +117,15 @@ Importer는 canonical 세 값은 그대로 허용하고, 관측된 legacy alias 
   "platform": "macos",
   "linked_at": "2026-08-27T00:00:00Z",
   "revoked_at": null,
-  "key_generation": 1
+  "key_generation": 1,
+  "token_hash": "0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
 
 - ⬜ `platform`은 `macos`·`android_phone`·`android_tablet` 중 하나다.
 - 🔒 `display_name`은 사용자가 붙인 기기 이름이므로 암호화한다.
 - ⬜ `revoked_at`이 null이 아니면 해당 device token을 거부한다.
+- ⬜ `token_hash`는 nullable lowercase SHA-256 hex이며 account를 가로질러 전역 unique다. raw token은 D1·로그·fixture에 저장하지 않는다.
 
 **통합 결정:** 한 `space_id`에 여러 기기를 허용한다. `space_id`는 물리 기기 identity가 아니라 동작·출처 영역이다. 기기 교체와 향후 같은 종류 기기 추가 때문에 `UNIQUE(account_id, space_id)`를 두지 않는다. 동시 write는 device 수 제한이 아니라 `base_revision` CAS, active writer, generation authority로 통제한다.
 

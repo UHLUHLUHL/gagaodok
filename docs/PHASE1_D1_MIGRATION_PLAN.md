@@ -68,10 +68,12 @@ flowchart TB
 | M01 | `0001_account_device.sql`, `0002_device_account_fk.sql` | `def5260`, `515c036` | ✅ account/device와 FK 승인 |
 | M02 | `0003_conversation_scope.sql` | `381000f` | ✅ room/group_state/worldline 승인 |
 | M03 | `0004_turn_bubble_extension.sql` | `8bd7f68`, `6bffb35` | ✅ turn/bubble/owner별 extension 승인 |
-| M04 | 예정 `0005_versioned_ai_state.sql` | Claude preflight + Codex 통합 결정 | ⏳ 신규 table DDL·fixture 구현 |
-| M05~M06 | 없음 | 구현 전 | ⏳ 선행 단계 이후 |
+| M04 | `0005_versioned_ai_state.sql` | `3c462b5`, `b2a93c6` | ✅ versioned AI state·metadata 계약 승인 |
+| M05 | `0006_attachment.sql` | `5299b27` | ✅ attachment DDL·validator·bubble FK rebuild 승인 |
+| 인증 경계 | `0007_device_token.sql` | `fa49ed1` | ✅ token hash storage·local auth boundary 승인; 논리 M-stage 아님 |
+| M06 | 다음 physical migration `0008_*` | 구현 전 | ⏳ ledger 계약·local transaction fixture 선행 |
 
-물리 파일 번호 `0002`는 논리 M02를 뜻하지 않는다. `0001`과 `0002`가 함께 논리 M01이고, 논리 M02는 물리 `0003`이다. M02 row의 nullable `server_seq` column은 canonical row shape이지만 값을 발급하지 않는다. `account.next_server_seq`와 실제 sequence 할당은 M06에만 추가한다.
+물리 파일 번호는 논리 M-stage와 같지 않다. `0001`과 `0002`가 함께 논리 M01이고, 논리 M02~M05는 각각 physical `0003`~`0006`이다. `0007`은 M06 전의 cross-cutting device 인증 migration이며, M06 ledger는 다음 physical `0008`부터 시작한다. M02~M05 row의 nullable `server_seq` column은 canonical row shape이지만 값을 발급하지 않는다. `account.next_server_seq`와 실제 sequence 할당은 M06에만 추가한다.
 
 D1 local probe에서는 `PRAGMA foreign_keys`가 `1`이며 `foreign_keys = OFF`와 `defer_foreign_keys = ON` 요청이 모두 무시됐다. 따라서 앞으로 rebuild가 필요한 migration은 PRAGMA로 제약을 끄거나 미루는 방식에 의존하지 않고, 항상 FK-valid한 copy/drop 순서로 설계한다. orphan row를 조용히 거르는 대신 migration 전체를 실패·rollback한다.
 
@@ -123,7 +125,8 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M04: operation별 metadata create/patch allowlist와 required/clear 규칙 보정 (`b2a93c6`)
 - [x] M05: binary R2 envelope ciphertext 상한 `12,582,946`과 attachment metadata field·6-state enum 확정
 - [x] M05: 기존 bubble attachment reference에 account-scoped FK를 소급하기로 확정
-- [ ] M05: attachment DDL·create validator와 bubble·bubble extension rebuild fixture 통과
+- [x] M05: attachment DDL·create validator와 bubble·bubble extension rebuild fixture 통과 (`5299b27`)
+- [x] M06 선행 인증: canonical device token parsing·hash lookup·revoked 거부 local test 통과 (`fa49ed1`)
 - [ ] M06: revoked device write 거부와 exported operation table 재사용을 handler test로 증명
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
@@ -158,11 +161,13 @@ M03의 `bubble.attachment_ref_attachment_id`는 M05 attachment table보다 먼�
 
 | 단계 | 담당 | 소유 범위 | 산출물 |
 | --- | --- | --- | --- |
-| M05 migration | Claude Code | `cloudflare/sync-worker/migrations/0006_*`, M05 focused test, operation validator와 필요한 stage/latest migration expectation | attachment schema·bubble FK rebuild commit |
-| M05 fixture·통합 문서 | Codex | Phase 2 plan, synthetic fixture/tool test, acceptance matrix와 이 plan | size·state·FK 결정과 합성 metadata contract |
-| Integration review | Codex | Claude commit과 canonical docs의 위험 delta | M05 승인 또는 bounded 보정 지시 |
+| M06 preflight | Claude Code | `cloudflare/sync-worker/` read-only inspection | operation/change ledger·transaction 경계의 모호성 목록과 최대 2개 선택지 |
+| M06 계약·fixture | Codex | canonical schema, Worker API, 이 plan, Phase 2 fixture | ledger row shape·sequence·replay·rollback 계약 확정 |
+| M06 migration | Claude Code | Codex가 확정한 `0008_*`와 stage-focused tests | local ledger schema·atomicity 증거 commit |
 
 후속 migration 작업도 하나의 commit에 schema와 해당 local fixture만 담는다. 앱 코드, remote command, deploy, 실제 data 접근은 같은 작업에 섞지 않는다.
+
+Attachment endpoint는 M06 write ledger 뒤에 구현한다. allocation·upload completion도 remote write이므로 operation replay와 account-wide sequence 없이 임시 D1 mutation 경로를 열지 않는다. `fa49ed1` 인증 module은 그때 모든 attachment·sync route의 첫 경계로 연결한다.
 
 ## 🔗 관련 문서
 
