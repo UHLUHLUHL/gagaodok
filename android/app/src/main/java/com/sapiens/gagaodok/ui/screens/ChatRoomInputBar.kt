@@ -103,6 +103,12 @@ internal fun tabletAttachmentActions(): List<AttachmentAction> = listOf(
     AttachmentAction.INK
 )
 
+internal fun phoneAttachmentActions(): List<AttachmentAction> = listOf(
+    AttachmentAction.PHOTO_LIBRARY,
+    AttachmentAction.CAMERA,
+    AttachmentAction.PDF
+)
+
 @Composable
 internal fun ChatInputBar(
     text: String,
@@ -120,6 +126,11 @@ internal fun ChatInputBar(
     val colors = KakaoTheme.colors
     val canSend = enabled && (text.isNotBlank() || attachment != null)
     var attachmentMenuExpanded by remember { mutableStateOf(false) }
+    val attachmentActions = if (enhancedAttachments) {
+        tabletAttachmentActions()
+    } else {
+        phoneAttachmentActions()
+    }
 
     Column(
         Modifier
@@ -167,39 +178,33 @@ internal fun ChatInputBar(
                 .padding(end = Metrics.inputBarEndPadding, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.Bottom
         ) {
-            if (enhancedAttachments) {
-                Box {
-                    RoundInputButton(
-                        onClick = { attachmentMenuExpanded = true },
-                        contentDescription = "첨부 메뉴"
-                    ) {
-                        Icon(
-                            Icons.Filled.Add, "첨부 메뉴",
-                            tint = colors.textPrimary,
-                            modifier = Modifier.size(Metrics.inputButtonGlyph + 2.dp)
-                        )
-                    }
-                    if (attachmentMenuExpanded) {
-                        AttachmentPopover(
-                            items = tabletAttachmentActions().map { action ->
-                                when (action) {
-                                    AttachmentAction.PHOTO_LIBRARY ->
-                                        AttachmentPopoverItem("사진", Icons.Filled.Image, onPickImage)
-                                    AttachmentAction.CAMERA ->
-                                        AttachmentPopoverItem("사진 촬영", Icons.Filled.CameraAlt, onTakePhoto)
-                                    AttachmentAction.PDF ->
-                                        AttachmentPopoverItem("파일", Icons.Filled.Description, onPickPdf)
-                                    AttachmentAction.INK ->
-                                        AttachmentPopoverItem("필기", Icons.Outlined.Edit, onOpenInk)
-                                }
-                            },
-                            onDismiss = { attachmentMenuExpanded = false }
-                        )
-                    }
+            Box {
+                RoundInputButton(
+                    onClick = { attachmentMenuExpanded = true },
+                    contentDescription = "첨부 메뉴"
+                ) {
+                    Icon(
+                        Icons.Filled.Add, "첨부 메뉴",
+                        tint = colors.textPrimary,
+                        modifier = Modifier.size(Metrics.inputButtonGlyph + 2.dp)
+                    )
                 }
-            } else {
-                RoundInputButton(onClick = onPickImage, contentDescription = "사진 첨부") {
-                    Icon(Icons.Filled.Image, "사진 첨부", tint = colors.textPrimary, modifier = Modifier.size(Metrics.inputButtonGlyph))
+                if (attachmentMenuExpanded) {
+                    AttachmentPopover(
+                        items = attachmentActions.map { action ->
+                            when (action) {
+                                AttachmentAction.PHOTO_LIBRARY ->
+                                    AttachmentPopoverItem("사진", Icons.Filled.Image, onPickImage)
+                                AttachmentAction.CAMERA ->
+                                    AttachmentPopoverItem("사진 촬영", Icons.Filled.CameraAlt, onTakePhoto)
+                                AttachmentAction.PDF ->
+                                    AttachmentPopoverItem("파일", Icons.Filled.Description, onPickPdf)
+                                AttachmentAction.INK ->
+                                    AttachmentPopoverItem("필기", Icons.Outlined.Edit, onOpenInk)
+                            }
+                        },
+                        onDismiss = { attachmentMenuExpanded = false }
+                    )
                 }
             }
 
