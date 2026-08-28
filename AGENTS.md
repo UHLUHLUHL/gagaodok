@@ -12,8 +12,9 @@ These rules add only Gagaodok-specific constraints to the global contract.
 - Codex leads architecture, task division, integration, and final reporting.
   Claude Code receives bounded prompts with owned files, forbidden scope, tests,
   and commit requirements. Agents must not edit the same files concurrently.
-- Existing staged or dirty files belong to their current owner. Inspect overlap
-  before editing and never absorb unrelated work into a commit.
+- Treat existing staged, dirty, and untracked files as user or other-agent work.
+  Inspect overlapping hunks before editing; if they cannot be separated safely,
+  report the overlap instead of overwriting or absorbing it into a commit.
 
 ## Minimal workflow
 
@@ -39,12 +40,16 @@ These rules add only Gagaodok-specific constraints to the global contract.
 ## Verification choices
 
 - Swift logic: focused test if available, then one final `swift build` when needed.
-- Android: use Gradle's reported JVM; Gagaodok requires JDK 17 unless the checkout
-  proves otherwise. Test/build only the affected variant.
+- Android: inspect Gradle's reported JVM first. Use JDK 17 unless the active
+  checkout explicitly requires another version; report a mismatch before testing.
+  Test/build only the affected variant.
 - Shared storage, routing, networking, or compaction: verify only affected modes
-  and platforms. UI claims require the relevant real flow when feasible.
-- Packaging/install changes only: run `./build_app.sh`, then verify the installed
-  app signature. State explicitly whether `/Applications/가가오독.app` changed.
+  and platforms. UI claims require the relevant real flow when feasible; if it is
+  unavailable, report the UI as unverified rather than inferring it from a build.
+- For packaging changes, determine whether `./build_app.sh` replaces the installed
+  app before running it. Without explicit install approval, verify only a local
+  artifact. After an approved install, verify its signature and state explicitly
+  whether `/Applications/가가오독.app` changed.
 
 ## Cross-device sync safety
 
