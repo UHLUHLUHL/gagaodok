@@ -37,6 +37,21 @@ WORLDLINE_NAMED = "20000000-0000-4000-8000-000000000001"
 ENGINE_PROFILE = "C0000000-0000-4000-8000-0000000000E1"
 PERSONA_SNAPSHOT = "50000000-0000-4000-8000-000000000001"
 CHECKPOINT = "60000000-0000-4000-8000-000000000001"
+ATTACHMENT = "70000000-0000-4000-8000-000000000001"
+
+MAX_ATTACHMENT_SOURCE_BYTES = 12_582_912
+ATTACHMENT_BINARY_ENVELOPE_OVERHEAD = 34
+MAX_ATTACHMENT_CIPHERTEXT_BYTES = (
+    MAX_ATTACHMENT_SOURCE_BYTES + ATTACHMENT_BINARY_ENVELOPE_OVERHEAD
+)
+ATTACHMENT_STATES = {
+    "allocated",
+    "uploaded",
+    "ready",
+    "abandoned",
+    "tombstoned",
+    "garbage_collected",
+}
 
 
 def _minimal_shape_envelope() -> str:
@@ -157,6 +172,25 @@ def build_synthetic_fixture() -> dict[str, Any]:
                 "created_by_device_id": DEVICE_PHONE,
                 "checkpoint_schema_version": 1,
                 "revision": 0,
+                "server_seq": None,
+            }
+        ],
+        "attachments": [
+            {
+                "account_id": ACCOUNT_A,
+                "attachment_id": ATTACHMENT,
+                "origin_space_id": PHONE_SPACE,
+                "r2_object_key": "obj/70000000-0000-4000-8000-0000000000FF",
+                "kind": "attachment",
+                "state": "allocated",
+                "source_byte_size": 64,
+                "ciphertext_byte_size": 64 + ATTACHMENT_BINARY_ENVELOPE_OVERHEAD,
+                "ciphertext_hash": "00" * 32,
+                "key_generation": 1,
+                "file_name_enc": _minimal_shape_envelope(),
+                "mime_type_enc": _minimal_shape_envelope(),
+                "wrapped_file_key_enc": _minimal_shape_envelope(),
+                "created_at": "2026-01-01T00:00:00Z",
                 "server_seq": None,
             }
         ],
@@ -287,6 +321,43 @@ def validate_synthetic_fixture(fixture: dict[str, Any]) -> None:
         if (row.get("first_turn_id") is None) != (row.get("last_turn_id") is None):
             raise ValueError("checkpoint turn range must be wholly present or absent")
 
+    r2_keys = set()
+    for row in fixture.get("attachments", []):
+        if row.get("account_id") not in account_ids:
+            raise ValueError("attachment row crosses the synthetic account boundary")
+        canonical_uuid(row.get("attachment_id"), field="attachment_id")
+        if row.get("origin_space_id") not in SPACE_IDS:
+            raise ValueError("attachment origin space is not canonical")
+        if row.get("kind") not in {"attachment", "avatar"}:
+            raise ValueError("attachment kind is invalid")
+        if row.get("state") not in ATTACHMENT_STATES:
+            raise ValueError("attachment state is invalid")
+        source_size = row.get("source_byte_size")
+        ciphertext_size = row.get("ciphertext_byte_size")
+        if (
+            isinstance(source_size, bool)
+            or not isinstance(source_size, int)
+            or source_size < 1
+            or source_size > MAX_ATTACHMENT_SOURCE_BYTES
+            or ciphertext_size != source_size + ATTACHMENT_BINARY_ENVELOPE_OVERHEAD
+            or ciphertext_size > MAX_ATTACHMENT_CIPHERTEXT_BYTES
+        ):
+            raise ValueError("attachment size contract is invalid")
+        digest = row.get("ciphertext_hash")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError("attachment ciphertext hash is invalid")
+        if row.get("key_generation") != 1:
+            raise ValueError("attachment key generation is invalid")
+        r2_key = row.get("r2_object_key")
+        unique_key = (row.get("account_id"), r2_key)
+        if not isinstance(r2_key, str) or not r2_key or unique_key in r2_keys:
+            raise ValueError("attachment R2 object key is invalid")
+        r2_keys.add(unique_key)
+
     encoded = fixture.get("opaque_envelopes", {}).get("minimal_v1_aes_gcm")
     if not isinstance(encoded, str):
         raise ValueError("minimal structural envelope is missing")
@@ -314,6 +385,7 @@ def _record_count(fixture: dict[str, Any]) -> int:
             "persona_snapshot_heads",
             "room_ai_state_refs",
             "checkpoints",
+            "attachments",
         )
     )
 

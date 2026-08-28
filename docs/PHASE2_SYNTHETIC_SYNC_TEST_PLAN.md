@@ -22,9 +22,10 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M01 account/device와 device-account FK | `def5260`, `515c036` | 완료 |
 | M02 conversation scope | `381000f` | 완료 |
 | M03 turn·bubble·extension | `8bd7f68`, `6bffb35` | 완료 |
-| M04 versioned AI state | contract 결정 완료 | synthetic fixture·DDL 구현 대기 |
-| M03~M06 persistence | migration·handler 미구현 | 대기 |
-| local R2 attachment flow | 구현·상한 미확정 | 대기 |
+| M04 versioned AI state | `3c462b5`, `b2a93c6` | 완료 |
+| M03~M04 persistence | `8bd7f68`, `6bffb35`, `3c462b5`, `b2a93c6` | 완료 |
+| M05~M06 persistence | attachment migration·handler 미구현 | 대기 |
+| local R2 attachment flow | source 12,582,912 / binary ciphertext 12,582,946 계약·합성 metadata fixture | DDL·endpoint 대기 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 
 물리 migration 파일 `0002_device_account_fk.sql`은 논리 M02가 아니라 **M01 account boundary의 FK 보완**이다. 논리 M02는 `room`·`group_state`·`worldline`이다.
@@ -94,7 +95,7 @@ fixture는 미래 D1 row의 완성형 schema가 아니다. 아직 고정되지 �
 - allocated→uploaded→ready 전이와 size/hash metadata를 검증한다.
 - Worker는 body를 복호화하거나 AEAD를 검증하지 않는다.
 - R2 성공 뒤 D1 complete 실패는 Phase 2에서 자동 삭제하지 않고 orphan으로 보고한다.
-- ciphertext 상한은 M05 전에 별도 확정한다.
+- source 상한은 12,582,912 bytes, §7.1 binary envelope ciphertext 상한은 12,582,946 bytes다. fixture는 payload 없이 metadata와 34-byte 차이만 검증한다.
 
 ### Pull, crash recovery, logging
 

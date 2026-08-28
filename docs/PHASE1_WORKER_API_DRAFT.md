@@ -186,7 +186,7 @@ operation 하나를 적용한다.
 - ID/revision pair와 checkpoint range pair는 함께 set하거나 함께 clear해야 한다.
 - metadata는 로그에 값을 출력하지 않는다. raw-body fingerprint는 metadata를 포함한 최초 request bytes 전체에 대해 계산한다.
 
-M04 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create request의 `metadata_set`에 반드시 있어야 하고, `선택 set`은 생략할 수 있다. 표에 없는 key는 허용하지 않는다.
+M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create request의 `metadata_set`에 반드시 있어야 하고, `선택 set`은 생략할 수 있다. 표에 없는 key는 허용하지 않는다.
 
 | operation | 필수 `metadata_set` | 선택 `metadata_set` | 허용 `metadata_clear` |
 | --- | --- | --- | --- |
@@ -195,6 +195,7 @@ M04 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create reque
 | `create_persona_snapshot` | `owner_space_id`, `created_by_device_id`, `created_at`, `persona_schema_version` | 없음 | 없음 (`[]`만 허용) |
 | `create_checkpoint` | `checkpoint_schema_version`, `owner_space_id`, `created_by_device_id`, `created_at` | `first_turn_id` + `last_turn_id`; `through_server_seq`; `compaction_compat_tag` | 없음 (`[]`만 허용) |
 | `patch_checkpoint` | 없음 | `first_turn_id` + `last_turn_id`; `through_server_seq`; `checkpoint_schema_version`; `compaction_compat_tag` | 같은 optional fields만 허용하며 range는 pair 단위 |
+| `create_attachment` | `origin_space_id`, `kind`, `source_byte_size`, `ciphertext_byte_size`, `ciphertext_hash`, `key_generation`, `created_at` | 없음 | 없음 (`[]`만 허용) |
 
 `owner_space_id`·`created_by_device_id`·`created_at`은 생성 provenance이므로 `patch_checkpoint`가 바꾸거나 지우지 못한다. encrypted segments·summary·profile/fingerprint는 계속 `set`·`clear`를 사용한다. `create_persona_snapshot`은 위 필수 metadata와 `base_revision`을 받고, 최초 `(base=0,target=1)` 또는 연속 `(target=base+1)`만 허용한다.
 
@@ -361,7 +362,7 @@ R2 payload는 공개 URL로 노출하지 않고 Worker binding을 통해 stream�
 
 Android 현재 코드는 `12 * 1024 * 1024`를 사용한다. v1 source payload 상한은 **12,582,912 bytes**로 해석한다. 이 값은 Claude 검토가 끝난 뒤 E2EE 원문에 통합해야 하며, 현재 검토 중인 문서는 이 작업에서 수정하지 않는다.
 
-암호화된 R2 object의 최대 request byte는 attachment envelope 형식이 확정된 뒤 `MAX_ENCRYPTED_OBJECT_BYTES` 상수로 별도 고정한다. source 상한과 ciphertext 상한을 같은 숫자로 비교하지 않는다.
+R2 object는 E2EE §7.1 binary envelope를 Base64 없이 저장한다. 따라서 `MAX_ENCRYPTED_OBJECT_BYTES = 12,582,946`(`12,582,912 + 34`)이다. metadata allocation 단계에서 source가 `1...12,582,912`, ciphertext가 정확히 source + 34인지 먼저 검사한다. content PUT은 `Content-Length`가 metadata의 ciphertext size와 같고 이 상한 이하인지 body를 읽기 전에 다시 검사한다.
 
 ### 6.2 상태 기계
 
@@ -370,6 +371,8 @@ allocated → uploaded → ready
     └──────────────→ abandoned
 ready → tombstoned → garbage_collected
 ```
+
+D1 `state` CHECK는 `allocated`, `uploaded`, `ready`, `abandoned`, `tombstoned`, `garbage_collected` 6개 값만 허용한다. 임의 UPDATE를 통한 전이는 허용하지 않으며 handler가 위 edge만 CAS로 적용한다. M05 migration은 enum 저장 경계까지만 만들고 실제 endpoint transition handler는 후속 local handler 작업이다.
 
 ### 6.3 endpoints
 

@@ -58,9 +58,10 @@ flowchart TB
 | operation target·field envelope 검사 | `e83bce1`, [Worker validator 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md) | ✅ | handler가 exported operation table 재사용 |
 | M00~M02 local D1 schema | `def5260`, `515c036`, `381000f` | ✅ | M03 owner별 extension table 구현 |
 | M03 turn·bubble·extension schema | `8bd7f68`, `6bffb35` | ✅ | M04 versioned AI state preflight |
-| M04 versioned AI state contract | `3c462b5` 0005 DDL·immutable trigger·local fixture | 🟡 | metadata create/patch allowlist 보정 후 최종 승인 |
+| M04 versioned AI state contract | `3c462b5`, `b2a93c6` DDL·metadata validator·320 tests | ✅ | M05 attachment migration |
 | D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md) | 🟡 | migration + local D1 batch test |
-| R2 attachment state machine | Worker API 초안 | 🟡 | encrypted size·local R2 test |
+| R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약 | 🟡 | M05 DDL·validator·local R2 test |
+| Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
 | 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | Worker·D1 synthetic test 통과 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
@@ -110,11 +111,11 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 | 담당 | 현재 소유 범위 | 완료 산출물 |
 | --- | --- | --- |
-| Claude Code | `cloudflare/sync-worker/`의 M03 migration·focused test | turn·bubble·owner별 extension table schema 커밋 |
-| Codex | canonical schema, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test, 통합 판정 | owner-table 결정 유지·M03 commit 위험 검토 |
+| Claude Code | `cloudflare/sync-worker/`의 M05 migration·validator·focused test | attachment schema·bubble FK rebuild 커밋 |
+| Codex | canonical schema, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test, 통합 판정 | M05 size·state·FK 결정 유지·commit 위험 검토 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-Claude Code의 preflight blocker에 따라 Codex는 논리 `extension_field`를 owner별 물리 table로 분리했고 `6bffb35`에서 owner 종속 metadata와 named-worldline PHONE-only 경계를 보정했다. M03은 승인됐으며 다음 gate는 M04 immutable revision·head/checkpoint CAS·room reference migration 순서다.
+M03과 M04는 승인됐다. 다음 gate는 M05 attachment metadata와 create validator, 기존 bubble reference의 account-scoped FK rebuild다. R2 endpoint의 실제 상태 전이와 orphan 처리는 이 migration commit 뒤 별도 local handler 단계에서 검증한다.
 
 ## 🔗 관련 문서
 

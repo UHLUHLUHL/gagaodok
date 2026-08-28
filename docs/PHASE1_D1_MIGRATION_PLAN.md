@@ -120,9 +120,10 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M04: immutable engine/persona revision, persona head CAS, mutable checkpoint CAS의 D1 경계 확정
 - [x] M04: room exact-revision reference는 신규 1:1 `room_ai_state_ref`로 정규화해 기존 FK graph rebuild 회피
 - [x] M04: 신규 table DDL·immutable trigger·local fixture 구현 (`3c462b5`)
-- [ ] M04: operation별 metadata create/patch allowlist와 required/clear 규칙을 표 계약에 맞게 보정
-- [ ] M05: R2 ciphertext 상한과 attachment metadata field 확정
-- [ ] M05: 기존 bubble attachment reference에 account-scoped FK를 소급할지 확정하고, 추가한다면 bubble·bubble extension 동시 rebuild fixture 통과
+- [x] M04: operation별 metadata create/patch allowlist와 required/clear 규칙 보정 (`b2a93c6`)
+- [x] M05: binary R2 envelope ciphertext 상한 `12,582,946`과 attachment metadata field·6-state enum 확정
+- [x] M05: 기존 bubble attachment reference에 account-scoped FK를 소급하기로 확정
+- [ ] M05: attachment DDL·create validator와 bubble·bubble extension rebuild fixture 통과
 - [ ] M06: revoked device write 거부와 exported operation table 재사용을 handler test로 증명
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
@@ -142,7 +143,7 @@ Engine/persona immutable table은 primary key revision을 `1...2^53-1`로 제한
 
 ### M05 bubble attachment FK rebuild gate
 
-M03의 `bubble.attachment_ref_attachment_id`는 M05 attachment table보다 먼저 생기므로 현재 FK가 없다. M05에서 `(account_id, attachment_ref_attachment_id) → attachment(account_id, attachment_id)`를 소급한다면 D1이 FK disable/defer PRAGMA를 무시한다는 전제에서 다음 순서를 한 migration batch로 검증한다.
+M03의 `bubble.attachment_ref_attachment_id`는 M05 attachment table보다 먼저 생기므로 현재 FK가 없다. M05에서 `(account_id, attachment_ref_attachment_id) → attachment(account_id, attachment_id)`를 소급한다. D1이 FK disable/defer PRAGMA를 무시한다는 전제에서 다음 순서를 한 migration batch로 검증한다.
 
 1. `attachment` table과 unique/index contract를 먼저 만든다.
 2. 새 attachment FK를 포함한 staging bubble table을 만든다.
@@ -151,15 +152,15 @@ M03의 `bubble.attachment_ref_attachment_id`는 M05 attachment table보다 먼�
 5. 기존 child `bubble_extension_field`를 먼저 drop하고 기존 bubble을 나중에 drop한다.
 6. staging bubble을 `bubble`로, staging child를 `bubble_extension_field`로 rename하고 원래 PK·unique·CHECK·FK를 모두 재검증한다.
 
-필수 fixture는 attachment가 없는 null reference 보존, matching attachment reference 성공, dangling/cross-account reference 전체 rollback, bubble과 extension whole-row byte 동일성, tombstone·`bubble_order` unique 보존, staging table·ledger 잔여 없음이다. M05 구현 전에는 실제 FK 추가 여부를 최종 판정하지 않으며 placeholder parent row나 synthetic attachment metadata를 migration이 임의 생성하지 않는다.
+필수 fixture는 attachment가 없는 null reference 보존, matching attachment reference 성공, dangling/cross-account reference 전체 rollback, bubble과 extension whole-row byte 동일성, tombstone·`bubble_order` unique 보존, staging table·ledger 잔여 없음이다. Placeholder parent row나 synthetic attachment metadata를 migration이 임의 생성하지 않는다. rename 전후 `PRAGMA foreign_key_list`가 child의 참조 table을 정확히 `bubble`로 보고하는지도 검증한다.
 
 ## ✍️ 다음 구현 작업 분배
 
 | 단계 | 담당 | 소유 범위 | 산출물 |
 | --- | --- | --- | --- |
-| M03 migration 재개 | Claude Code | `cloudflare/sync-worker/migrations/0004_*`, M03 focused test와 필요한 공용 migration expectation | turn·bubble·owner별 extension table schema commit |
-| Phase 2 fixture·통합 문서 | Codex | Phase 2 plan, synthetic fixture/tool test, acceptance matrix와 이 plan | M00~M02 승인 반영·M03 gate 결정 |
-| Integration review | Codex | Claude commit과 canonical docs의 위험 delta | M03 승인 또는 bounded 보정 지시 |
+| M05 migration | Claude Code | `cloudflare/sync-worker/migrations/0006_*`, M05 focused test, operation validator와 필요한 stage/latest migration expectation | attachment schema·bubble FK rebuild commit |
+| M05 fixture·통합 문서 | Codex | Phase 2 plan, synthetic fixture/tool test, acceptance matrix와 이 plan | size·state·FK 결정과 합성 metadata contract |
+| Integration review | Codex | Claude commit과 canonical docs의 위험 delta | M05 승인 또는 bounded 보정 지시 |
 
 후속 migration 작업도 하나의 commit에 schema와 해당 local fixture만 담는다. 앱 코드, remote command, deploy, 실제 data 접근은 같은 작업에 섞지 않는다.
 

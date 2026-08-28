@@ -470,8 +470,13 @@ Phase 0에서 발견한 digest는 Mac 1개, phone 3개이며 **모두 policy 식
 | --- | --- |
 | ⬜ `attachment_id` | identity |
 | ⬜ `r2_object_key` | 내용과 무관한 난수 UUID 경로 |
-| ⬜ `byte_size` | R2 객체 크기에서 어차피 드러난다 |
+| ⬜ `origin_space_id` | 생성 출처·권한 metadata, key에는 미포함 |
 | ⬜ `kind` | `attachment` 또는 `avatar` |
+| ⬜ `state` | `allocated`, `uploaded`, `ready`, `abandoned`, `tombstoned`, `garbage_collected` |
+| ⬜ `source_byte_size` | 암호화 전 원문 크기, `1...12,582,912` |
+| ⬜ `ciphertext_byte_size` | binary R2 envelope 크기, 정확히 source + 34 |
+| ⬜ `ciphertext_hash` | lowercase SHA-256 hex 64자, byte 동일성 확인용 |
+| ⬜ `key_generation` | v1은 정확히 `1` |
 | 🔒 `file_name` | |
 | 🔒 `mime_type` | |
 | 🔒 `wrapped_file_key` | scope 하위 키로 감싼 file key |
@@ -484,6 +489,10 @@ Phase 0에서 발견한 digest는 Mac 1개, phone 3개이며 **모두 policy 식
 - ⬜ `origin_space_id`는 **생성 출처 기록과 device 권한 검사용 평문 metadata**로 저장하되 primary·unique key에는 넣지 않는다.
 - sync operation의 `create_attachment` target에는 `space_id`와 `attachment_id`만 온다. **`room_id`와 `worldline_id`는 금지**한다(Worker API 초안 §4.1.1).
 - 다운로드 권한은 같은 account의 유효한 device token으로 판정한다. 한 첨부가 여러 방에서 참조될 수 있으므로 room UUID를 identity에 억지로 넣지 않는다.
+
+M05 D1은 6개 state enum 자체를 저장하지만 상태 전이 순서는 handler가 강제한다. `create_attachment`는 `allocated`만 만들고, upload 성공 뒤 `uploaded`, R2 `head()`의 byte size 확인 뒤 `ready`가 된다. `abandoned`·`tombstoned`·`garbage_collected`도 같은 행에 남겨 audit와 dangling reference 검사를 유지하며 physical row delete를 lifecycle 의미로 사용하지 않는다.
+
+M05에서 기존 `bubble.attachment_ref_attachment_id`에 `(account_id, attachment_id)` FK를 소급한다. attachment가 없는 null reference는 유지하지만 dangling 또는 cross-account non-null reference는 migration 전체를 rollback한다. Tombstoned bubble도 reference identity를 보존하므로 garbage-collected attachment metadata row는 삭제하지 않는다.
 
 ### 7.2 12MB v1 상한
 
@@ -502,13 +511,20 @@ Phase 0 실측값이다.
 2. 상한 초과 파일은 **명시적으로 제외하고 사용자에게 알린다.** 방 전체를 조용히 누락하거나 업로드 중 실패하는 것은 금지한다.
 3. **avatar도 첨부와 같은 경로·같은 상한·같은 시험 대상이다.** phone의 최대 avatar 6.59MB가 관측된 최대 첨부 2.6MB보다 2.5배 크므로, avatar를 "작은 이미지"로 가정하면 가장 큰 실제 payload를 놓친다.
 
+R2 object는 E2EE §7.1의 binary envelope를 Base64 변환 없이 저장한다. 고정 overhead는 `version 1 + alg 1 + key_generation 4 + nonce 12 + GCM tag 16 = 34 bytes`이므로 `MAX_ATTACHMENT_SOURCE_BYTES = 12,582,912`, `MAX_ENCRYPTED_OBJECT_BYTES = 12,582,946`이다. `ciphertext_byte_size`는 source + 34와 정확히 같아야 한다. Chunked AEAD는 이 식과 다른 manifest contract가 필요하므로 v1 M05 범위에서 사용하지 않는다.
+
 ```json
 {
   "account_id": "A0000000-0000-4000-8000-000000000001",
   "attachment_id": "70000000-0000-4000-8000-000000000001",
+  "origin_space_id": "PHONE_SPACE",
   "kind": "attachment",
+  "state": "allocated",
   "r2_object_key": "obj/70000000-0000-4000-8000-0000000000FF",
-  "byte_size": 2618357,
+  "source_byte_size": 2618357,
+  "ciphertext_byte_size": 2618391,
+  "ciphertext_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "key_generation": 1,
   "file_name": "ENC(file name)",
   "mime_type": "ENC(image/png)",
   "wrapped_file_key": "ENC(wrapped file key)",

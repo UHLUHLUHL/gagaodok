@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 
 from tools.synthetic_sync_fixture import (
+    MAX_ATTACHMENT_CIPHERTEXT_BYTES,
+    MAX_ATTACHMENT_SOURCE_BYTES,
     build_synthetic_fixture,
     canonical_fixture_bytes,
     validate_synthetic_fixture,
@@ -162,6 +164,30 @@ class SyntheticSyncFixtureTests(unittest.TestCase):
         self.assertIsNone(checkpoint["first_turn_id"])
         self.assertIsNone(checkpoint["last_turn_id"])
         self.assertEqual(checkpoint["revision"], 0)
+
+    def test_m05_attachment_fixture_uses_exact_binary_envelope_size_contract(self):
+        attachment = self.fixture["attachments"][0]
+        self.assertEqual(MAX_ATTACHMENT_SOURCE_BYTES, 12_582_912)
+        self.assertEqual(MAX_ATTACHMENT_CIPHERTEXT_BYTES, 12_582_946)
+        self.assertEqual(
+            attachment["ciphertext_byte_size"],
+            attachment["source_byte_size"] + 34,
+        )
+        self.assertEqual(attachment["state"], "allocated")
+        self.assertEqual(attachment["key_generation"], 1)
+        self.assertEqual(len(attachment["ciphertext_hash"]), 64)
+        self.assertNotIn("content", attachment)
+        self.assertNotIn("ciphertext", attachment)
+
+    def test_validator_rejects_attachment_size_or_state_drift(self):
+        self.fixture["attachments"][0]["ciphertext_byte_size"] += 1
+        with self.assertRaisesRegex(ValueError, "attachment size"):
+            validate_synthetic_fixture(self.fixture)
+
+        self.fixture = build_synthetic_fixture()
+        self.fixture["attachments"][0]["state"] = "uploading"
+        with self.assertRaisesRegex(ValueError, "attachment state"):
+            validate_synthetic_fixture(self.fixture)
 
     def test_validator_rejects_cross_space_room_ai_reference(self):
         self.fixture["room_ai_state_refs"][0]["space_id"] = "MAC_SPACE"
