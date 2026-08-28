@@ -131,7 +131,7 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M06 DDL 계약: next-unallocated sequence·single change table·entity별 checked identity·one operation/one event 확정
 - [x] M06: `0008` ledger migration과 local stage fixture 통과 (`4a8bf26`)
 - [x] M06 handler 선행: room target `worldline_id` null-only와 patch_room 3-table mutation 경계 확정
-- [x] M06 first slice: patch_room auth·replay·CAS·3-table atomic batch와 exported operation table 재사용 (`8d7a8fd`, `f712c8e`)
+- [ ] M06 first slice: patch_room atomic batch 구현(`8d7a8fd`, `f712c8e`), registered-space write 보정 뒤 최종 승인
 - [ ] M06: runtime-enabled operation family 확장과 공용 dispatch 완성
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
