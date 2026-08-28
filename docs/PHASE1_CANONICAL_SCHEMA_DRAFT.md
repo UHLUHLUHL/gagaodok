@@ -283,7 +283,13 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 
 **통합 결정:** `engine_profile`은 별도 versioned entity로 두고 room은 `(engine_profile_id, profile_revision)`을 정확히 참조한다. profile revision은 immutable이다. 변경은 기존 행을 덮어쓰지 않고 새 revision을 만든 뒤, 대상 room의 reference를 field patch로 바꾼다. 여러 room이 같은 revision을 참조할 수 있지만 한 room의 변경이 다른 room에 암묵적으로 전파되어서는 안 된다.
 
-**통합 결정:** v1에서 `relationship_policy = group`은 `PHONE_SPACE`에만 허용한다. 다른 space의 create·patch는 Worker와 client 양쪽에서 거부한다. 이는 group/worldline과 하트가 PHONE_SPACE 백업 안에만 존재한다는 사용자 결정 4·9의 경계다.
+**통합 결정:** v1에서 `relationship_policy = group`은 `PHONE_SPACE`에만 허용한다. 이는 group/worldline과 하트가 PHONE_SPACE 백업 안에만 존재한다는 사용자 결정 4·9의 경계다.
+
+**2026-08-28 검사 경계 보정(Claude Code):** `relationship_policy`는 §4 표에서 이미 🔒(암호화 대상)이므로 **Worker가 이 값 자체를 읽거나 검사할 수 없다.** "Worker와 client 양쪽에서 거부한다"는 이전 표현은 두 계층이 같은 것을 검사한다고 오해할 수 있어 다음으로 나눈다.
+
+- **Client**: 복호화한 `relationship_policy` enum(`none`·`personal`·`group`)과 `PHONE_SPACE` 제약을 실제 값 기준으로 검사한다. `group`을 다른 space의 engine profile에 넣지 않는 책임은 client에 있다.
+- **Worker**: 암호화된 정책 값은 읽지 못하고, **평문 entity·space·권한 경계만** 검사한다. 구체적으로는 `create_group_state`·`patch_group_state`·`create_worldline`·`patch_worldline`이 `PHONE_SPACE` 밖에서 오면 거부한다. 이것은 group/worldline **entity 자체**의 space 제약이지 `relationship_policy` 값 검사가 아니다.
+- **한계**: Worker는 `engine_profile`의 암호화된 `relationship_policy`가 실제로 `group`인지, 혹은 client가 다른 space에서 `group`을 잘못 설정했는지 **검증할 수 없다.** v1은 이 위협을 client 정직성에 의존하는 것으로 받아들인다. 서버 측 강제가 필요해지면 §8.4의 `compaction_compat_tag`처럼 값 자체는 숨기되 정책 class만 구분하는 keyed tag를 추가로 도입해야 한다.
 
 ---
 

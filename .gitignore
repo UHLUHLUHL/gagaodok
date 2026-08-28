@@ -45,3 +45,6 @@ android/*.iml
 
 # 정체를 확인 못한 생성물 (세션 중 어디선가 떨어진 것으로 보임)
 *.webp
+
+# Node.js (cloudflare/sync-worker 등 모든 하위 프로젝트 공통)
+node_modules/

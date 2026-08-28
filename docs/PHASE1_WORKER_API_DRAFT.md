@@ -36,6 +36,15 @@ X-Protocol-Version: 1
 - UUID는 대문자 하이픈 36-byte 형식, integer는 `0...2^53-1`, timestamp는 RFC 3339 UTC다.
 - 알 수 없는 top-level field와 enum은 v1에서 fail-closed한다. Opaque extension은 등록된 `extensions` container 안에서만 허용한다.
 
+**2026-08-28 보정(Claude Code):** "base64 envelope"는 JavaScript `string.length`만 재는 것이 아니라 다음을 모두 만족해야 통과한다.
+
+1. 표준 padded Base64의 canonical 형식(charset·패딩 위치·길이가 4의 배수)이다.
+2. decode한 byte 길이가 E2EE 제안서 §7.1 봉투의 최소 크기 **34 byte**(`version` 1 + `alg` 1 + `key_generation` 4 + `nonce` 12 + GCM tag 16, 평문이 0 byte일 때의 하한) 이상이다.
+3. decode한 첫 byte(`version`)와 둘째 byte(`alg`)가 v1이 지원하는 값(`0x01`, `0x01`)이다.
+4. `1,900,000 bytes` 상한은 이 canonical Base64 문자열 자체의 길이에 적용한다. canonical 형식이 아닌 문자열은 길이 검사 전에 먼저 거부되므로, 상한 검사와 원본 HTTP body 상한(`2,000,000 bytes`, §5.1)은 서로 다른 두 경계를 각각 검증한다.
+
+이 네 단계를 통과하지 못하면 오류에 실패한 필드의 값이나 path를 넣지 않고 `VALIDATION_FAILED`만 돌려준다.
+
 ### 2.2 성공 envelope
 
 ```json
@@ -143,18 +152,34 @@ operation 하나를 적용한다.
 
 같은 `operation_id`와 같은 request fingerprint면 `status = replayed`와 최초 결과를 돌려준다. fingerprint는 **검증 전에 받은 HTTP request body 원본 bytes**의 SHA-256이다. retry는 outbox에 보관한 동일 bytes를 다시 보내야 하며, 의미가 같더라도 JSON을 다시 직렬화해 bytes가 달라지면 replay mismatch다. 같은 ID에 fingerprint가 다르면 `OPERATION_REPLAY_MISMATCH`다.
 
-v1 허용 operation:
+### 4.1.1 operation별 identity shape (2026-08-28, Claude Code 보정)
 
-- create/patch room
-- create immutable persona snapshot revision + CAS head advance
-- create immutable engine profile revision + room reference patch
-- create/extend checkpoint with CAS
-- create/patch turn·bubble
-- create/patch PHONE_SPACE group_state·worldline
-- create attachment metadata
-- `delete_turn` tombstone 정의만 유지하되 사용자 결정 15에 따라 초기 runtime에서는 거부
+`entity_type`은 자유 문자열이 아니라 `op`이 정확히 하나로 결정하는 값이다. `target`이 가질 수 있는 필드도 entity마다 다르며, 다른 entity의 ID가 섞이면 거부한다. 이 표가 `cloudflare/sync-worker/src/contracts/operation.ts`의 `OPERATION_SPECS`·`ENTITY_SHAPES`와 **정확히 같은 내용의 단일 source**다. 코드가 검증 구현이고 이 표는 그 구현이 따르는 계약이다.
 
-whole-room·whole-message PUT, `delete_bubble`, client가 임의 발급한 `server_seq`는 거부한다.
+| `op` | `entity_type` | 종류 | `target` 필수 필드 | `worldline_id` | 비고 |
+| --- | --- | --- | --- | --- | --- |
+| `create_room` | `room` | create | `room_id` | nullable | |
+| `patch_room` | `room` | patch | `room_id` | nullable | `base_revision` 필수 |
+| `create_persona_snapshot` | `persona_snapshot` | create | `persona_snapshot_id`, `snapshot_revision` | **없음** | `room_id` 금지. identity가 `(account_id, space_id, persona_snapshot_id, snapshot_revision)`이라 room에 종속되지 않는다 |
+| `create_engine_profile` | `engine_profile` | create | `engine_profile_id`, `profile_revision` | **없음** | `room_id` 금지. identity가 `(account_id, space_id, engine_profile_id, profile_revision)`이다 |
+| `create_checkpoint` | `checkpoint` | create | `room_id`, `checkpoint_id` | nullable | |
+| `patch_checkpoint` | `checkpoint` | patch | `room_id`, `checkpoint_id` | nullable | `base_revision` 필수 (연장 CAS) |
+| `create_turn` | `turn` | create | `room_id`, `turn_id` | nullable | |
+| `patch_turn` | `turn` | patch | `room_id`, `turn_id` | nullable | `base_revision` 필수 |
+| `create_bubble` | `bubble` | create | `room_id`, `turn_id`, `message_id` | nullable | top-level `bubble_order` 필수 |
+| `patch_bubble` | `bubble` | patch | `room_id`, `turn_id`, `message_id` | nullable | `base_revision` 필수 |
+| `create_group_state` | `group_state` | create | `room_id` | nullable | **`PHONE_SPACE` 전용** |
+| `patch_group_state` | `group_state` | patch | `room_id` | nullable | **`PHONE_SPACE` 전용**, `base_revision` 필수 |
+| `create_worldline` | `worldline` | create | `room_id`, `worldline_id` | **필수(non-null)** | **`PHONE_SPACE` 전용**. target이 세계선 자신을 가리키므로 기본 세계선(null) 개념이 없다 |
+| `patch_worldline` | `worldline` | patch | `room_id`, `worldline_id` | **필수(non-null)** | **`PHONE_SPACE` 전용**, `base_revision` 필수 |
+| `create_attachment` | `attachment` | create | `attachment_id` | **없음** | `room_id`·`worldline_id` 금지. identity가 `(account_id, attachment_id)`다 |
+| `delete_turn` | `turn` | delete | `room_id`, `turn_id` | nullable | **schema에만 정의. 사용자 결정 15에 따라 초기 runtime은 형식이 올바른 요청도 거부한다** |
+
+"없음"은 그 필드를 target에 넣으면 `VALIDATION_FAILED`라는 뜻이다(예: `create_attachment`에 `worldline_id`를 넣으면 거부). "nullable"은 명시적으로 `null`이거나 대문자 UUID여야 하며, 키 자체가 없으면(즉 `worldline_id`를 아예 안 보내면) 모호하므로 거부한다.
+
+v1 runtime이 실제로 받아들이는 operation(`RUNTIME_ENABLED_OPERATIONS`)은 위 표에서 `delete_turn`을 제외한 15개다. `delete_turn`은 schema에는 있지만(`SCHEMA_OPERATIONS`) 삭제 기능 flag가 열리기 전에는 형식이 완전히 올바른 요청도 `VALIDATION_FAILED`로 거부한다.
+
+whole-room·whole-message PUT, `delete_bubble`(schema에 아예 없음), client가 임의 발급한 `server_seq`는 거부한다.
 
 ### 4.2 `GET /v1/sync/changes`
 

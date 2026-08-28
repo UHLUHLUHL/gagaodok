@@ -10,7 +10,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gagaodok-sync-worker-local",
   "main": "src/index.ts",
-  "compatibility_date": "2025-09-06",
+  "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "d1_databases": [
