@@ -196,11 +196,33 @@ describe("M01 — schema objects exist", () => {
     expect(row?.n).toBe(1);
   });
 
-  it("does not declare a foreign key yet", async () => {
-    // PHASE1_D1_MIGRATION_PLAN.md fixes the order: prove primary/unique/CHECK
-    // first, add reference constraints in a later migration.
-    const fks = await db.prepare("PRAGMA foreign_key_list(device)").all();
-    expect(fks.results.length).toBe(0);
+  it("declares exactly one foreign key from device to account", async () => {
+    // M02 (0002_device_account_fk.sql) closes the orphan-device hole that
+    // M01 deliberately left open until its own constraints were proven.
+    const fks = await db.prepare("PRAGMA foreign_key_list(device)").all<{
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+      on_update: string;
+    }>();
+    expect(fks.results.length).toBe(1);
+    const fk = fks.results[0];
+    expect(fk?.table).toBe("account");
+    expect(fk?.from).toBe("account_id");
+    expect(fk?.to).toBe("account_id");
+    // RESTRICT, never CASCADE: deleting an account must not silently take a
+    // device row with it.
+    expect(fk?.on_delete).toBe("RESTRICT");
+    // account_id is an immutable primary key, so an update is a bug.
+    expect(fk?.on_update).toBe("RESTRICT");
+  });
+
+  it("has foreign key enforcement switched on", async () => {
+    // D1 enables `foreign_keys` by default, which is why the constraint can
+    // be the canonical tenant boundary instead of a handler pre-check.
+    const row = await db.prepare("PRAGMA foreign_keys").first<{ foreign_keys: number }>();
+    expect(row?.foreign_keys).toBe(1);
   });
 });
 
@@ -292,6 +314,72 @@ describe("M01 — device identity is scoped to its account", () => {
       .bind(ACCOUNT_A, "MAC_SPACE")
       .first<{ n: number }>();
     expect(row?.n).toBe(2);
+  });
+});
+
+describe("M02 — device is bound to a real account", () => {
+  it("rejects an orphan device", async () => {
+    // No account row exists, so the insert must fail at the database rather
+    // than relying on a handler remembering to look the account up first.
+    await expectRejected(() => insertDevice(ACCOUNT_A, DEVICE_1));
+
+    const row = await db.prepare("SELECT count(*) AS n FROM device").first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
+
+  it("still accepts a device whose account exists", async () => {
+    await insertAccount(ACCOUNT_A);
+    await insertDevice(ACCOUNT_A, DEVICE_1);
+    const row = await db
+      .prepare("SELECT count(*) AS n FROM device WHERE account_id = ?")
+      .bind(ACCOUNT_A)
+      .first<{ n: number }>();
+    expect(row?.n).toBe(1);
+  });
+
+  it("refuses to delete an account that still has a device", async () => {
+    await insertAccount(ACCOUNT_A);
+    await insertDevice(ACCOUNT_A, DEVICE_1);
+
+    await expectRejected(() =>
+      db.prepare("DELETE FROM account WHERE account_id = ?").bind(ACCOUNT_A).run(),
+    );
+
+    // Neither side may be lost: RESTRICT must leave both rows intact.
+    const accounts = await db
+      .prepare("SELECT count(*) AS n FROM account WHERE account_id = ?")
+      .bind(ACCOUNT_A)
+      .first<{ n: number }>();
+    const devices = await db
+      .prepare("SELECT count(*) AS n FROM device WHERE account_id = ?")
+      .bind(ACCOUNT_A)
+      .first<{ n: number }>();
+    expect(accounts?.n).toBe(1);
+    expect(devices?.n).toBe(1);
+  });
+
+  it("allows deleting the account once its devices are gone", async () => {
+    await insertAccount(ACCOUNT_A);
+    await insertDevice(ACCOUNT_A, DEVICE_1);
+
+    await db
+      .prepare("DELETE FROM device WHERE account_id = ? AND device_id = ?")
+      .bind(ACCOUNT_A, DEVICE_1)
+      .run();
+    await db.prepare("DELETE FROM account WHERE account_id = ?").bind(ACCOUNT_A).run();
+
+    const row = await db
+      .prepare("SELECT count(*) AS n FROM account WHERE account_id = ?")
+      .bind(ACCOUNT_A)
+      .first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
+
+  it("keeps tenants separate: a device may not borrow another account's id", async () => {
+    await insertAccount(ACCOUNT_A);
+    // ACCOUNT_B was never created, so a device claiming it is an orphan even
+    // though ACCOUNT_A exists.
+    await expectRejected(() => insertDevice(ACCOUNT_B, DEVICE_1));
   });
 });
 
