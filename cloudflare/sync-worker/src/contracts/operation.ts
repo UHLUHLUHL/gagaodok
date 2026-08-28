@@ -328,34 +328,69 @@ const METADATA_PAIRS: readonly (readonly [MetadataField, MetadataField])[] = [
   ["first_turn_id", "last_turn_id"],
 ];
 
-const CHECKPOINT_METADATA = [
+interface MetadataRule {
+  /** Must be present in `metadata_set`; a create without one is incomplete. */
+  readonly required: readonly MetadataField[];
+  /** May be present in `metadata_set`. */
+  readonly optional: readonly MetadataField[];
+  /** May appear in `metadata_clear`. Empty for every create. */
+  readonly clearable: readonly MetadataField[];
+}
+
+const ROOM_REFERENCE_FIELDS = [
+  "engine_profile_id",
+  "engine_profile_revision",
+  "persona_snapshot_id",
+  "persona_snapshot_revision",
+] as const;
+
+// The three creation-provenance fields. They appear in create_checkpoint's
+// required set and in neither half of patch_checkpoint: who created a
+// checkpoint and when is not something a later patch may rewrite or erase.
+const CHECKPOINT_PROVENANCE = ["owner_space_id", "created_by_device_id", "created_at"] as const;
+
+const CHECKPOINT_PATCHABLE = [
   "first_turn_id",
   "last_turn_id",
   "through_server_seq",
   "checkpoint_schema_version",
   "compaction_compat_tag",
-  "owner_space_id",
-  "created_by_device_id",
-  "created_at",
 ] as const;
 
-const METADATA_ALLOWLIST: Partial<Record<string, readonly MetadataField[]>> = {
-  patch_room: [
-    "engine_profile_id",
-    "engine_profile_revision",
-    "persona_snapshot_id",
-    "persona_snapshot_revision",
-  ],
-  create_engine_profile: ["compaction_compat_tag"],
-  create_persona_snapshot: [
-    "owner_space_id",
-    "created_by_device_id",
-    "created_at",
-    "persona_schema_version",
-  ],
-  create_checkpoint: CHECKPOINT_METADATA,
-  patch_checkpoint: CHECKPOINT_METADATA,
+const METADATA_RULES: Partial<Record<string, MetadataRule>> = {
+  patch_room: {
+    required: [],
+    optional: ROOM_REFERENCE_FIELDS,
+    clearable: ROOM_REFERENCE_FIELDS,
+  },
+  create_engine_profile: {
+    required: [],
+    optional: ["compaction_compat_tag"],
+    clearable: [],
+  },
+  create_persona_snapshot: {
+    required: [
+      "owner_space_id",
+      "created_by_device_id",
+      "created_at",
+      "persona_schema_version",
+    ],
+    optional: [],
+    clearable: [],
+  },
+  create_checkpoint: {
+    required: ["checkpoint_schema_version", ...CHECKPOINT_PROVENANCE],
+    optional: ["first_turn_id", "last_turn_id", "through_server_seq", "compaction_compat_tag"],
+    clearable: [],
+  },
+  patch_checkpoint: {
+    required: [],
+    optional: CHECKPOINT_PATCHABLE,
+    clearable: CHECKPOINT_PATCHABLE,
+  },
 };
+
+const EMPTY_METADATA_RULE: MetadataRule = { required: [], optional: [], clearable: [] };
 
 export interface OperationTarget {
   space_id: SpaceId;
@@ -548,20 +583,32 @@ function parseMetadata(
     // between "no metadata change" and "old client".
     throw validationFailed();
   }
-  const allowed = new Set<string>(METADATA_ALLOWLIST[operation] ?? []);
+  const rule = METADATA_RULES[operation] ?? EMPTY_METADATA_RULE;
+  const settable = new Set<string>([...rule.required, ...rule.optional]);
+  const clearable = new Set<string>(rule.clearable);
 
   const set: Record<string, MetadataValue> = {};
   for (const [key, raw] of Object.entries(setValue)) {
-    if (!allowed.has(key)) {
+    if (!settable.has(key)) {
       throw validationFailed();
     }
     set[key] = METADATA_PARSERS[key as MetadataField](raw);
+  }
+  for (const key of rule.required) {
+    if (!(key in set)) {
+      // A create carries its provenance and schema version or it is not a
+      // complete row; the handler must never have to invent one.
+      throw validationFailed();
+    }
   }
 
   const clear: string[] = [];
   const seen = new Set<string>();
   for (const key of clearValue) {
-    if (typeof key !== "string" || !allowed.has(key) || seen.has(key)) {
+    // `clearable` is empty for every create operation, so a non-empty
+    // metadata_clear on a create fails here: clearing a field of a row that
+    // does not exist yet has no meaning.
+    if (typeof key !== "string" || !clearable.has(key) || seen.has(key)) {
       throw validationFailed();
     }
     if (key in set) {
@@ -573,7 +620,7 @@ function parseMetadata(
   }
 
   for (const [left, right] of METADATA_PAIRS) {
-    if (!allowed.has(left)) {
+    if (!settable.has(left) && !clearable.has(left)) {
       continue;
     }
     // A reference is meaningless as one half: an id without its revision no

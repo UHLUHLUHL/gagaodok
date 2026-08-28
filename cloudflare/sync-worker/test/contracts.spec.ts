@@ -50,6 +50,23 @@ function validEnvelope(tagAndCiphertextBytes = 16): string {
   return btoa(binary);
 }
 
+/** The metadata every create of these entities must carry (API draft §4.1.0). */
+const PERSONA_CREATE_METADATA = {
+  owner_space_id: "PHONE_SPACE",
+  created_by_device_id: DEVICE,
+  created_at: "2026-08-28T00:00:00Z",
+  persona_schema_version: 1,
+};
+
+function checkpointCreateMetadata(spaceId: string): Record<string, unknown> {
+  return {
+    checkpoint_schema_version: 1,
+    owner_space_id: spaceId,
+    created_by_device_id: DEVICE,
+    created_at: "2026-08-28T00:00:00Z",
+  };
+}
+
 function makeOperation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     protocol_version: 1,
@@ -416,6 +433,183 @@ describe("parseOperationRequest — plaintext metadata is separate from encrypte
   });
 });
 
+describe("parseOperationRequest — the M04 metadata allowlist table", () => {
+  // API draft §4.1.0 is the single contract: required set, optional set and
+  // allowed clear, per operation.
+  const PERSONA_REQUIRED = {
+    owner_space_id: "PHONE_SPACE",
+    created_by_device_id: DEVICE,
+    created_at: "2026-08-28T00:00:00Z",
+    persona_schema_version: 1,
+  };
+  const CHECKPOINT_REQUIRED = {
+    checkpoint_schema_version: 1,
+    owner_space_id: "MAC_SPACE",
+    created_by_device_id: DEVICE,
+    created_at: "2026-08-28T00:00:00Z",
+  };
+
+  function personaCreate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return makeOperation({
+      op: "create_persona_snapshot",
+      entity_type: "persona_snapshot",
+      target: {
+        space_id: "PHONE_SPACE",
+        persona_snapshot_id: PERSONA_SNAPSHOT,
+        snapshot_revision: 1,
+      },
+      base_revision: 0,
+      set: { description: validEnvelope() },
+      metadata_set: PERSONA_REQUIRED,
+      ...overrides,
+    });
+  }
+
+  function checkpointOp(
+    op: "create_checkpoint" | "patch_checkpoint",
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return makeOperation({
+      op,
+      entity_type: "checkpoint",
+      target: {
+        space_id: "MAC_SPACE",
+        room_id: ROOM,
+        worldline_id: null,
+        checkpoint_id: CHECKPOINT,
+      },
+      base_revision: op === "patch_checkpoint" ? 4 : undefined,
+      set: { summary_text: validEnvelope() },
+      metadata_set: op === "create_checkpoint" ? CHECKPOINT_REQUIRED : {},
+      ...overrides,
+    });
+  }
+
+  it("refuses a non-empty metadata_clear on every create operation", () => {
+    // Clearing metadata of a row that does not exist yet has no meaning.
+    expect(() =>
+      parseOperationRequest(personaCreate({ metadata_clear: ["created_at"] })),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(
+        checkpointOp("create_checkpoint", { metadata_clear: ["through_server_seq"] }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op: "create_engine_profile",
+          entity_type: "engine_profile",
+          target: {
+            space_id: "MAC_SPACE",
+            engine_profile_id: ENGINE_PROFILE,
+            profile_revision: 2,
+          },
+          base_revision: undefined,
+          set: { mode: validEnvelope() },
+          metadata_clear: ["compaction_compat_tag"],
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("requires every mandatory metadata field on create_persona_snapshot", () => {
+    expect(() => parseOperationRequest(personaCreate())).not.toThrow();
+    for (const missing of Object.keys(PERSONA_REQUIRED)) {
+      const metadata = { ...PERSONA_REQUIRED };
+      delete (metadata as Record<string, unknown>)[missing];
+      expect(() => parseOperationRequest(personaCreate({ metadata_set: metadata }))).toThrowError(
+        "VALIDATION_FAILED",
+      );
+    }
+  });
+
+  it("requires every mandatory metadata field on create_checkpoint", () => {
+    expect(() => parseOperationRequest(checkpointOp("create_checkpoint"))).not.toThrow();
+    for (const missing of Object.keys(CHECKPOINT_REQUIRED)) {
+      const metadata = { ...CHECKPOINT_REQUIRED };
+      delete (metadata as Record<string, unknown>)[missing];
+      expect(() =>
+        parseOperationRequest(checkpointOp("create_checkpoint", { metadata_set: metadata })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("accepts the optional create_checkpoint metadata as documented", () => {
+    const parsed = parseOperationRequest(
+      checkpointOp("create_checkpoint", {
+        metadata_set: {
+          ...CHECKPOINT_REQUIRED,
+          first_turn_id: TURN,
+          last_turn_id: TURN,
+          through_server_seq: 10390,
+          compaction_compat_tag: "0000000000000000000000000000legacy",
+        },
+      }),
+    );
+    expect(parsed.metadata_set.through_server_seq).toBe(10390);
+  });
+
+  it("refuses provenance metadata on patch_checkpoint, set or clear", () => {
+    // owner_space_id, created_by_device_id and created_at are creation
+    // provenance: a patch may neither rewrite nor erase them.
+    for (const key of ["owner_space_id", "created_by_device_id", "created_at"] as const) {
+      expect(() =>
+        parseOperationRequest(
+          checkpointOp("patch_checkpoint", {
+            metadata_set: { [key]: CHECKPOINT_REQUIRED[key] },
+          }),
+        ),
+      ).toThrowError("VALIDATION_FAILED");
+      expect(() =>
+        parseOperationRequest(checkpointOp("patch_checkpoint", { metadata_clear: [key] })),
+      ).toThrowError("VALIDATION_FAILED");
+    }
+  });
+
+  it("allows the documented patch_checkpoint fields, range as a pair", () => {
+    expect(() =>
+      parseOperationRequest(
+        checkpointOp("patch_checkpoint", {
+          metadata_set: { through_server_seq: 5, checkpoint_schema_version: 2 },
+          metadata_clear: ["first_turn_id", "last_turn_id"],
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      parseOperationRequest(
+        checkpointOp("patch_checkpoint", { metadata_clear: ["first_turn_id"] }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(
+        checkpointOp("patch_checkpoint", { metadata_set: { first_turn_id: TURN } }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("bounds compaction_compat_tag at 1..256 UTF-16 code units without parsing it", () => {
+    const build = (tag: unknown) =>
+      makeOperation({
+        op: "create_engine_profile",
+        entity_type: "engine_profile",
+        target: {
+          space_id: "MAC_SPACE",
+          engine_profile_id: ENGINE_PROFILE,
+          profile_revision: 2,
+        },
+        base_revision: undefined,
+        set: { mode: validEnvelope() },
+        metadata_set: { compaction_compat_tag: tag },
+      });
+    expect(() => parseOperationRequest(build("x"))).not.toThrow();
+    expect(() => parseOperationRequest(build("y".repeat(256)))).not.toThrow();
+    for (const bad of ["", "z".repeat(257), 3, null]) {
+      expect(() => parseOperationRequest(build(bad))).toThrowError("VALIDATION_FAILED");
+    }
+  });
+});
+
 describe("parseOperationRequest — create_persona_snapshot head CAS", () => {
   function snapshot(baseRevision: unknown, snapshotRevision: number): Record<string, unknown> {
     return makeOperation({
@@ -512,6 +706,7 @@ describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () =
       base_revision: isCreate ? undefined : 41,
       bubble_order: op === "create_bubble" ? 3 : undefined,
       set: { title: validEnvelope() },
+      metadata_set: op === "create_checkpoint" ? checkpointCreateMetadata(spaceId) : {},
     });
   }
 
@@ -736,6 +931,7 @@ describe("parseOperationRequest — op/entity_type/target identity binding", () 
             snapshot_revision: 1,
           },
           set: { description: validEnvelope() },
+          metadata_set: PERSONA_CREATE_METADATA,
         }),
       ),
     ).not.toThrow();
@@ -806,6 +1002,7 @@ describe("parseOperationRequest — op/entity_type/target identity binding", () 
             checkpoint_id: CHECKPOINT,
           },
           set: { summary_text: validEnvelope() },
+          metadata_set: checkpointCreateMetadata("MAC_SPACE"),
         }),
       ),
     ).not.toThrow();
