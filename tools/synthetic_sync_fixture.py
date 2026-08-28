@@ -226,6 +226,53 @@ def build_synthetic_fixture() -> dict[str, Any]:
                 "attachment_id": None,
             }
         ],
+        "atomic_scenarios": [
+            {
+                "name": "new_operation",
+                "outcome": "applied",
+                "sequence_before": 1,
+                "sequence_after": 2,
+                "operation_rows_delta": 1,
+                "change_rows_delta": 1,
+                "canonical_rows_delta": 1,
+            },
+            {
+                "name": "same_fingerprint_replay",
+                "outcome": "replayed",
+                "sequence_before": 2,
+                "sequence_after": 2,
+                "operation_rows_delta": 0,
+                "change_rows_delta": 0,
+                "canonical_rows_delta": 0,
+            },
+            {
+                "name": "different_fingerprint_replay",
+                "outcome": "OPERATION_REPLAY_MISMATCH",
+                "sequence_before": 2,
+                "sequence_after": 2,
+                "operation_rows_delta": 0,
+                "change_rows_delta": 0,
+                "canonical_rows_delta": 0,
+            },
+            {
+                "name": "cas_mismatch",
+                "outcome": "REVISION_CONFLICT",
+                "sequence_before": 2,
+                "sequence_after": 2,
+                "operation_rows_delta": 0,
+                "change_rows_delta": 0,
+                "canonical_rows_delta": 0,
+            },
+            {
+                "name": "revoked_device_write",
+                "outcome": "DEVICE_REVOKED",
+                "sequence_before": 2,
+                "sequence_after": 2,
+                "operation_rows_delta": 0,
+                "change_rows_delta": 0,
+                "canonical_rows_delta": 0,
+            },
+        ],
         "opaque_envelopes": {"minimal_v1_aes_gcm": _minimal_shape_envelope()},
     }
     validate_synthetic_fixture(fixture)
@@ -466,6 +513,34 @@ def validate_synthetic_fixture(fixture: dict[str, Any]) -> None:
         if expected is None or present != expected:
             raise ValueError("change identity shape is invalid")
 
+    expected_scenarios = {
+        "new_operation": ("applied", 1, 1, 1),
+        "same_fingerprint_replay": ("replayed", 0, 0, 0),
+        "different_fingerprint_replay": ("OPERATION_REPLAY_MISMATCH", 0, 0, 0),
+        "cas_mismatch": ("REVISION_CONFLICT", 0, 0, 0),
+        "revoked_device_write": ("DEVICE_REVOKED", 0, 0, 0),
+    }
+    scenarios = fixture.get("atomic_scenarios", [])
+    if {row.get("name") for row in scenarios} != set(expected_scenarios):
+        raise ValueError("atomic scenario set is incomplete")
+    for row in scenarios:
+        expected = expected_scenarios[row["name"]]
+        observed = (
+            row.get("outcome"),
+            row.get("operation_rows_delta"),
+            row.get("change_rows_delta"),
+            row.get("canonical_rows_delta"),
+        )
+        if observed != expected:
+            raise ValueError("atomic scenario outcome is invalid")
+        before = row.get("sequence_before")
+        after = row.get("sequence_after")
+        if row["name"] == "new_operation":
+            if after != before + 1:
+                raise ValueError("applied operation must consume one sequence")
+        elif after != before:
+            raise ValueError("failed or replayed operation consumed a sequence")
+
     encoded = fixture.get("opaque_envelopes", {}).get("minimal_v1_aes_gcm")
     if not isinstance(encoded, str):
         raise ValueError("minimal structural envelope is missing")
@@ -496,6 +571,7 @@ def _record_count(fixture: dict[str, Any]) -> int:
             "attachments",
             "operation_logs",
             "change_logs",
+            "atomic_scenarios",
         )
     )
 

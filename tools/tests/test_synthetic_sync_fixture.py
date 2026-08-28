@@ -235,6 +235,30 @@ class SyntheticSyncFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "next server sequence"):
             validate_synthetic_fixture(self.fixture)
 
+    def test_m06_atomic_scenarios_consume_sequence_only_once(self):
+        scenarios = {row["name"]: row for row in self.fixture["atomic_scenarios"]}
+        applied = scenarios["new_operation"]
+        self.assertEqual(applied["sequence_after"], applied["sequence_before"] + 1)
+        self.assertEqual(applied["operation_rows_delta"], 1)
+        self.assertEqual(applied["change_rows_delta"], 1)
+        for name, scenario in scenarios.items():
+            if name == "new_operation":
+                continue
+            self.assertEqual(scenario["sequence_after"], scenario["sequence_before"])
+            self.assertEqual(scenario["operation_rows_delta"], 0)
+            self.assertEqual(scenario["change_rows_delta"], 0)
+            self.assertEqual(scenario["canonical_rows_delta"], 0)
+
+    def test_validator_rejects_atomic_failure_that_consumes_sequence(self):
+        scenario = next(
+            row
+            for row in self.fixture["atomic_scenarios"]
+            if row["name"] == "cas_mismatch"
+        )
+        scenario["sequence_after"] += 1
+        with self.assertRaisesRegex(ValueError, "consumed a sequence"):
+            validate_synthetic_fixture(self.fixture)
+
     def test_validator_rejects_cross_space_room_ai_reference(self):
         self.fixture["room_ai_state_refs"][0]["space_id"] = "MAC_SPACE"
         with self.assertRaisesRegex(ValueError, "room AI state reference"):

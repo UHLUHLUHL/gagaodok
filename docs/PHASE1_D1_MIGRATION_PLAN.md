@@ -71,7 +71,8 @@ flowchart TB
 | M04 | `0005_versioned_ai_state.sql` | `3c462b5`, `b2a93c6` | ✅ versioned AI state·metadata 계약 승인 |
 | M05 | `0006_attachment.sql` | `5299b27` | ✅ attachment DDL·validator·bubble FK rebuild 승인 |
 | 인증 경계 | `0007_device_token.sql` | `fa49ed1` | ✅ token hash storage·local auth boundary 승인; 논리 M-stage 아님 |
-| M06 | 다음 physical migration `0008_*` | 구현 전 | ⏳ ledger 계약·local transaction fixture 선행 |
+| M06 ledger DDL | `0008_atomic_write_ledger.sql` | `d33ee67`, `4a8bf26` | ✅ sequence·operation/change log·guard schema 승인 |
+| M06 handler | 미구현 | transaction preflight 대기 | ⏳ auth·replay·CAS atomic batch |
 
 물리 파일 번호는 논리 M-stage와 같지 않다. `0001`과 `0002`가 함께 논리 M01이고, 논리 M02~M05는 각각 physical `0003`~`0006`이다. `0007`은 M06 전의 cross-cutting device 인증 migration이며, M06 ledger는 다음 physical `0008`부터 시작한다. M02~M05 row의 nullable `server_seq` column은 canonical row shape이지만 값을 발급하지 않는다. `account.next_server_seq`와 실제 sequence 할당은 M06에만 추가한다.
 
@@ -128,7 +129,7 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M05: attachment DDL·create validator와 bubble·bubble extension rebuild fixture 통과 (`5299b27`)
 - [x] M06 선행 인증: canonical device token parsing·hash lookup·revoked 거부 local test 통과 (`fa49ed1`)
 - [x] M06 DDL 계약: next-unallocated sequence·single change table·entity별 checked identity·one operation/one event 확정
-- [ ] M06: `0008` ledger migration과 local stage fixture 통과
+- [x] M06: `0008` ledger migration과 local stage fixture 통과 (`4a8bf26`)
 - [ ] M06: revoked device write 거부와 exported operation table 재사용을 handler test로 증명
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
