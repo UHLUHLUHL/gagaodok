@@ -193,6 +193,7 @@ describe("M01 — schema objects exist", () => {
       "platform",
       "revoked_at",
       "space_id",
+      "token_hash",
     ]);
   });
 

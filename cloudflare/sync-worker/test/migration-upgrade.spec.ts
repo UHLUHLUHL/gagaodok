@@ -195,6 +195,7 @@ describe("0002 leaves the 0001 schema guarantees intact", () => {
       "platform",
       "revoked_at",
       "space_id",
+      "token_hash",
     ]);
   });
 
@@ -294,6 +295,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0004_turn_bubble_extension.sql",
       "0005_versioned_ai_state.sql",
       "0006_attachment.sql",
+      "0007_device_token.sql",
     ]);
   });
 
