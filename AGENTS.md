@@ -1,39 +1,61 @@
 # Gagaodok Repository Rules
 
-## Scope boundaries
+These rules add only Gagaodok-specific constraints to the global contract.
 
-- macOS Swift code is under `Sources/KakaoSapiens`; Android code is under `android`. Change only the requested platform unless shared behavior explicitly requires both.
-- Identify the mentor/chatbot branch before editing. A mentor-only request must not alter chatbot prompts, compaction, message handling, or UI behavior.
-- Keep local source messages, API-bound context, compacted summaries, and Obsidian export requests as separate data flows.
-- Preserve all pre-existing uncommitted changes and untracked files. Inspect overlapping hunks before editing; ignore unrelated dirt.
+## Scope and coordination
+
+- macOS Swift: `Sources/KakaoSapiens/`; Android: `android/`; Worker:
+  `cloudflare/sync-worker/`; project documents: `docs/`.
+- Identify mentor vs chatbot and phone vs tablet before changing shared behavior.
+- Preserve local messages, API context, compacted summaries, exports, and sync
+  payloads as separate data flows.
+- Codex leads architecture, task division, integration, and final reporting.
+  Claude Code receives bounded prompts with owned files, forbidden scope, tests,
+  and commit requirements. Agents must not edit the same files concurrently.
+- Existing staged or dirty files belong to their current owner. Inspect overlap
+  before editing and never absorb unrelated work into a commit.
 
 ## Minimal workflow
 
-1. Run `git status --short --branch` and one narrow `rg` search for the relevant symbol or view.
-2. Read only the owning file, adjacent type, and directly called service. Open architecture or cost documents only at the relevant section.
-3. Prove the cause, apply the smallest cohesive patch, and run the smallest useful check.
-4. After all edits are complete, perform one risk-appropriate final build or real-flow verification.
-5. Finish with `git diff --check`, a focused diff review, and `git status --short`.
+- After the initial status check, inspect only the owning symbol, adjacent type,
+  and directly called service. Open design/cost documents only at cited sections.
+- For long rooms or real data, inspect counts, sizes, IDs, and minimal samples;
+  never print conversation bodies.
+- Prefer deterministic local tooling for parsing, migration, rendering, storage,
+  and validation. Use a model only for semantic judgment.
+- Finish edits with `git diff --check`, a focused diff review, and one
+  risk-appropriate check. Do not rebuild after every file.
 
-Do not repeatedly scan the repository, rebuild after every file, relaunch the app for non-UI changes, or print full persisted conversations. For long rooms, inspect counts, sizes, IDs, and minimal samples only.
+## Context economy
 
-## Verification matrix
+- Treat commits and canonical `docs/` files as durable context. Handoffs should
+  name commit hashes and decisions, not paste full reports or routine logs.
+- Start a new task at a phase or feature boundary once the handoff is committed.
+- The implementer runs the affected suite; the reviewer reruns only disputed or
+  high-risk checks, then records deltas instead of restating the whole history.
+- Create a new review document only for a durable decision, blocker, or gate.
+  Routine approval belongs in the commit message or a short user report.
 
-- Swift logic: targeted test if available, then one `swift build` at the end.
-- Android-only logic: targeted Gradle test/build; skip macOS builds.
-- Shared storage, model routing, networking, or compaction: test both affected modes/platforms, but only the specific regression surface.
-- Markdown, LaTeX, message bubbles, scrolling, resizing, or memory behavior: verify the relevant long-message/long-room and narrow-window flow in the installed app.
-- Bundle resources, signing, packaging, or installation: run `./build_app.sh` once at the end, then `codesign --verify --deep --strict /Applications/가가오독.app`.
-- Run a full regression suite only for broad shared infrastructure or when targeted evidence is insufficient.
+## Verification choices
 
-## Performance and model-context rules
+- Swift logic: focused test if available, then one final `swift build` when needed.
+- Android: use Gradle's reported JVM; Gagaodok requires JDK 17 unless the checkout
+  proves otherwise. Test/build only the affected variant.
+- Shared storage, routing, networking, or compaction: verify only affected modes
+  and platforms. UI claims require the relevant real flow when feasible.
+- Packaging/install changes only: run `./build_app.sh`, then verify the installed
+  app signature. State explicitly whether `/Applications/가가오독.app` changed.
 
-- Do not optimize from intuition alone. Obtain at least one concrete signal: process metrics, a sample/profile, allocation behavior, request payload size, cache metrics, or render-lifecycle evidence.
-- Before changing API context, measure message count/size and inspect stable common-prefix and compaction boundaries. Avoid moving-window patterns such as `suffix(N)` when they destroy prompt-cache reuse.
-- Prefer deterministic local work for Markdown preview, KaTeX, PNG generation, file storage, migration, filtering, and validation. Model calls are reserved for tasks that genuinely require semantic judgment.
-- Independent export/analysis requests must not enter the normal chat response chain or future conversation context.
+## Cross-device sync safety
+
+- Treat `docs/CROSS_DEVICE_SYNC_USER_DECISIONS.md` as product policy, not as
+  authorization to deploy, create remote resources, or inspect/upload real data.
+- No Cloudflare deploy, remote migration, real-data import, APK install, app-data
+  clear, or destructive migration without explicit user approval.
+- Keep synthetic/local contract work separate from real-data phases.
 
 ## Delivery
 
-- State the affected platform and mentor/chatbot scope, checks actually run, and whether `/Applications/가가오독.app` was installed.
-- Do not commit, push, merge to `main`, or publish a release unless the user explicitly asks.
+- Report affected platform/mode, checks run, unresolved gates, and commit state.
+- Commit only when the user requests it or explicitly hands work to the other
+  agent; use a detailed handoff message. Never push or merge without permission.
