@@ -521,23 +521,31 @@ describe("applyOperationRequest — refusals leave nothing behind", () => {
     expect(await guardCount()).toBe(0);
   });
 
-  it("does not partially apply a non-patch_room operation", async () => {
+  it("does not partially apply an operation with no transaction service", async () => {
+    // create_room and patch_room have services; every other runtime-enabled
+    // operation is refused whole rather than half-written.
     const before = await snapshot();
     await expectApiError(
       () =>
         applyOperationRequest(
           makeRequest(
             patchRoomBody({
-              op: "create_room",
-              entity_type: "room",
+              op: "create_turn",
+              entity_type: "turn",
               base_revision: undefined,
-              set: { title: envelope(11) },
+              target: {
+                space_id: SPACE,
+                room_id: ROOM,
+                worldline_id: null,
+                turn_id: "30000000-0000-4000-8000-0000000000CF",
+              },
+              set: { content: envelope(11) },
             }),
           ),
           db,
         ),
       "VALIDATION_FAILED",
-      "create_room is not in this slice",
+      "create_turn has no service in this slice",
     );
     expect(await snapshot()).toBe(before);
   });

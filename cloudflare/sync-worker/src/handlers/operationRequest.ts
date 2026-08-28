@@ -5,7 +5,7 @@ import {
 } from "../auth/deviceToken";
 import { ApiError, validationFailed } from "../contracts/error";
 import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationRequest } from "../contracts/operation";
-import { applyPatchRoom } from "../storage/operationTransaction";
+import { applyCreateRoom, applyPatchRoom } from "../storage/operationTransaction";
 import type { OperationResult } from "../storage/operationTransaction";
 
 /**
@@ -95,12 +95,15 @@ export async function applyOperationRequest(
   // the Mac's ledger by guessing an operation_id.
   assertAuthenticatedWriteSpace(auth, operation.target.space_id);
 
-  if (operation.op !== "patch_room") {
-    // This slice implements one operation. Every other runtime-enabled op is
-    // refused whole rather than applied in part: a half-applied create is
-    // worse than a rejected one.
-    throw validationFailed();
+  // Explicit dispatch. Every operation without a transaction service is
+  // refused whole rather than applied in part: a half-applied create is worse
+  // than a rejected one.
+  switch (operation.op) {
+    case "create_room":
+      return await applyCreateRoom(db, auth, operation, fingerprint);
+    case "patch_room":
+      return await applyPatchRoom(db, auth, operation, fingerprint);
+    default:
+      throw validationFailed();
   }
-
-  return await applyPatchRoom(db, auth, operation, fingerprint);
 }

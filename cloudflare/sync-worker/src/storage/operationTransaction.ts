@@ -198,6 +198,205 @@ export async function applyPatchRoom(
   };
 }
 
+/**
+ * The two ledger rows and the sequence bookkeeping every successful room
+ * operation writes. Shared so `create_room` and `patch_room` cannot drift
+ * into recording the same fact two different ways.
+ */
+function ledgerStatements(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  revision: number,
+): D1PreparedStatement[] {
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  return [
+    db
+      .prepare(
+        `INSERT INTO operation_log
+           (account_id, operation_id, request_fingerprint, entity_type, change_kind,
+            result_revision, server_seq)
+         VALUES (?, ?, ?, 'room', 'upsert', ?, ${CURRENT_SEQ})`,
+      )
+      .bind(accountId, request.operation_id, fingerprint, revision, accountId),
+    db
+      .prepare(
+        `INSERT INTO change_log
+           (account_id, server_seq, entity_type, change_kind, revision, space_id, room_id)
+         VALUES (?, ${CURRENT_SEQ}, 'room', 'upsert', ?, ?, ?)`,
+      )
+      .bind(accountId, accountId, revision, spaceId, roomId),
+    db
+      .prepare("UPDATE account SET next_server_seq = next_server_seq + 1 WHERE account_id = ?")
+      .bind(accountId),
+    db
+      .prepare("DELETE FROM transaction_guard WHERE account_id = ? AND operation_id = ?")
+      .bind(accountId, request.operation_id),
+  ];
+}
+
+/** Upsert one extension envelope; the key is always a bound value. */
+function extensionUpsert(
+  db: D1Database,
+  accountId: string,
+  spaceId: string,
+  roomId: string,
+  key: string,
+  envelope: string,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO room_extension_field
+         (account_id, space_id, room_id, extension_key, envelope_enc)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (account_id, space_id, room_id, extension_key)
+       DO UPDATE SET envelope_enc = excluded.envelope_enc`,
+    )
+    .bind(accountId, spaceId, roomId, key, envelope);
+}
+
+async function readRoomRevision(
+  db: D1Database,
+  accountId: string,
+  spaceId: string,
+  roomId: string,
+): Promise<number | null> {
+  const row = await db
+    .prepare("SELECT revision FROM room WHERE account_id = ? AND space_id = ? AND room_id = ?")
+    .bind(accountId, spaceId, roomId)
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
+async function sequenceExhausted(db: D1Database, accountId: string): Promise<boolean> {
+  const account = await db
+    .prepare("SELECT next_server_seq FROM account WHERE account_id = ?")
+    .bind(accountId)
+    .first<{ next_server_seq: number }>();
+  if (account === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  return account.next_server_seq >= EXHAUSTED_SENTINEL;
+}
+
+/**
+ * Apply one validated `create_room`.
+ *
+ * The guard is the mirror of the patch one: the room must *not* exist. A bare
+ * INSERT would also fail on the primary key, but the guard states the
+ * precondition in the same place as every other operation's, and it is what
+ * makes the sentinel check part of the same rollback.
+ */
+export async function applyCreateRoom(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const spec = getOperationSpec(request.op);
+  const shape = getEntityShape(spec.entityType);
+  if (spec.entityType !== "room" || spec.kind !== "create" || shape.worldlineRule !== "null-only") {
+    throw validationFailed();
+  }
+
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+
+  const setFields = partitionFieldNames(Object.keys(request.set));
+  // A clear on a row that does not exist yet is just the absent value; the
+  // partition still runs so an unmapped name is refused rather than ignored.
+  partitionFieldNames(request.clear);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM room
+              WHERE account_id = ? AND space_id = ? AND room_id = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(accountId, request.operation_id, accountId, spaceId, roomId, accountId),
+    db
+      .prepare(
+        `INSERT INTO room
+           (account_id, space_id, room_id, title_enc, status_message_enc,
+            music_title_enc, music_artist_enc, revision, server_seq, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ${CURRENT_SEQ}, ?, ?)`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        roomId,
+        request.set["title"] ?? null,
+        request.set["status_message"] ?? null,
+        request.set["music_title"] ?? null,
+        request.set["music_artist"] ?? null,
+        accountId,
+        request.created_at,
+        request.created_at,
+      ),
+  ];
+  for (const key of setFields.extensionKeys) {
+    const envelope = request.set[`${EXTENSION_PREFIX}${key}`] as string;
+    statements.push(extensionUpsert(db, accountId, spaceId, roomId, key, envelope));
+  }
+  statements.push(...ledgerStatements(db, accountId, request, fingerprint, 0));
+
+  try {
+    await db.batch(statements);
+  } catch {
+    return await classifyCreateFailure(db, accountId, request, fingerprint);
+  }
+
+  const applied = await readOperationLog(db, accountId, request.operation_id);
+  if (applied === null) {
+    throw storageUnavailable();
+  }
+  return {
+    status: "applied",
+    operation_id: request.operation_id,
+    server_seq: applied.server_seq,
+    revision: applied.result_revision,
+  };
+}
+
+async function classifyCreateFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const revision = await readRoomRevision(
+    db,
+    accountId,
+    request.target.space_id,
+    request.target.room_id as string,
+  );
+  if (revision !== null) {
+    // Another operation already created this room. The only detail is the
+    // number the client needs to switch to patching.
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
 interface BatchInput {
   db: D1Database;
   accountId: string;
