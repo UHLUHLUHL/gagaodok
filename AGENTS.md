@@ -9,31 +9,35 @@ These rules add only Gagaodok-specific constraints to the global contract.
 - Identify mentor vs chatbot and phone vs tablet before changing shared behavior.
 - Preserve local messages, API context, compacted summaries, exports, and sync
   payloads as separate data flows.
-- Codex leads architecture, task division, integration, and final reporting.
-  Claude Code receives bounded prompts with owned files, forbidden scope, tests,
-  and commit requirements. Agents must not edit the same files concurrently.
-- Treat existing staged, dirty, and untracked files as user or other-agent work.
-  Inspect overlapping hunks before editing; if they cannot be separated safely,
-  report the overlap instead of overwriting or absorbing it into a commit.
+- When Codex and Claude Code collaborate, Codex leads architecture, task division,
+  integration, and final reporting. Do not create orchestration for solo work.
+- Give Claude Code bounded prompts with owned files, forbidden scope, required
+  checks, and an explicit commit policy. Agents must not edit the same files
+  concurrently.
 
 ## Minimal workflow
 
-- After the initial status check, inspect only the owning symbol, adjacent type,
-  and directly called service. Open design/cost documents only at cited sections.
+- After the initial status check, start with the owning symbol, adjacent type, and
+  directly called service. Expand only when evidence or the change surface
+  requires following another call, test, schema, configuration, migration, data
+  flow, or invariant.
+- Open design and cost documents at cited sections first. Expand only to referenced
+  or necessary sections.
 - For long rooms or real data, inspect counts, sizes, IDs, and minimal samples;
   never print conversation bodies.
-- Prefer deterministic local tooling for parsing, migration, rendering, storage,
-  and validation. Use a model only for semantic judgment.
-- Finish edits with `git diff --check`, a focused diff review, and one
-  risk-appropriate check. Do not rebuild after every file.
+- Use deterministic local tools for parsing, migration, rendering, storage, and
+  mechanical validation. Do not invoke another model or agent when local tooling
+  can produce the required result exactly.
+- Finish edits with `git diff --check` and a focused diff review. Run any
+  additional check required by the relevant failure mode. Do not rebuild after
+  every file.
 
 ## Context economy
 
 - Treat commits and canonical `docs/` files as durable context. Handoffs should
   name commit hashes and decisions, not paste full reports or routine logs.
-- Start a new task at a phase or feature boundary once the handoff is committed.
-- The implementer runs the affected suite; the reviewer reruns only disputed or
-  high-risk checks, then records deltas instead of restating the whole history.
+- After a committed handoff, recommend a new task at a clear phase or feature
+  boundary when the old context is no longer useful.
 - Create a new review document only for a durable decision, blocker, or gate.
   Routine approval belongs in the commit message or a short user report.
 
@@ -42,7 +46,8 @@ These rules add only Gagaodok-specific constraints to the global contract.
 - Swift logic: focused test if available, then one final `swift build` when needed.
 - Android: inspect Gradle's reported JVM first. Use JDK 17 unless the active
   checkout explicitly requires another version; report a mismatch before testing.
-  Test/build only the affected variant.
+  Test/build the affected variant or variants. Expand only when shared build,
+  packaging, or runtime code crosses variant boundaries.
 - Shared storage, routing, networking, or compaction: verify only affected modes
   and platforms. UI claims require the relevant real flow when feasible; if it is
   unavailable, report the UI as unverified rather than inferring it from a build.
@@ -62,5 +67,3 @@ These rules add only Gagaodok-specific constraints to the global contract.
 ## Delivery
 
 - Report affected platform/mode, checks run, unresolved gates, and commit state.
-- Commit only when the user requests it or explicitly hands work to the other
-  agent; use a detailed handoff message. Never push or merge without permission.
