@@ -94,10 +94,12 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 
 다음 항목이 해결되기 전에는 `cloudflare/sync-worker/migrations/`를 만들지 않는다.
 
-- [ ] 최신 `@cloudflare/vitest-plugin` 기반 local Worker test stack 전환
-- [ ] operation별 `op`·`entity_type`·target shape·CAS 규칙 확정
-- [ ] initial runtime deletion gate를 validator가 실제로 거부
-- [ ] canonical Base64 envelope·RFC 3339 UTC validator 보정
+- [x] 최신 `@cloudflare/vitest-plugin` 기반 local Worker test stack 전환
+- [ ] operation별 `op`·`entity_type`·target shape·CAS 규칙 확정 (`group_state.worldline_id` 제거만 남음)
+- [x] initial runtime deletion gate를 validator가 실제로 거부
+- [ ] canonical Base64 decode→re-encode equality 보정
+- [x] RFC 3339 UTC validator 보정
+- [ ] 후속 handler용 operation table read-only 재사용 경로 제공
 - [ ] encrypted field와 metadata column 목록을 operation table과 대조
 - [ ] R2 ciphertext 상한과 attachment metadata field 확정
 
@@ -119,4 +121,5 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [canonical schema 통합 초안](PHASE1_CANONICAL_SCHEMA_DRAFT.md)
 - [Worker API 초안](PHASE1_WORKER_API_DRAFT.md)
 - [Worker scaffold Codex 검토](2026-08-28-phase1-worker-scaffold-codex-review.md)
+- [Worker validator Codex 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md)
 - [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)

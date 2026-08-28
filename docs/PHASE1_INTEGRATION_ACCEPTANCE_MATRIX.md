@@ -54,8 +54,8 @@ flowchart TB
 | legacy turn·비파괴 조사 | [Phase 0 계획](PHASE0_INVENTORY_PLAN.md), inventory tool·집계 보고서 | ✅ | 합성 importer test |
 | E2EE key·AAD·pairing 계약 | [E2EE 제안서](2026-08-27-sync-encryption-proposal.md), vector test | ✅ | Worker pairing endpoint test |
 | canonical field ownership·extension | canonical schema, Python contract fixture | ✅ | D1 field·extension row 구현 |
-| Worker health·기본 boundary | `7044ffc`의 local Worker 40 tests | 🟡 | 차단 사항 보정 후 재검증 |
-| operation target·field envelope 검사 | [Worker scaffold 검토](2026-08-28-phase1-worker-scaffold-codex-review.md) | 🔴 | Claude Code가 validator·API 초안 보정 |
+| Worker health·기본 boundary | `2fa06b3`의 local Worker 71 tests | ✅ | D1 연결 뒤 health 회귀 test |
+| operation target·field envelope 검사 | [Worker validator 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md) | 🟡 | group-state scope·canonical Base64·table export 보정 |
 | D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md) | 🟡 | migration + local D1 batch test |
 | R2 attachment state machine | Worker API 초안 | 🟡 | encrypted size·local R2 test |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
@@ -68,12 +68,15 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 ### Worker HTTP boundary
 
-- [ ] `@cloudflare/vitest-plugin` + Vitest 4.1 이상으로 local test stack 전환
-- [ ] operation별 `op`·`entity_type`·target ID·revision 규칙을 table-driven validator로 고정
-- [ ] 초기 runtime에서 `delete_turn`·`delete_bubble` 거부
-- [ ] 평문 top-level `relationship_policy` 제거
-- [ ] canonical Base64 envelope와 실제 RFC 3339 UTC 값 검사
-- [ ] 기존 health·content-free error·배포 방지 test 유지
+- [x] `@cloudflare/vitest-plugin` + Vitest 4.1 이상으로 local test stack 전환
+- [x] operation별 `op`·`entity_type`·target ID·revision 규칙을 table-driven validator로 고정
+- [x] 초기 runtime에서 `delete_turn`·`delete_bubble` 거부
+- [x] 평문 top-level `relationship_policy` 제거
+- [ ] canonical Base64를 decode→re-encode equality까지 검사
+- [x] 실제 RFC 3339 UTC 날짜·시간 값 검사
+- [x] 기존 health·content-free error·배포 방지 test 유지
+- [ ] `group_state` target에서 `worldline_id`를 금지
+- [ ] 후속 handler가 operation table을 복제하지 않도록 read-only 재사용 경로 제공
 
 ### D1 persistence boundary
 
@@ -115,4 +118,5 @@ Claude Code의 다음 커밋이 도착하면 Codex는 이 표의 🔴·🟡 항�
 - [canonical schema 통합 초안](PHASE1_CANONICAL_SCHEMA_DRAFT.md)
 - [Worker API 초안](PHASE1_WORKER_API_DRAFT.md)
 - [Worker scaffold Codex 검토](2026-08-28-phase1-worker-scaffold-codex-review.md)
+- [Worker validator Codex 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md)
 - [D1 migration 선행 계획](PHASE1_D1_MIGRATION_PLAN.md)
