@@ -8,8 +8,10 @@ import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationReques
 import {
   applyCreateGroupState,
   applyCreateRoom,
+  applyCreateWorldline,
   applyPatchGroupState,
   applyPatchRoom,
+  applyPatchWorldline,
 } from "../storage/operationTransaction";
 import type { OperationResult } from "../storage/operationTransaction";
 
@@ -112,6 +114,10 @@ export async function applyOperationRequest(
       return await applyCreateGroupState(db, auth, operation, fingerprint);
     case "patch_group_state":
       return await applyPatchGroupState(db, auth, operation, fingerprint);
+    case "create_worldline":
+      return await applyCreateWorldline(db, auth, operation, fingerprint);
+    case "patch_worldline":
+      return await applyPatchWorldline(db, auth, operation, fingerprint);
     default:
       throw validationFailed();
   }

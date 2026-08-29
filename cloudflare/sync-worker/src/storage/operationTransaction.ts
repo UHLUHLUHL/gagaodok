@@ -225,6 +225,14 @@ function ledgerStatements(
 ): D1PreparedStatement[] {
   const spaceId = request.target.space_id;
   const roomId = request.target.room_id as string;
+  // The worldline axis belongs to the change identity only for entities whose
+  // storage key has one. migration 0008 states the same rule as a CHECK: the
+  // room and group_state branches require worldline_key IS NULL, the worldline
+  // branch requires it non-null and non-empty.
+  const identityWorldlineKey =
+    getEntityShape(getOperationSpec(request.op).entityType).worldlineRule === "required"
+      ? request.worldline_key
+      : null;
   // The entity_type comes from the validator's operation table, never from a
   // literal spelled out per handler, so the two ledgers can never disagree
   // about what a given operation wrote.
@@ -238,13 +246,22 @@ function ledgerStatements(
          VALUES (?, ?, ?, ?, 'upsert', ?, ${CURRENT_SEQ})`,
       )
       .bind(accountId, request.operation_id, fingerprint, entityType, revision, accountId),
-    db
-      .prepare(
-        `INSERT INTO change_log
-           (account_id, server_seq, entity_type, change_kind, revision, space_id, room_id)
-         VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ?, ?)`,
-      )
-      .bind(accountId, accountId, entityType, revision, spaceId, roomId),
+    identityWorldlineKey === null
+      ? db
+          .prepare(
+            `INSERT INTO change_log
+               (account_id, server_seq, entity_type, change_kind, revision, space_id, room_id)
+             VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ?, ?)`,
+          )
+          .bind(accountId, accountId, entityType, revision, spaceId, roomId)
+      : db
+          .prepare(
+            `INSERT INTO change_log
+               (account_id, server_seq, entity_type, change_kind, revision,
+                space_id, room_id, worldline_key)
+             VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ?, ?, ?)`,
+          )
+          .bind(accountId, accountId, entityType, revision, spaceId, roomId, identityWorldlineKey),
     db
       .prepare("UPDATE account SET next_server_seq = next_server_seq + 1 WHERE account_id = ?")
       .bind(accountId),
@@ -671,6 +688,224 @@ async function runBatch(
     server_seq: applied.server_seq,
     revision: applied.result_revision,
   };
+}
+
+/**
+ * worldline's canonical encrypted fields (canonical schema §11.1). Like
+ * group_state it has no extension table.
+ */
+const WORLDLINE_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  name: "name_enc",
+  participant_hearts: "participant_hearts_enc",
+});
+
+/**
+ * Apply one validated `create_worldline`.
+ *
+ * The stored `worldline_key` is the value the validator already computed from
+ * the target, never a second derivation here: D1's
+ * `CHECK (worldline_key = COALESCE(worldline_id, ''))` and the API's nullable
+ * `worldline_id` must agree, and two independent derivations are exactly how
+ * they would stop agreeing. The target is `required`, so the key is a non-null
+ * UUID and no default-scope row can be created through this path.
+ */
+export async function applyCreateWorldline(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const worldlineId = request.target.worldline_id as string;
+  const key = request.worldline_key;
+
+  columnsOnly(Object.keys(request.set), WORLDLINE_FIELD_COLUMNS);
+  columnsOnly(request.clear, WORLDLINE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM room
+              WHERE account_id = ? AND space_id = ? AND room_id = ?) = 1
+            AND (SELECT COUNT(*) FROM worldline
+                  WHERE account_id = ? AND space_id = ? AND room_id = ?
+                    AND worldline_key = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        accountId,
+        spaceId,
+        roomId,
+        key,
+        accountId,
+      ),
+    db
+      .prepare(
+        `INSERT INTO worldline
+           (account_id, space_id, room_id, worldline_id, worldline_key,
+            name_enc, participant_hearts_enc, revision, server_seq, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ${CURRENT_SEQ}, ?, ?)`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        roomId,
+        worldlineId,
+        key,
+        ...encryptedValues(request, WORLDLINE_FIELD_COLUMNS),
+        accountId,
+        request.created_at,
+        request.created_at,
+      ),
+    ...ledgerStatements(db, accountId, request, fingerprint, 0),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyWorldlineCreateFailure(db, accountId, request, fingerprint),
+  );
+}
+
+/** Apply one validated `patch_worldline`. */
+export async function applyPatchWorldline(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const baseRevision = request.base_revision as number;
+  const nextRevision = baseRevision + 1;
+
+  const clearColumns = columnsOnly(request.clear, WORLDLINE_FIELD_COLUMNS);
+  columnsOnly(Object.keys(request.set), WORLDLINE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const assignments: string[] = [];
+  const bindings: unknown[] = [];
+  for (const [name, column] of Object.entries(WORLDLINE_FIELD_COLUMNS)) {
+    if (Object.prototype.hasOwnProperty.call(request.set, name)) {
+      assignments.push(`${column} = ?`);
+      bindings.push(request.set[name]);
+    }
+  }
+  for (const column of clearColumns) {
+    assignments.push(`${column} = NULL`);
+  }
+  assignments.push("revision = revision + 1", `server_seq = ${CURRENT_SEQ}`, "updated_at = ?");
+  bindings.push(accountId, request.created_at);
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT revision FROM worldline
+              WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?) = ?
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(accountId, request.operation_id, accountId, spaceId, roomId, key, baseRevision, accountId),
+    db
+      .prepare(
+        `UPDATE worldline SET ${assignments.join(", ")}
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND revision = ?`,
+      )
+      .bind(...bindings, accountId, spaceId, roomId, key, baseRevision),
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyWorldlinePatchFailure(db, accountId, request, fingerprint, baseRevision),
+  );
+}
+
+async function readWorldlineRevision(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `SELECT revision FROM worldline
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?`,
+    )
+    .bind(accountId, request.target.space_id, request.target.room_id, request.worldline_key)
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
+async function classifyWorldlineCreateFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const roomRevision = await readRoomRevision(
+    db,
+    accountId,
+    request.target.space_id,
+    request.target.room_id as string,
+  );
+  if (roomRevision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  const revision = await readWorldlineRevision(db, accountId, request);
+  if (revision !== null) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+async function classifyWorldlinePatchFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  baseRevision: number,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const revision = await readWorldlineRevision(db, accountId, request);
+  if (revision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (revision !== baseRevision) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
 }
 
 interface BatchInput {
