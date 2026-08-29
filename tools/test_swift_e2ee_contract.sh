@@ -9,3 +9,10 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensE2EEContractTests/E2EEContractVectorTests.swift" \
   -o "$binary_path"
 "$binary_path"
+
+mnemonic_binary_path="${TMPDIR:-/tmp}/gagaodok-recovery-mnemonic-tests"
+swiftc \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncRecoveryMnemonic.swift" \
+  "$repo_root/Tests/KakaoSapiensE2EEContractTests/RecoveryMnemonicTests.swift" \
+  -o "$mnemonic_binary_path"
+"$mnemonic_binary_path" "$repo_root/Sources/KakaoSapiens/Resources/sync/english-bip39.txt"

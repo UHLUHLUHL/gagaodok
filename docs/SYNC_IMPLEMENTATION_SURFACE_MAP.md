@@ -191,7 +191,8 @@ Production과 합성 시험 namespace는 처음부터 분리한다. 실제 계�
 - E2EE 2차 제안의 Claude Code 독립 재검토
 - Android QR 생성·scan dependency 선택과 camera permission UX
 - Mac이 새 기기일 때 QR scan 방법 선택
-- BIP-39 영어 wordlist 출처·license·양쪽 checksum fixture
+- BIP-39 영어 wordlist 출처·license·양쪽 checksum fixture — `english-bip39.txt`,
+  `SyncRecoveryMnemonic.swift/.kt`와 zero-entropy checksum 회귀로 완료
 - 실제 attachment 최대 크기에 따른 12MB 공통 상한 또는 chunked AEAD 결정
 - Android release 데이터의 안전한 export 경로
 - 합성 Worker의 CPU·D1 row·R2 request 실측
