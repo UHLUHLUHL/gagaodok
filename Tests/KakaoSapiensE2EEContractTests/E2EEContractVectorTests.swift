@@ -147,6 +147,42 @@ enum E2EEContractVectorTests {
                 == Data(hex: string("recovery_auth_verifier_hex", in: recovery)),
             "recovery verifier mismatch"
         )
+        let context = SyncE2EE.RecoveryAADContext(
+            accountID: try string("account_id", in: recovery),
+            recoveryLookup: material.recoveryLookup,
+            recoveryVersion: UInt32(try integer("recovery_version", in: recovery))
+        )
+        try require(
+            SyncE2EE.encodeRecoveryAAD(context) == Data(hex: string("aad_hex", in: recovery)),
+            "recovery AAD mismatch"
+        )
+        let envelope = try SyncE2EE.sealRecoveryWrappedMasterKey(
+            accountMasterKey: Data(hex: string("account_master_key_hex", in: recovery)),
+            recoveryWrapKey: material.recoveryWrapKey,
+            nonce: Data(hex: string("nonce_hex", in: recovery)),
+            context: context
+        )
+        try require(envelope == Data(hex: string("envelope_hex", in: recovery)), "recovery envelope mismatch")
+        try require(
+            SyncE2EE.openRecoveryWrappedMasterKey(
+                envelope: envelope,
+                recoveryWrapKey: material.recoveryWrapKey,
+                context: context
+            ) == Data(hex: string("account_master_key_hex", in: recovery)),
+            "recovered master key mismatch"
+        )
+        let wrongVersion = SyncE2EE.RecoveryAADContext(
+            accountID: context.accountID,
+            recoveryLookup: context.recoveryLookup,
+            recoveryVersion: context.recoveryVersion + 1
+        )
+        try expectError(.authenticationFailed) {
+            _ = try SyncE2EE.openRecoveryWrappedMasterKey(
+                envelope: envelope,
+                recoveryWrapKey: material.recoveryWrapKey,
+                context: wrongVersion
+            )
+        }
     }
 
     private static func derivesCanonicalPairingMaterial() throws {
@@ -244,6 +280,13 @@ enum E2EEContractVectorTests {
 
     private static func string(_ key: String, in object: [String: Any]) throws -> String {
         guard let value = object[key] as? String else {
+            throw TestError.invalidVector(key)
+        }
+        return value
+    }
+
+    private static func integer(_ key: String, in object: [String: Any]) throws -> Int {
+        guard let value = object[key] as? Int else {
             throw TestError.invalidVector(key)
         }
         return value

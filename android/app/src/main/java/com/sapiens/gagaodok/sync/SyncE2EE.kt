@@ -52,6 +52,12 @@ internal object SyncE2EE {
         val recoveryWrapKey: ByteArray,
     )
 
+    data class RecoveryAADContext(
+        val accountId: String,
+        val recoveryLookup: ByteArray,
+        val recoveryVersion: Long,
+    )
+
     data class PairingMaterial(
         val pairingSessionLookup: ByteArray,
         val pairingClaimKey: ByteArray,
@@ -116,6 +122,42 @@ internal object SyncE2EE {
     fun recoveryAuthVerifier(recoveryAuth: ByteArray): ByteArray {
         requireContract(recoveryAuth.size == 32, ContractError.INVALID_KEY)
         return labeledHash("gagaodok/e2ee/v1/recovery-auth-verifier", recoveryAuth)
+    }
+
+    fun encodeRecoveryAAD(context: RecoveryAADContext): ByteArray {
+        requireContract(context.recoveryLookup.size == 32, ContractError.INVALID_IDENTITY)
+        requireContract(context.recoveryVersion in 1..0xffff_ffffL, ContractError.INVALID_IDENTITY)
+        return encodeLP(
+            listOf(
+                1 to uint16(PROTOCOL_VERSION),
+                2 to canonicalUuid(context.accountId),
+                3 to context.recoveryLookup,
+                4 to uint32(context.recoveryVersion),
+                5 to uint32(KEY_GENERATION),
+                6 to ascii("recovery_wrapped_master_key"),
+                7 to byteArrayOf(ALGORITHM.toByte()),
+            ),
+        )
+    }
+
+    fun sealRecoveryWrappedMasterKey(
+        accountMasterKey: ByteArray,
+        recoveryWrapKey: ByteArray,
+        nonce: ByteArray,
+        context: RecoveryAADContext,
+    ): ByteArray {
+        requireContract(accountMasterKey.size == 32, ContractError.INVALID_ACCOUNT_MASTER_KEY)
+        return sealEnvelope(accountMasterKey, recoveryWrapKey, nonce, encodeRecoveryAAD(context))
+    }
+
+    fun openRecoveryWrappedMasterKey(
+        envelope: ByteArray,
+        recoveryWrapKey: ByteArray,
+        context: RecoveryAADContext,
+    ): ByteArray {
+        val masterKey = openEnvelope(envelope, recoveryWrapKey, encodeRecoveryAAD(context))
+        requireContract(masterKey.size == 32, ContractError.INVALID_ACCOUNT_MASTER_KEY)
+        return masterKey
     }
 
     fun derivePairingMaterial(pairingSecret: ByteArray, claimSecret: ByteArray): PairingMaterial {
@@ -207,12 +249,25 @@ internal object SyncE2EE {
         nonce: ByteArray,
         context: AADContext,
     ): ByteArray {
+        return sealEnvelope(plaintext, key, nonce, encodeAAD(context))
+    }
+
+    fun open(envelope: ByteArray, key: ByteArray, context: AADContext): ByteArray {
+        return openEnvelope(envelope, key, encodeAAD(context))
+    }
+
+    private fun sealEnvelope(
+        plaintext: ByteArray,
+        key: ByteArray,
+        nonce: ByteArray,
+        aad: ByteArray,
+    ): ByteArray {
         requireContract(key.size == 32, ContractError.INVALID_KEY)
         requireContract(nonce.size == 12, ContractError.INVALID_NONCE)
         return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
-            cipher.updateAAD(encodeAAD(context))
+            cipher.updateAAD(aad)
             byteArrayOf(PROTOCOL_VERSION.toByte(), ALGORITHM.toByte()) +
                 uint32(KEY_GENERATION) + nonce + cipher.doFinal(plaintext)
         } catch (error: ContractException) {
@@ -222,7 +277,7 @@ internal object SyncE2EE {
         }
     }
 
-    fun open(envelope: ByteArray, key: ByteArray, context: AADContext): ByteArray {
+    private fun openEnvelope(envelope: ByteArray, key: ByteArray, aad: ByteArray): ByteArray {
         requireContract(key.size == 32, ContractError.INVALID_KEY)
         requireContract(envelope.size >= 34, ContractError.INVALID_ENVELOPE)
         requireContract(
@@ -243,7 +298,7 @@ internal object SyncE2EE {
                 SecretKeySpec(key, "AES"),
                 GCMParameterSpec(128, envelope.copyOfRange(6, 18)),
             )
-            cipher.updateAAD(encodeAAD(context))
+            cipher.updateAAD(aad)
             cipher.doFinal(envelope.copyOfRange(18, envelope.size))
         } catch (error: ContractException) {
             throw error

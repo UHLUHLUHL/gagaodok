@@ -36,6 +36,12 @@ enum SyncE2EE {
         let recoveryWrapKey: Data
     }
 
+    struct RecoveryAADContext: Equatable {
+        let accountID: String
+        let recoveryLookup: Data
+        let recoveryVersion: UInt32
+    }
+
     struct PairingMaterial: Equatable {
         let pairingSessionLookup: Data
         let pairingClaimKey: Data
@@ -108,6 +114,50 @@ enum SyncE2EE {
             label: "gagaodok/e2ee/v1/recovery-auth-verifier",
             payload: recoveryAuth
         )
+    }
+
+    static func encodeRecoveryAAD(_ context: RecoveryAADContext) throws -> Data {
+        guard context.recoveryLookup.count == 32, context.recoveryVersion > 0 else {
+            throw ContractError.invalidIdentity
+        }
+        return try encodeLP([
+            (1, Data(protocolVersion.bigEndianBytes)),
+            (2, canonicalUUID(context.accountID)),
+            (3, context.recoveryLookup),
+            (4, Data(context.recoveryVersion.bigEndianBytes)),
+            (5, Data(keyGeneration.bigEndianBytes)),
+            (6, try ascii("recovery_wrapped_master_key")),
+            (7, Data([algorithm])),
+        ])
+    }
+
+    static func sealRecoveryWrappedMasterKey(
+        accountMasterKey: Data,
+        recoveryWrapKey: Data,
+        nonce: Data,
+        context: RecoveryAADContext
+    ) throws -> Data {
+        guard accountMasterKey.count == 32 else { throw ContractError.invalidAccountMasterKey }
+        return try sealEnvelope(
+            plaintext: accountMasterKey,
+            key: recoveryWrapKey,
+            nonce: nonce,
+            aad: encodeRecoveryAAD(context)
+        )
+    }
+
+    static func openRecoveryWrappedMasterKey(
+        envelope: Data,
+        recoveryWrapKey: Data,
+        context: RecoveryAADContext
+    ) throws -> Data {
+        let masterKey = try openEnvelope(
+            envelope: envelope,
+            key: recoveryWrapKey,
+            aad: encodeRecoveryAAD(context)
+        )
+        guard masterKey.count == 32 else { throw ContractError.invalidAccountMasterKey }
+        return masterKey
     }
 
     static func derivePairingMaterial(pairingSecret: Data, claimSecret: Data) throws -> PairingMaterial {
@@ -207,9 +257,26 @@ enum SyncE2EE {
         nonce: Data,
         context: AADContext
     ) throws -> Data {
+        try sealEnvelope(
+            plaintext: plaintext,
+            key: key,
+            nonce: nonce,
+            aad: encodeAAD(context)
+        )
+    }
+
+    static func open(envelope: Data, key: Data, context: AADContext) throws -> Data {
+        try openEnvelope(envelope: envelope, key: key, aad: encodeAAD(context))
+    }
+
+    private static func sealEnvelope(
+        plaintext: Data,
+        key: Data,
+        nonce: Data,
+        aad: Data
+    ) throws -> Data {
         guard key.count == 32 else { throw ContractError.invalidKey }
         guard nonce.count == 12 else { throw ContractError.invalidNonce }
-        let aad = try encodeAAD(context)
         do {
             let sealed = try AES.GCM.seal(
                 plaintext,
@@ -230,7 +297,7 @@ enum SyncE2EE {
         }
     }
 
-    static func open(envelope: Data, key: Data, context: AADContext) throws -> Data {
+    private static func openEnvelope(envelope: Data, key: Data, aad: Data) throws -> Data {
         guard key.count == 32 else { throw ContractError.invalidKey }
         guard envelope.count >= 34 else { throw ContractError.invalidEnvelope }
         guard envelope[0] == UInt8(protocolVersion) else { throw ContractError.unsupportedVersion }
@@ -242,7 +309,6 @@ enum SyncE2EE {
         let ciphertextEnd = envelope.count - 16
         let ciphertext = Data(envelope[18..<ciphertextEnd])
         let tag = Data(envelope[ciphertextEnd..<envelope.count])
-        let aad = try encodeAAD(context)
         do {
             let sealed = try AES.GCM.SealedBox(
                 nonce: AES.GCM.Nonce(data: nonceData),

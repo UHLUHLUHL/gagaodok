@@ -222,12 +222,13 @@ Swift `CryptoKit`은 `HKDF.deriveKey(inputKeyMaterial:salt:info:outputByteCount:
 
 아래 값은 표준 라이브러리만으로 구현한 독립 스크립트로 계산했다. 계산 전에 **RFC 5869 A.1 test vector로 HKDF 구현 자체를 먼저 검증**했고 null·empty·field ordering도 별도 시험했다. Swift·Kotlin contract test는 이 값을 그대로 기대값으로 사용한다. 저장소의 [`tools/e2ee_contract_vectors.py`](../tools/e2ee_contract_vectors.py), [고정 테스트](../tools/tests/test_e2ee_contract_vectors.py), [공용 artifact](../tools/fixtures/e2ee_contract_vectors.json)로 재현할 수 있다.
 
-2026-08-29 기준 공용 artifact의 SHA-256은
-`dc189c17d8ddf456d8f00e78d5bac8e8459deb16c075546e582c34e5bb3e21cd`다.
+2026-08-29 기준 field·recovery·pairing vector를 포함한 공용 artifact의 SHA-256은
+`c80a2e5bfa6813ca515d4f5eb71fccab7fab9513dda4296c960c7faf6efa2136`다.
 Swift `CryptoKit` 구현(`a0dd551`)과 Android shared `src/main`의 JCA 구현
 (`cd0999d`)은 같은 key·AAD·nonce·한글 plaintext에서 동일 envelope byte를
 만들고 이를 각각 복호화한다. identity·field·`bubble_order`·algorithm·generation
-변조와 non-canonical Base64는 양쪽 모두 fail-closed한다.
+변조와 non-canonical Base64는 양쪽 모두 fail-closed한다. `19ddf24`는 recovery
+HKDF/verifier와 pairing claim/delivery/SAS 파생을 같은 artifact와 양 구현에 추가했다.
 
 **시험 전용 입력이며 실제 배포 키가 아니다.**
 
@@ -529,7 +530,25 @@ AAD field는 다음 순서와 type으로 고정한다.
 
 `entity_type`을 넣어 room·profile·checkpoint·attachment의 UUID가 우연히 겹치는 경우를 막는다. `bubble_order`는 최초 canonical import 후 불변이므로 bubble payload에 포함한다.
 
-Recovery-wrapped master key는 `entity_type = recovery_wrapped_master_key`, `entity_id = account_id`, field 11에 해당 `recovery_version`을 넣는다. Pairing claim과 delivery package는 account 내용을 복호화하기 전에도 계산할 수 있도록 다음 별도 LP AAD를 사용한다.
+Recovery-wrapped master key는 room·space에 속하지 않으므로 일반 field AAD에
+가짜 `space_id`·`room_id`를 넣지 않는다. 다음 account-wide LP AAD를 사용하고,
+봉투 header는 §7.1과 동일하다.
+
+| field_id | recovery AAD 값 | type |
+| ---: | --- | --- |
+| 1 | `protocol_version` | UInt16BE |
+| 2 | `account_id` | UUID ASCII |
+| 3 | `recovery_lookup` | 32 bytes |
+| 4 | `recovery_version` | UInt32BE, 1 이상 |
+| 5 | `key_generation` | UInt32BE, v1 = 1 |
+| 6 | payload type `recovery_wrapped_master_key` | UTF-8 ASCII |
+| 7 | `alg` | UInt8, v1 = `0x01` |
+
+`recovery_lookup`을 AAD에 넣어 lookup record와 wrapped key의 교체를 막고,
+`recovery_version`으로 문구 교체 전후 record를 구분한다. account-wide AAD의
+Swift·Kotlin exact envelope는 공용 artifact의 `recovery` section이 고정한다.
+
+Pairing claim과 delivery package는 account 내용을 복호화하기 전에도 계산할 수 있도록 다음 별도 LP AAD를 사용한다.
 
 | field_id | pairing AAD 값 | type |
 | ---: | --- | --- |

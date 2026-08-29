@@ -239,6 +239,31 @@ def pairing_aad(
     ])
 
 
+def recovery_aad(
+    *,
+    account_id: str,
+    recovery_lookup: bytes,
+    recovery_version: int,
+    key_generation: int = 1,
+    alg: int = 1,
+) -> bytes:
+    if len(recovery_lookup) != 32:
+        raise ValueError("recovery lookup must be 32 bytes")
+    if not 1 <= recovery_version <= 0xFFFFFFFF:
+        raise ValueError("recovery version is outside UInt32")
+    if key_generation != 1 or alg != 1:
+        raise ValueError("E2EE v1 only accepts generation and algorithm 1")
+    return encode_lp([
+        (1, PROTOCOL_VERSION.to_bytes(2, "big")),
+        (2, _canonical_uuid_ascii(account_id)),
+        (3, recovery_lookup),
+        (4, recovery_version.to_bytes(4, "big")),
+        (5, key_generation.to_bytes(4, "big")),
+        (6, b"recovery_wrapped_master_key"),
+        (7, alg.to_bytes(1, "big")),
+    ])
+
+
 def derive_scope_keys(account_master_key: bytes, context: bytes) -> dict[str, bytes]:
     if len(account_master_key) != 32:
         raise ValueError("account master key must be 32 bytes")
@@ -479,17 +504,42 @@ def documented_aead_vector() -> dict[str, str | int | None]:
     }
 
 
-def documented_recovery_vector() -> dict[str, str]:
+def documented_recovery_vector() -> dict[str, str | int]:
     entropy = bytes(range(0x40, 0x50))
     material = derive_recovery_material(entropy)
     recovery_auth = material["recovery_auth"]
     assert isinstance(recovery_auth, bytes)
+    account_id = "11111111-1111-4111-8111-111111111111"
+    recovery_lookup = material["recovery_lookup"]
+    recovery_wrap_key = material["recovery_wrap_key"]
+    assert isinstance(recovery_lookup, bytes)
+    assert isinstance(recovery_wrap_key, bytes)
+    nonce = bytes(range(0x20, 0x2C))
+    account_master_key = bytes(range(32))
+    aad = recovery_aad(
+        account_id=account_id,
+        recovery_lookup=recovery_lookup,
+        recovery_version=1,
+    )
+    envelope = seal_v1_envelope(
+        key=recovery_wrap_key,
+        nonce=nonce,
+        plaintext=account_master_key,
+        aad=aad,
+    )
     return {
+        "account_id": account_id,
+        "recovery_version": 1,
         "recovery_entropy_hex": entropy.hex(),
-        "recovery_lookup_hex": material["recovery_lookup"].hex(),
+        "recovery_lookup_hex": recovery_lookup.hex(),
         "recovery_auth_hex": recovery_auth.hex(),
-        "recovery_wrap_key_hex": material["recovery_wrap_key"].hex(),
+        "recovery_wrap_key_hex": recovery_wrap_key.hex(),
         "recovery_auth_verifier_hex": recovery_auth_verifier(recovery_auth).hex(),
+        "account_master_key_hex": account_master_key.hex(),
+        "nonce_hex": nonce.hex(),
+        "aad_hex": aad.hex(),
+        "envelope_hex": envelope.hex(),
+        "envelope_base64": base64.b64encode(envelope).decode("ascii"),
     }
 
 

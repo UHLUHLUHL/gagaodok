@@ -10,7 +10,7 @@ remote migration, Cloudflare 로그인·resource 생성, 앱 설치·데이터 �
 ## Gate 1 — Pairing·recovery crypto
 
 - [x] 공용 artifact에 recovery HKDF/verifier와 pairing claim/delivery/SAS vector 추가
-- [ ] account-wide recovery envelope용 AAD를 room scope와 분리해 canonical 문서에 고정
+- [x] account-wide recovery envelope용 AAD를 room scope와 분리해 canonical 문서에 고정
 - [ ] Swift·Kotlin이 같은 recovery·pairing vector를 생성·검증
 - [ ] secret·package·ciphertext가 test output과 error에 노출되지 않는 회귀
 

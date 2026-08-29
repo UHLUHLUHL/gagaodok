@@ -103,6 +103,30 @@ class E2EEContractVectorTest {
             recovery.string("recovery_auth_verifier_hex").hexBytes(),
             SyncE2EE.recoveryAuthVerifier(material.recoveryAuth),
         )
+        val context = SyncE2EE.RecoveryAADContext(
+            accountId = recovery.string("account_id"),
+            recoveryLookup = material.recoveryLookup,
+            recoveryVersion = recovery.getValue("recovery_version").jsonPrimitive.content.toLong(),
+        )
+        assertArrayEquals(recovery.string("aad_hex").hexBytes(), SyncE2EE.encodeRecoveryAAD(context))
+        val envelope = SyncE2EE.sealRecoveryWrappedMasterKey(
+            accountMasterKey = recovery.string("account_master_key_hex").hexBytes(),
+            recoveryWrapKey = material.recoveryWrapKey,
+            nonce = recovery.string("nonce_hex").hexBytes(),
+            context = context,
+        )
+        assertArrayEquals(recovery.string("envelope_hex").hexBytes(), envelope)
+        assertArrayEquals(
+            recovery.string("account_master_key_hex").hexBytes(),
+            SyncE2EE.openRecoveryWrappedMasterKey(envelope, material.recoveryWrapKey, context),
+        )
+        expectError(SyncE2EE.ContractError.AUTHENTICATION_FAILED) {
+            SyncE2EE.openRecoveryWrappedMasterKey(
+                envelope,
+                material.recoveryWrapKey,
+                context.copy(recoveryVersion = context.recoveryVersion + 1),
+            )
+        }
     }
 
     @Test

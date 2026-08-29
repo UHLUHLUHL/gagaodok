@@ -17,6 +17,7 @@ from tools.e2ee_contract_vectors import (
     derive_pairing_material,
     derive_recovery_material,
     recovery_auth_verifier,
+    recovery_aad,
 )
 
 
@@ -228,6 +229,37 @@ class E2EEContractVectorTests(unittest.TestCase):
         self.assertEqual(
             recovery_auth_verifier(material["recovery_auth"]).hex(),
             "f2ea393e569f54c87f344bab090bdb51dc9bb578959600fc4faf99cf41efd7a3",
+        )
+
+    def test_recovery_envelope_uses_account_wide_aad(self):
+        material = derive_recovery_material(bytes(range(0x40, 0x50)))
+        aad = recovery_aad(
+            account_id="11111111-1111-4111-8111-111111111111",
+            recovery_lookup=material["recovery_lookup"],
+            recovery_version=1,
+        )
+        envelope = vectors.seal_v1_envelope(
+            key=material["recovery_wrap_key"],
+            nonce=bytes(range(0x20, 0x2C)),
+            plaintext=bytes(range(32)),
+            aad=aad,
+        )
+
+        self.assertEqual(
+            aad.hex(),
+            "47444b310007000101000000020001"
+            "0002010000002431313131313131312d313131312d343131312d383131312d313131313131313131313131"
+            "0003010000002068993614c1807cecbfbb41008c177de68d0126c9a4220abce1684a1f92290c78"
+            "0004010000000400000001"
+            "0005010000000400000001"
+            "0006010000001b7265636f766572795f777261707065645f6d61737465725f6b6579"
+            "0007010000000101",
+        )
+        self.assertEqual(
+            envelope.hex(),
+            "010100000001202122232425262728292a2b"
+            "f3659cbece521f9ebaaedc15525091989e9e9890626c27684f9317bbb599f4"
+            "ea06c692010578abccc17218ef0205386a",
         )
 
     def test_pairing_material_matches_fixed_vector(self):
