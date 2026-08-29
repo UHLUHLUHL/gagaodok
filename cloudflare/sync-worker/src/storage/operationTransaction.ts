@@ -956,6 +956,115 @@ async function classifyWorldlinePatchFailure(
   throw storageUnavailable();
 }
 
+const ENGINE_PROFILE_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  mode: "mode_enc",
+  model_capability: "model_capability_enc",
+  prompt_profile_id: "prompt_profile_id_enc",
+  prompt_profile_version: "prompt_profile_version_enc",
+  relationship_policy: "relationship_policy_enc",
+  compaction_profile_id: "compaction_profile_id_enc",
+  compaction_contract_fingerprint: "compaction_contract_fingerprint_enc",
+  cache_policy: "cache_policy_enc",
+  repetition_policy: "repetition_policy_enc",
+});
+
+/**
+ * Apply one validated `create_engine_profile`.
+ *
+ * An engine_profile row is an immutable version: the table has no
+ * `revision`, no `created_at` and a BEFORE UPDATE trigger that aborts. So
+ * this is a plain INSERT — never an upsert, which would fire that trigger —
+ * and the ledger records the identity's own `profile_revision` (contract
+ * 7c97146) rather than a mutable revision that does not exist.
+ */
+export async function applyCreateEngineProfile(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const profileId = request.target.engine_profile_id as string;
+  const profileRevision = request.target.profile_revision as number;
+
+  columnsOnly(Object.keys(request.set), ENGINE_PROFILE_FIELD_COLUMNS);
+  columnsOnly(request.clear, ENGINE_PROFILE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const columns = Object.values(ENGINE_PROFILE_FIELD_COLUMNS);
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM engine_profile
+              WHERE account_id = ? AND space_id = ? AND engine_profile_id = ?
+                AND profile_revision = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(accountId, request.operation_id, accountId, spaceId, profileId, profileRevision, accountId),
+    db
+      .prepare(
+        `INSERT INTO engine_profile
+           (account_id, space_id, engine_profile_id, profile_revision,
+            ${columns.join(", ")}, compaction_compat_tag, server_seq)
+         VALUES (?, ?, ?, ?, ${columns.map(() => "?").join(", ")}, ?, ${CURRENT_SEQ})`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        profileId,
+        profileRevision,
+        ...encryptedValues(request, ENGINE_PROFILE_FIELD_COLUMNS),
+        request.metadata_set["compaction_compat_tag"] ?? null,
+        accountId,
+      ),
+    ...ledgerStatements(db, accountId, request, fingerprint, profileRevision, {
+      space_id: spaceId,
+      engine_profile_id: profileId,
+      profile_revision: profileRevision,
+    }),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyEngineProfileFailure(db, accountId, request, fingerprint),
+  );
+}
+
+async function classifyEngineProfileFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const profileRevision = request.target.profile_revision as number;
+  const row = await db
+    .prepare(
+      `SELECT 1 AS present FROM engine_profile
+        WHERE account_id = ? AND space_id = ? AND engine_profile_id = ? AND profile_revision = ?`,
+    )
+    .bind(accountId, request.target.space_id, request.target.engine_profile_id, profileRevision)
+    .first();
+  if (row !== null) {
+    // An immutable identity has no mutable revision, so the number the client
+    // needs is the identity's own revision (contract 7c97146).
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: profileRevision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
 const CHECKPOINT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
   segments: "segments_enc",
   summary_text: "summary_text_enc",

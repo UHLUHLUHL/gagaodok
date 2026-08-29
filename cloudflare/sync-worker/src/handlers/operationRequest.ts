@@ -7,6 +7,7 @@ import { ApiError, validationFailed } from "../contracts/error";
 import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationRequest } from "../contracts/operation";
 import {
   applyCreateCheckpoint,
+  applyCreateEngineProfile,
   applyCreateGroupState,
   applyCreateRoom,
   applyCreateWorldline,
@@ -116,6 +117,8 @@ export async function applyOperationRequest(
       return await applyCreateGroupState(db, auth, operation, fingerprint);
     case "patch_group_state":
       return await applyPatchGroupState(db, auth, operation, fingerprint);
+    case "create_engine_profile":
+      return await applyCreateEngineProfile(db, auth, operation, fingerprint);
     case "create_checkpoint":
       return await applyCreateCheckpoint(db, auth, operation, fingerprint);
     case "patch_checkpoint":
