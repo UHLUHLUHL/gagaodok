@@ -210,6 +210,10 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 
 `owner_space_id`·`created_by_device_id`·`created_at`은 생성 provenance이므로 `patch_checkpoint`가 바꾸거나 지우지 못한다. encrypted segments·summary·profile/fingerprint는 계속 `set`·`clear`를 사용한다. `create_persona_snapshot`은 위 필수 metadata와 `base_revision`을 받고, 최초 `(base=0,target=1)` 또는 연속 `(target=base+1)`만 허용한다.
 
+Create provenance는 인증 경계와 일치해야 한다. `owner_space_id`는 `target.space_id`와 같고, `created_by_device_id`는 token으로 인증되어 request의 `device_id`와 일치한 device여야 한다. Validator가 이 cross-field equality를 D1 write 전에 거부하며, 다른 같은-account device를 provenance로 대신 적을 수 없다.
+
+Checkpoint의 `through_server_seq`는 null이거나 이 operation 직전에 이미 발급된 sequence여야 한다. Handler guard 기준으로 `through_server_seq < account.next_server_seq`를 강제한다. 새 checkpoint operation 자신에게 배정될 sequence나 미래 sequence를 coverage로 선언할 수 없으며, legacy unversioned checkpoint는 null을 유지할 수 있다.
+
 `compaction_compat_tag`는 문법을 해석하지 않는 opaque plaintext equality tag이며 UTF-16 code unit 기준 1~256자의 문자열만 받는다. 이 길이 제한은 transport/validator 경계일 뿐 hash·encoding 형식을 뜻하지 않는다.
 
 ### 4.1.1 operation별 identity shape (2026-08-28, Claude Code 보정)
@@ -381,6 +385,8 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 ### 5.3.1 M06 ledger v1 row 계약
 
 `operation_log`는 `(account_id, operation_id)` primary key와 `request_fingerprint`, `entity_type`, `change_kind`, nullable `result_revision`, `server_seq`를 가진다. fingerprint는 lowercase SHA-256 hex이고 raw body를 저장하지 않는다. `result_revision`은 attachment처럼 revision이 없는 projection에서 null이며, replay response는 나머지 저장 값으로 재구성한다.
+
+Immutable version row는 별도 mutable revision column이 없어도 identity 자체의 revision을 ledger revision으로 쓴다. `engine_profile`은 `profile_revision`, `persona_snapshot`은 `snapshot_revision`을 `operation_log.result_revision`과 `change_log.revision`에 동일하게 기록한다. 같은 immutable identity가 다른 operation으로 이미 존재하면 `REVISION_CONFLICT`와 그 identity revision만 `current_revision`으로 반환한다. Persona snapshot의 head CAS 충돌도 현재 head revision을 같은 detail로 반환한다.
 
 `change_log`는 `(account_id, server_seq)` primary key를 유지한다. identity는 serialized JSON/blob/owner key가 아니라 다음 nullable plaintext column으로 저장한다: `space_id`, `room_id`, `worldline_key`, `turn_id`, `message_id`, `persona_snapshot_id`, `snapshot_revision`, `engine_profile_id`, `profile_revision`, `checkpoint_id`, `attachment_id`. `entity_type`별 `CHECK`가 canonical storage key에 필요한 축만 정확히 non-null이 되도록 강제한다. `worldline_key = ''`는 D1 내부 key 표현이며 API projection에서는 nullable `worldline_id`로 되돌린다.
 
