@@ -29,6 +29,29 @@ interface AttachmentRow {
   origin_space_id: string;
   state: string;
   ciphertext_byte_size: number;
+  ciphertext_hash: string;
+}
+
+/** Lowercase SHA-256 hex, as the 0006 CHECK stores it. */
+const LOWERCASE_SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Decode the stored ciphertext hash into the 32 raw bytes R2 compares against.
+ *
+ * The hash is what the allocating operation recorded, so a value that is not
+ * 64 lowercase hex digits is a corrupt row rather than a bad request. It is
+ * reported as an unexplained storage condition: saying more would describe the
+ * row back to a caller who has no business seeing it.
+ */
+function decodeCiphertextHash(hash: string): Uint8Array {
+  if (!LOWERCASE_SHA256_HEX.test(hash)) {
+    throw storageUnavailable();
+  }
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hash.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
 }
 
 /**
@@ -58,7 +81,7 @@ async function readAttachment(
   try {
     return await db
       .prepare(
-        `SELECT r2_object_key, origin_space_id, state, ciphertext_byte_size
+        `SELECT r2_object_key, origin_space_id, state, ciphertext_byte_size, ciphertext_hash
            FROM attachment
           WHERE account_id = ? AND attachment_id = ?`,
       )
@@ -128,18 +151,28 @@ async function objectMatchesMetadata(
  * same attachment at once therefore cannot overwrite each other: R2 keeps the
  * first object and answers the loser with `null` instead of replacing content
  * that an existing AAD already commits to.
+ *
+ * It also carries the `sha256` the allocating operation recorded. R2 hashes
+ * the stream as it stores it and refuses to keep an object whose digest does
+ * not match, so a truncated or altered body never becomes a stored object —
+ * and the Worker still never buffers or hashes the 12MiB envelope itself.
  */
 async function uploadAllocatedObject(
   request: Request,
   bucket: R2Bucket,
   row: AttachmentRow,
 ): Promise<void> {
+  const checksum = decodeCiphertextHash(row.ciphertext_hash);
   let written: R2Object | null;
   try {
     written = await bucket.put(row.r2_object_key, request.body, {
       onlyIf: { etagDoesNotMatch: "*" },
+      sha256: checksum as BufferSource,
     });
   } catch {
+    // A checksum mismatch surfaces here as a driver throw. Its message is not
+    // read: every R2 failure is the same content-free, retryable answer, and
+    // R2 has already discarded the rejected object.
     throw storageUnavailable();
   }
 

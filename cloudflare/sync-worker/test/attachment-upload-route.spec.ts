@@ -55,6 +55,19 @@ function ciphertext(seed: number): Uint8Array {
   return bytes;
 }
 
+/** Each fixture attachment has one ciphertext, because its stored SHA-256
+ * now decides which bytes R2 will accept for it. */
+const BODIES = new Map<string, Uint8Array>();
+function bodyFor(attachmentId: string): Uint8Array {
+  const existing = BODIES.get(attachmentId);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const body = ciphertext(attachmentId.charCodeAt(attachmentId.length - 1));
+  BODIES.set(attachmentId, body);
+  return body;
+}
+
 function syntheticTokenBytes(seed: number): Uint8Array {
   const bytes = new Uint8Array(32);
   for (let index = 0; index < bytes.length; index += 1) bytes[index] = (seed + index) & 0xff;
@@ -95,7 +108,8 @@ function requestFor(init: CallInit): Request {
   if (init.token !== null) {
     headers.set("Authorization", `Device ${init.token ?? MAC_TOKEN}`);
   }
-  const body = init.body === undefined ? ciphertext(1) : init.body;
+  const body =
+    init.body === undefined ? bodyFor(init.attachmentId ?? ALLOCATED) : init.body;
   if (init.contentLength !== null) {
     headers.set(
       "Content-Length",
@@ -169,7 +183,9 @@ async function insertAttachment(fixture: AttachmentFixture): Promise<void> {
       fixture.state,
       SOURCE_BYTES,
       CIPHERTEXT_BYTES,
-      "c".repeat(64),
+      // The hash the allocating operation would have recorded for this
+      // attachment's one ciphertext. R2 compares against it on every upload.
+      await sha256Hex(bodyFor(fixture.attachmentId)),
       TIMESTAMP,
     )
     .run();
@@ -282,7 +298,7 @@ beforeEach(async () => {
 describe("PUT /v1/attachments/{id}/content — the allocated upload", () => {
   it("stores the stream in R2, moves D1 to uploaded and answers 204", async () => {
     const before = await ledgerSnapshot();
-    const body = ciphertext(7);
+    const body = bodyFor(ALLOCATED);
 
     const response = await call({ attachmentId: ALLOCATED, body });
 
@@ -509,7 +525,7 @@ describe("PUT /v1/attachments/{id}/content — states the contract refuses", () 
 
 describe("PUT /v1/attachments/{id}/content — the uploaded retry", () => {
   beforeEach(async () => {
-    await bucket.put(objectKeyOf("02"), ciphertext(2));
+    await bucket.put(objectKeyOf("02"), bodyFor(UPLOADED));
   });
 
   it("succeeds without reading the body or rewriting the object", async () => {
@@ -521,7 +537,7 @@ describe("PUT /v1/attachments/{id}/content — the uploaded retry", () => {
     expect(response.status).toBe(204);
     expect(request.bodyUsed, "an idempotent retry must not read the body").toBe(false);
     // The stored bytes are still the first upload's, not this request's.
-    expect(await objectBytes(objectKeyOf("02"))).toEqual([...ciphertext(2)]);
+    expect(await objectBytes(objectKeyOf("02"))).toEqual([...bodyFor(UPLOADED)]);
     expect(await stateOf(UPLOADED)).toBe("uploaded");
     expect(await ledgerSnapshot()).toEqual(before);
   });
@@ -543,14 +559,15 @@ describe("PUT /v1/attachments/{id}/content — the uploaded retry", () => {
 });
 
 describe("PUT /v1/attachments/{id}/content — concurrency", () => {
-  it("keeps only the first object when two uploads race", async () => {
-    const first = ciphertext(11);
-    const second = ciphertext(22);
-    expect(first).not.toEqual(second);
+  it("keeps one object when two uploads race", async () => {
+    // Both requests carry the one ciphertext this attachment's stored hash
+    // accepts, so the race is over which create-only PUT lands first.
+    const body = bodyFor(ALLOCATED);
+    const before = await ledgerSnapshot();
 
     const responses = await Promise.all([
-      call({ attachmentId: ALLOCATED, body: first }),
-      call({ attachmentId: ALLOCATED, body: second }),
+      call({ attachmentId: ALLOCATED, body }),
+      call({ attachmentId: ALLOCATED, body }),
     ]);
 
     // Both converge: the loser's create-only PUT was refused, but the object
@@ -558,27 +575,20 @@ describe("PUT /v1/attachments/{id}/content — concurrency", () => {
     for (const response of responses) {
       expect(response.status).toBe(204);
     }
-    const stored = await objectBytes(objectKeyOf("01"));
-    // Whichever body arrived first is the one that survived, whole.
-    expect([JSON.stringify([...first]), JSON.stringify([...second])]).toContain(
-      JSON.stringify(stored),
-    );
+    expect(await objectBytes(objectKeyOf("01"))).toEqual([...body]);
     expect(await stateOf(ALLOCATED)).toBe("uploaded");
-
-    // A later PUT of different bytes cannot replace them either.
-    const third = ciphertext(33);
-    const later = await call({ attachmentId: ALLOCATED, body: third });
-    expect(later.status).toBe(204);
-    expect(await objectBytes(objectKeyOf("01"))).toEqual(stored);
+    expect(await ledgerSnapshot()).toEqual(before);
   });
 
-  it("converges when the object already exists at the metadata size", async () => {
-    // The create-only condition will fail and `put()` answers null; an exact
-    // head means a prior or concurrent PUT already stored this object.
+  it("does not replace an object that already exists at the metadata size", async () => {
+    // A same-length object is already stored under this key. The create-only
+    // condition must win over a checksum-correct body: the stored bytes are
+    // what an existing AAD commits to, whatever this request carries.
     const prior = ciphertext(44);
+    expect(prior.byteLength).toBe(CIPHERTEXT_BYTES);
     await bucket.put(objectKeyOf("01"), prior);
 
-    const response = await call({ attachmentId: ALLOCATED, body: ciphertext(55) });
+    const response = await call({ attachmentId: ALLOCATED });
 
     expect(response.status).toBe(204);
     expect(await stateOf(ALLOCATED)).toBe("uploaded");
@@ -666,5 +676,96 @@ describe("PUT /v1/attachments/{id}/content — storage faults", () => {
     const body = (await response.json()) as Record<string, unknown>;
     expect(body["error"]).toEqual({ code: "INTERNAL_ERROR", retryable: false });
     expect(body["request_id"]).toBeUndefined();
+  });
+});
+
+describe("PUT /v1/attachments/{id}/content — ciphertext checksum", () => {
+  /** Only the binding handed to the route is synthetic; production is untouched. */
+  function envWith(overrides: Partial<Env>): Env {
+    return { DB: db, ATTACHMENTS: bucket, CURSOR_MAC_KEY: "x", ...overrides } as Env;
+  }
+
+  it("stores the object when the body matches the recorded hash", async () => {
+    const body = bodyFor(ALLOCATED);
+    const response = await call({ attachmentId: ALLOCATED, body });
+    expect(response.status).toBe(204);
+    expect(await objectBytes(objectKeyOf("01"))).toEqual([...body]);
+    expect(await stateOf(ALLOCATED)).toBe("uploaded");
+  });
+
+  it("leaves no object when the body is short", async () => {
+    const short = bodyFor(ALLOCATED).slice(0, CIPHERTEXT_BYTES - 1);
+    // The declared length still has to match, or the size check refuses first.
+    const response = await call({
+      attachmentId: ALLOCATED,
+      body: short,
+      contentLength: String(CIPHERTEXT_BYTES),
+    });
+    expect(response.status).toBe(503);
+    expect(await errorOf(response)).toEqual({ code: "STORAGE_UNAVAILABLE", retryable: true });
+    expect(await objectBytes(objectKeyOf("01"))).toBeNull();
+    expect(await stateOf(ALLOCATED)).toBe("allocated");
+  });
+
+  it("leaves no object when the body is a different ciphertext of the same length", async () => {
+    const wrong = ciphertext(123);
+    expect(wrong.byteLength).toBe(CIPHERTEXT_BYTES);
+    expect([...wrong]).not.toEqual([...bodyFor(ALLOCATED)]);
+
+    const response = await call({ attachmentId: ALLOCATED, body: wrong });
+
+    // A size check alone would have accepted this; only the checksum sees it.
+    expect(response.status).toBe(503);
+    expect(await errorOf(response)).toEqual({ code: "STORAGE_UNAVAILABLE", retryable: true });
+    expect(await objectBytes(objectKeyOf("01"))).toBeNull();
+    expect(await stateOf(ALLOCATED)).toBe("allocated");
+  });
+
+  it("says nothing about the key, the checksum or the body when it refuses", async () => {
+    const storedHash = (
+      await db
+        .prepare("SELECT ciphertext_hash AS h FROM attachment WHERE attachment_id = ?")
+        .bind(ALLOCATED)
+        .first<{ h: string }>()
+    )?.h;
+    expect(storedHash).toBeTypeOf("string");
+
+    const response = await call({ attachmentId: ALLOCATED, body: ciphertext(200) });
+    const serialised = JSON.stringify(await response.json());
+
+    expect(serialised).not.toContain(storedHash as string);
+    expect(serialised).not.toContain(objectKeyOf("01"));
+    expect(serialised).not.toContain("sha256");
+    expect(serialised).not.toContain("checksum");
+    expectContentFree(serialised);
+  });
+
+  it("hands R2 the unread request stream rather than a buffered body", async () => {
+    let sawStream = false;
+    let bodyWasUnread = false;
+    let sawChecksum = false;
+    const request = requestFor({ attachmentId: ALLOCATED });
+
+    const recording = {
+      async put(_key: string, value: unknown, options: R2PutOptions) {
+        sawStream = value instanceof ReadableStream;
+        // The Worker never read the body itself: R2 is the first consumer.
+        bodyWasUnread = request.bodyUsed === false;
+        sawChecksum = options.sha256 instanceof Uint8Array && options.sha256.byteLength === 32;
+        return await bucket.put(objectKeyOf("01"), bodyFor(ALLOCATED));
+      },
+      head: bucket.head.bind(bucket),
+    };
+
+    const response = await handleAttachmentUpload(
+      request,
+      envWith({ ATTACHMENTS: recording as unknown as R2Bucket }),
+      ALLOCATED,
+    );
+
+    expect(response.status).toBe(204);
+    expect(sawStream, "the body must reach R2 as a stream").toBe(true);
+    expect(bodyWasUnread, "the Worker must not buffer or hash the body").toBe(true);
+    expect(sawChecksum, "the recorded hash must travel as 32 raw bytes").toBe(true);
   });
 });
