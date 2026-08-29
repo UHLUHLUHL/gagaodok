@@ -9,6 +9,7 @@ import {
 import { handleBootstrapRequest } from "./routes/bootstrap";
 import { handleChangesRequest } from "./routes/changes";
 import { handleOperationRequest } from "./routes/operations";
+import { handleEnrollmentInitialize } from "./routes/onboarding";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -20,6 +21,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/v1/sync/operations") {
       return await handleOperationRequest(request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/enrollment/initialize") {
+      return await handleEnrollmentInitialize(request, env);
     }
 
     if (request.method === "GET" && url.pathname === "/v1/sync/changes") {
