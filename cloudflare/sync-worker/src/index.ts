@@ -12,6 +12,7 @@ import { handleOperationRequest } from "./routes/operations";
 import { handleEnrollmentInitialize, handleRecoveryRedeem } from "./routes/onboarding";
 import { handlePairingMatch, handlePairingSession, matchPairingPath } from "./routes/pairing";
 import { assertRateLimit, type RateLimitScope } from "./security/rateLimit";
+import { runMaintenance } from "./maintenance/cleanup";
 
 async function limited(
   request: Request,
@@ -85,5 +86,8 @@ export default {
     // with an extra segment or a non-canonical id — is the same content-free
     // 404 with no request id.
     return new ApiError("NOT_FOUND").toResponse(null);
+  },
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await runMaintenance(env);
   },
 } satisfies ExportedHandler<Env>;

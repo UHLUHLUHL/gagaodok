@@ -151,7 +151,8 @@ git diff --check
 - [x] request·error·metric 민감정보 비노출 검증 (`5c54400`)
 - [x] 모든 fixture가 합성 자료뿐이라는 commit-level 확인
 
-이 gate는 2026-08-29 local synthetic 범위에서 통과했다. 다중 isolate 경합,
-rate limiting과 orphan cleanup은 후속 local gate로 남는다. Phase 3 실제 data
+이 gate는 2026-08-29 local synthetic 범위에서 통과했다. rate limiting과 24시간
+유예 orphan·expiry cleanup도 후속 local gate에서 닫혔다(`080c41d` 이후 scheduled
+maintenance). 다중 isolate 경합은 원격 직전 마지막 검증으로 남는다. Phase 3 실제 data
 shadow upload는 자동 승인되지 않으며, 실제 data 접근, Cloudflare resource 생성,
 remote migration과 upload는 사용자의 별도 명시 승인이 필요하다.

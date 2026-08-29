@@ -519,10 +519,15 @@ upload 규칙:
 - upload 성공 전 `ready`로 보이지 않는다.
 - complete도 origin space device만 허용한다. `uploaded`에서 R2 object 존재와 byte size를 확인한 뒤 `ready`로 CAS 전이하며, 이미 `ready`이면 새 sequence를 소비하지 않는 멱등 성공이다. 다른 상태는 `ATTACHMENT_STATE_CONFLICT`다.
 - `uploaded` 전이는 전송 중간 상태이므로 account sequence·change log를 소비하지 않는다. `ready` 전이는 attachment row의 `server_seq`를 새 값으로 갱신하고 revision null인 attachment `change_log` 한 행을 발행한 뒤 account sequence를 증가시킨다. HTTP endpoint 전이에는 client operation ID가 없으므로 `operation_log`는 만들지 않는다.
-- R2 PUT 성공 뒤 D1 `uploaded` 전이가 실패한 orphan object는 TTL cleanup 대상이지만 Phase 1에서는 삭제하지 않고 보고서로만 찾는다. Client는 같은 PUT을 재시도할 수 있다.
+- R2 PUT 성공 뒤 D1 `uploaded` 전이가 실패한 orphan object는 즉시 지우지 않는다.
+  매시 17분 maintenance가 24시간 유예 뒤에도 attachment/recovery row가 참조하지
+  않는 `obj/`·`recovery/` object만 삭제한다. Client는 그 전까지 같은 PUT을
+  재시도할 수 있다.
 - download는 origin space와 무관하게 같은 account의 유효한 device가 `ready` object를 받을 수 있다. 다른 account의 같은 UUID와 missing row는 모두 content 없는 `NOT_FOUND`, non-ready row는 `ATTACHMENT_STATE_CONFLICT`다.
 - download response는 `Content-Type: application/octet-stream`, D1 metadata와 같은 `Content-Length`, `Cache-Control: private, no-store`이며 object key를 외부 URL·body·log에 노출하지 않는다.
-- allocated row의 abandoned/TTL cleanup과 rate limiting은 이 local slice에 넣지 않지만 remote deploy 전 별도 gate로 닫는다.
+- 24시간 이상 된 `allocated` row에 R2 object가 없으면 maintenance가 CAS 조건을
+  유지한 채 `abandoned`로 바꾼다. `ready` object와 conversation row는 이 cleanup이
+  삭제하지 않는다. rate limiting과 함께 local fixture로 검증한다.
 
 ## 7. Pairing·recovery 경계
 
@@ -635,8 +640,9 @@ identity나 hash가 다르면 conflict다.
 physical `0009_pairing_recovery.sql`은 논리 conversation M-stage가 아니다.
 `enrollment_log`, versioned `recovery_record`, short-lived `pairing_session`,
 claim state machine인 `pairing_claim`만 추가한다. raw token·recovery auth·pairing
-secret·claim redeem auth는 저장하지 않는다. expired row와 R2 orphan 삭제는 remote
-deploy 전 cleanup gate에서만 활성화한다.
+secret·claim redeem auth는 저장하지 않는다. expired pairing session·claim은 만료 후
+24시간 유예 뒤 maintenance가 child 먼저 삭제한다. cleanup report는 삭제·전이한
+개수만 갖고 UUID·lookup·object key를 포함하지 않는다.
 
 ## 8. 관측성과 privacy
 

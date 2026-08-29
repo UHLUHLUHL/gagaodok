@@ -80,6 +80,7 @@ flowchart TB
 | 앱 device-local key custody | `3dd2635`; macOS ThisDeviceOnly Keychain, Android non-exportable Keystore wrapping | ✅ | onboarding UI·실제 client 연결 |
 | 앱 durable outbox | `325a2cf`; 양 플랫폼 exact raw-body atomic journal·restart test | ✅ | 기존 local mutation 연결·HTTP drain |
 | HTTP rate limiting | `0010_rate_limit.sql`; keyed subject·atomic budget local test | ✅ | remote `RATE_LIMIT_MAC_KEY` secret 주입 |
+| orphan·expiry maintenance | 24시간 유예, referenced object 보존, allocated→abandoned·pairing child-first cleanup | ✅ | remote cron 활성 상태 확인 |
 | 앱 remote UI | canonical 계약만 존재 | ⏳ | local client networking 뒤 구현 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
