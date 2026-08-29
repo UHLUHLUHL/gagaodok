@@ -219,7 +219,7 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 
 Create provenance는 인증 경계와 일치해야 한다. `owner_space_id`는 `target.space_id`와 같고, `created_by_device_id`는 token으로 인증되어 request의 `device_id`와 일치한 device여야 한다. Validator가 이 cross-field equality를 D1 write 전에 거부하며, 다른 같은-account device를 provenance로 대신 적을 수 없다.
 
-`create_turn.created_by_device_id`도 request의 인증된 `device_id`와 같아야 한다. Turn의 `created_at`과 bubble의 `timestamp`는 operation top-level `created_at`에서 암묵적으로 복사하지 않고 위 metadata에 명시한다. Bubble attachment reference는 create-only pair이며, byte size는 참조한 attachment의 `ciphertext_byte_size`와 같아야 한다. ID·size 중 하나만 보내거나 다른 account/없는 attachment/size mismatch를 보내면 거부한다.
+`create_turn.created_by_device_id`도 request의 인증된 `device_id`와 같아야 한다. Turn의 `created_at`과 bubble의 `timestamp`는 operation top-level `created_at`에서 암묵적으로 복사하지 않고 위 metadata에 명시한다. Bubble attachment reference는 create-only pair이며, byte size는 참조한 attachment의 `ciphertext_byte_size`와 같아야 한다. ID·size 중 하나만 보내면 `VALIDATION_FAILED`다. 같은 account에 attachment가 없으면 `ENTITY_NOT_FOUND`, size가 다르면 content 없는 `VALIDATION_FAILED`, state가 `ready`가 아니면 `ATTACHMENT_STATE_CONFLICT`로 거부한다. Bubble change가 발행된 뒤에는 다른 device가 즉시 download 가능한 상태여야 하므로 allocated/uploaded attachment를 먼저 참조할 수 없다.
 
 Checkpoint의 `through_server_seq`는 null이거나 이 operation 직전에 이미 발급된 sequence여야 한다. Handler guard 기준으로 `through_server_seq < account.next_server_seq`를 강제한다. 새 checkpoint operation 자신에게 배정될 sequence나 미래 sequence를 coverage로 선언할 수 없으며, legacy unversioned checkpoint는 null을 유지할 수 있다.
 

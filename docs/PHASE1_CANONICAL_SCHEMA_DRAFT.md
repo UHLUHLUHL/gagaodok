@@ -257,7 +257,7 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 
 `canonical_text`와 `heart_changes`를 bubble에 중복 저장하지 않는다. 기존 local JSON으로 내릴 때만 §9.3의 anchor 규칙으로 투영한다. `speaker_ref`·reaction·heart target의 암호화 경계는 §13.2를 따른다. message edit가 비활성인 초기 Phase 5에서도 `revision`은 tombstone CAS와 future compatibility를 위해 유지한다.
 
-Turn create의 `created_by_device_id`·`created_at`과 bubble create의 `timestamp`는 plaintext operation metadata로 명시한다. Bubble attachment reference도 create metadata의 `(attachment_ref_attachment_id, attachment_ref_byte_size)` pair로만 받으며 byte size는 참조 attachment의 binary R2 envelope 크기인 `ciphertext_byte_size`와 같아야 한다. 이 provenance·timestamp·attachment pair와 identity·order·tombstone field는 patch로 바꿀 수 없다. Turn/bubble patch는 encrypted canonical field와 owner extension 갱신에만 사용하며, 초기 앱 UI의 사용자 편집 기능은 계속 비활성이다.
+Turn create의 `created_by_device_id`·`created_at`과 bubble create의 `timestamp`는 plaintext operation metadata로 명시한다. Bubble attachment reference도 create metadata의 `(attachment_ref_attachment_id, attachment_ref_byte_size)` pair로만 받으며 byte size는 참조 attachment의 binary R2 envelope 크기인 `ciphertext_byte_size`와 같아야 한다. 참조 대상은 같은 account의 `ready` attachment여야 하며, bubble change가 먼저 노출된 뒤 다운로드 불가능한 중간 상태를 허용하지 않는다. 이 provenance·timestamp·attachment pair와 identity·order·tombstone field는 patch로 바꿀 수 없다. Turn/bubble patch는 encrypted canonical field와 owner extension 갱신에만 사용하며, 초기 앱 UI의 사용자 편집 기능은 계속 비활성이다.
 
 ---
 
