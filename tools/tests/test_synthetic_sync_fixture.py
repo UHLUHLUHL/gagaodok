@@ -271,6 +271,51 @@ class SyntheticSyncFixtureTests(unittest.TestCase):
         self.assertEqual(scenario["change_rows_delta"], 0)
         self.assertEqual(scenario["canonical_rows_delta"], 0)
 
+    def test_read_scenarios_cover_crash_reapply_and_late_write_recovery(self):
+        scenarios = {row["name"]: row for row in self.fixture["read_scenarios"]}
+        replay = scenarios["changes_page_crash_reapply"]
+        self.assertEqual(replay["page_change_seqs"], [1])
+        self.assertEqual(replay["apply_count"], 2)
+        self.assertEqual(replay["expected_replica_writes"], 1)
+        self.assertEqual(replay["scanned_through_seq"], 1)
+
+        bootstrap = scenarios["bootstrap_late_write_recovery"]
+        self.assertEqual(bootstrap["snapshot_high_watermark_seq"], 1)
+        self.assertEqual(bootstrap["late_write_server_seq"], 2)
+        self.assertEqual(bootstrap["changes_after_seq"], 1)
+        self.assertEqual(bootstrap["expected_recovered_change_seqs"], [2])
+        self.assertEqual(scenarios["cross_account_read"]["outcome"], "EMPTY_RESULT")
+
+    def test_validator_rejects_read_recovery_drift(self):
+        scenario = next(
+            row
+            for row in self.fixture["read_scenarios"]
+            if row["name"] == "bootstrap_late_write_recovery"
+        )
+        scenario["changes_after_seq"] = 2
+        with self.assertRaisesRegex(ValueError, "bootstrap recovery"):
+            validate_synthetic_fixture(self.fixture)
+
+    def test_r2_scenarios_consume_sequence_only_when_ready(self):
+        scenarios = {row["name"]: row for row in self.fixture["r2_scenarios"]}
+        self.assertEqual(scenarios["allocated_to_uploaded"]["sequence_delta"], 0)
+        self.assertEqual(scenarios["uploaded_to_ready"]["sequence_delta"], 1)
+        self.assertEqual(scenarios["uploaded_to_ready"]["change_rows_delta"], 1)
+        self.assertFalse(scenarios["checksum_mismatch"]["object_persisted"])
+        orphan = scenarios["r2_success_d1_failure_orphan"]
+        self.assertTrue(orphan["object_persisted"])
+        self.assertFalse(orphan["automatic_cleanup"])
+
+    def test_validator_rejects_ready_transition_without_one_change(self):
+        scenario = next(
+            row
+            for row in self.fixture["r2_scenarios"]
+            if row["name"] == "uploaded_to_ready"
+        )
+        scenario["change_rows_delta"] = 0
+        with self.assertRaisesRegex(ValueError, "ready transition"):
+            validate_synthetic_fixture(self.fixture)
+
     def test_validator_rejects_cross_space_room_ai_reference(self):
         self.fixture["room_ai_state_refs"][0]["space_id"] = "MAC_SPACE"
         with self.assertRaisesRegex(ValueError, "room AI state reference"):

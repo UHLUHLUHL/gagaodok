@@ -71,9 +71,9 @@ flowchart TB
 | D1 transaction·CAS·idempotency | `0008` ledger와 runtime-enabled operation 15개 atomic handler | ✅ | HTTP route와 Phase 2 다중 isolate 합성 검증 |
 | operation HTTP route | `d71d5eb`, `981490b`; Codex focused 20 tests | ✅ | local R2 attachment routes |
 | local R2 attachment family | `849d399`, `6d054af`, `8a6117c`, `45e0824`; Codex focused 122 tests | ✅ | changes/bootstrap projection |
-| R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약, `5299b27` persistence | 🟡 | M06 ledger 뒤 local R2 state transition test |
+| R2 attachment state machine | `5299b27`, `849d399`, `6d054af`, `8a6117c`, `45e0824` local lifecycle | ✅ | Phase 2 연결 E2E |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
-| pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
+| pull·bootstrap·cursor | `5a05efa`, `f289df5`, `84acc8c`; Codex focused 76 tests | ✅ | Phase 2 연결 E2E |
 | 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | Worker·D1 synthetic test 통과 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
@@ -99,14 +99,14 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] M00 harness와 M01 account/device·FK local migration (`def5260`, `515c036`)
 - [x] M02 room·group_state·worldline primary·FK·`CHECK` contract (`381000f`)
 - [x] `worldline_key = COALESCE(worldline_id, '')` 일치 test (`381000f`)
-- [ ] tombstone 행이 identity·`bubble_order`를 계속 보존하는 test
-- [ ] CAS failure가 canonical row·sequence·operation/change log 전체를 rollback하는 test
-- [ ] idempotent replay가 sequence를 추가 소비하지 않는 test
+- [x] tombstone 행이 identity·`bubble_order`를 계속 보존하는 test (`7328825`)
+- [x] CAS failure가 canonical row·sequence·operation/change log 전체를 rollback하는 test (`f712c8e` 외 family별 transaction spec)
+- [x] idempotent replay가 sequence를 추가 소비하지 않는 test (M06 family별 transaction spec)
 - [x] M01·M02 tenant/account 경계를 D1 FK로 강제
 - [x] M05 attachment DDL·bubble account-scoped FK rebuild (`5299b27`)
 - [x] M06 account sequence·operation/change ledger·transaction guard DDL (`4a8bf26`)
 - [x] patch_room CAS failure·replay·revoked·cross-space write의 전체 rollback (`f712c8e`, `62a83f4`)
-- [ ] attachment state transition test
+- [x] attachment state transition test (`849d399`, `8a6117c`, `45e0824`)
 
 ### Integration evidence
 
@@ -130,7 +130,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 | Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M05, device token 인증, M06 atomic operation route와 local R2 upload·complete·download family는 모두 승인됐다. 다음 묶음은 하나의 projection registry를 공유하는 changes pagination과 bootstrap cursor다.
+M03~M06, operation·attachment HTTP route, local R2 lifecycle, shared projection 기반 changes pagination과 MAC bootstrap cursor까지 local 통합 승인됐다. 다음 gate는 이 경계를 한 흐름으로 묶는 Phase 2 local synthetic E2E이며, remote Cloudflare resource와 실제 data는 계속 금지한다.
 
 ## 🔗 관련 문서
 

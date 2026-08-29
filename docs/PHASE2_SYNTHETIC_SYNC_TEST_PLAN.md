@@ -35,6 +35,7 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M06 attachment handler | `ea731c7` allocated metadata·null revision·internal R2 key | local atomic handler 완료 |
 | M06 operation route | `d71d5eb`, `981490b` §2.2 envelope·validated request ID·content-free 500 | local route 완료 |
 | local R2 attachment flow | `849d399`, `6d054af`, `8a6117c`, `45e0824` checksum upload·ready event·download | local lifecycle 완료 |
+| pull·bootstrap read path | `5a05efa`, `f289df5`, `84acc8c` shared projection·changes·MAC cursor | local route 완료 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 
 물리 migration 파일 `0002_device_account_fk.sql`은 논리 M02가 아니라 **M01 account boundary의 FK 보완**이다. 논리 M02는 `room`·`group_state`·`worldline`이다.
@@ -52,6 +53,8 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 7. revoked device는 저장 상태로만 표현한다. DDL trigger가 write를 거부한다고 가정하지 않는다.
 8. 최소 34-byte v1 AES-GCM envelope **모양 sentinel**을 canonical padded Base64로 제공한다. 이는 실제 암호문이나 유효한 AEAD 결과가 아니다.
 9. CLI는 출력 파일의 record 수와 SHA-256만 보고하며 identity나 envelope 전체를 출력하지 않는다.
+10. read scenario는 page 재적용과 bootstrap watermark 이후 write 회수를 값·순서 metadata로만 표현한다.
+11. R2 scenario는 uploaded는 sequence를 쓰지 않고 ready만 change event 하나를 만들며, checksum 실패와 Phase 1 orphan 비정리를 구분한다.
 
 fixture는 미래 D1 row의 완성형 schema가 아니다. 아직 고정되지 않은 M03~M06 column이나 handler response를 미리 발명하지 않고, 각 migration이 소비할 공통 구조 계약만 제공한다.
 
@@ -138,13 +141,13 @@ git diff --check
 - [x] 결정적 synthetic fixture와 focused test
 - [x] M01 FK 명칭·upgrade 경계 통합 승인 (`515c036`)
 - [x] M02 conversation scope local migration 통합 승인 (`381000f`)
-- [ ] M02~M06 local migration과 각 focused acceptance test
-- [ ] local Worker handler의 CAS·idempotency·account sequence 원자성
-- [ ] local R2 attachment lifecycle과 확정된 ciphertext 상한
-- [ ] pull/bootstrap pagination·crash recovery
+- [x] M02~M06 local migration과 각 focused acceptance test
+- [x] local Worker handler의 CAS·idempotency·account sequence 원자성
+- [x] local R2 attachment lifecycle과 확정된 ciphertext 상한
+- [x] pull/bootstrap pagination·crash recovery (`5a05efa`, `f289df5`, `84acc8c`)
 - [ ] Swift·Kotlin E2EE fixed-vector 교차 검증
 - [ ] local Worker + D1 + R2 synthetic E2E
 - [ ] request·error·metric 민감정보 비노출 검증
-- [ ] 모든 fixture가 합성 자료뿐이라는 commit-level 확인
+- [x] 모든 fixture가 합성 자료뿐이라는 commit-level 확인
 
 이 gate를 통과해도 Phase 3 실제 data shadow upload는 자동 승인되지 않는다. 실제 data 접근, Cloudflare resource 생성, remote migration과 upload는 사용자의 별도 명시 승인이 필요하다.

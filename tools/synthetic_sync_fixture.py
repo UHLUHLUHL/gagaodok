@@ -282,6 +282,59 @@ def build_synthetic_fixture() -> dict[str, Any]:
                 "canonical_rows_delta": 0,
             },
         ],
+        "read_scenarios": [
+            {
+                "name": "changes_page_crash_reapply",
+                "after_seq": 0,
+                "account_high_watermark_seq": 1,
+                "page_change_seqs": [1],
+                "apply_count": 2,
+                "expected_replica_writes": 1,
+                "scanned_through_seq": 1,
+            },
+            {
+                "name": "bootstrap_late_write_recovery",
+                "snapshot_high_watermark_seq": 1,
+                "late_write_server_seq": 2,
+                "changes_after_seq": 1,
+                "expected_recovered_change_seqs": [2],
+            },
+            {
+                "name": "cross_account_read",
+                "outcome": "EMPTY_RESULT",
+            },
+        ],
+        "r2_scenarios": [
+            {
+                "name": "allocated_to_uploaded",
+                "state_before": "allocated",
+                "state_after": "uploaded",
+                "sequence_delta": 0,
+                "change_rows_delta": 0,
+            },
+            {
+                "name": "uploaded_to_ready",
+                "state_before": "uploaded",
+                "state_after": "ready",
+                "sequence_delta": 1,
+                "change_rows_delta": 1,
+            },
+            {
+                "name": "checksum_mismatch",
+                "outcome": "STORAGE_UNAVAILABLE",
+                "object_persisted": False,
+                "sequence_delta": 0,
+                "change_rows_delta": 0,
+            },
+            {
+                "name": "r2_success_d1_failure_orphan",
+                "outcome": "ORPHAN_RETAINED",
+                "object_persisted": True,
+                "automatic_cleanup": False,
+                "sequence_delta": 0,
+                "change_rows_delta": 0,
+            },
+        ],
         "opaque_envelopes": {"minimal_v1_aes_gcm": _minimal_shape_envelope()},
     }
     validate_synthetic_fixture(fixture)
@@ -551,6 +604,80 @@ def validate_synthetic_fixture(fixture: dict[str, Any]) -> None:
         elif after != before:
             raise ValueError("failed or replayed operation consumed a sequence")
 
+    expected_read_scenarios = {
+        "changes_page_crash_reapply",
+        "bootstrap_late_write_recovery",
+        "cross_account_read",
+    }
+    read_scenarios = fixture.get("read_scenarios", [])
+    if {row.get("name") for row in read_scenarios} != expected_read_scenarios:
+        raise ValueError("read scenario set is incomplete")
+    read_by_name = {row["name"]: row for row in read_scenarios}
+    replay = read_by_name["changes_page_crash_reapply"]
+    if (
+        replay.get("after_seq") != 0
+        or replay.get("account_high_watermark_seq") != 1
+        or replay.get("page_change_seqs") != [1]
+        or replay.get("apply_count") != 2
+        or replay.get("expected_replica_writes") != 1
+        or replay.get("scanned_through_seq") != 1
+    ):
+        raise ValueError("changes crash replay scenario is invalid")
+    bootstrap = read_by_name["bootstrap_late_write_recovery"]
+    if (
+        bootstrap.get("snapshot_high_watermark_seq") != 1
+        or bootstrap.get("late_write_server_seq") != 2
+        or bootstrap.get("changes_after_seq") != 1
+        or bootstrap.get("expected_recovered_change_seqs") != [2]
+    ):
+        raise ValueError("bootstrap recovery scenario is invalid")
+    if read_by_name["cross_account_read"].get("outcome") != "EMPTY_RESULT":
+        raise ValueError("cross-account read scenario is invalid")
+
+    expected_r2_scenarios = {
+        "allocated_to_uploaded",
+        "uploaded_to_ready",
+        "checksum_mismatch",
+        "r2_success_d1_failure_orphan",
+    }
+    r2_scenarios = fixture.get("r2_scenarios", [])
+    if {row.get("name") for row in r2_scenarios} != expected_r2_scenarios:
+        raise ValueError("R2 scenario set is incomplete")
+    r2_by_name = {row["name"]: row for row in r2_scenarios}
+    uploaded = r2_by_name["allocated_to_uploaded"]
+    if (
+        uploaded.get("state_before") != "allocated"
+        or uploaded.get("state_after") != "uploaded"
+        or uploaded.get("sequence_delta") != 0
+        or uploaded.get("change_rows_delta") != 0
+    ):
+        raise ValueError("R2 uploaded transition is invalid")
+    ready = r2_by_name["uploaded_to_ready"]
+    if (
+        ready.get("state_before") != "uploaded"
+        or ready.get("state_after") != "ready"
+        or ready.get("sequence_delta") != 1
+        or ready.get("change_rows_delta") != 1
+    ):
+        raise ValueError("R2 ready transition is invalid")
+    checksum = r2_by_name["checksum_mismatch"]
+    if (
+        checksum.get("outcome") != "STORAGE_UNAVAILABLE"
+        or checksum.get("object_persisted") is not False
+        or checksum.get("sequence_delta") != 0
+        or checksum.get("change_rows_delta") != 0
+    ):
+        raise ValueError("R2 checksum failure scenario is invalid")
+    orphan = r2_by_name["r2_success_d1_failure_orphan"]
+    if (
+        orphan.get("outcome") != "ORPHAN_RETAINED"
+        or orphan.get("object_persisted") is not True
+        or orphan.get("automatic_cleanup") is not False
+        or orphan.get("sequence_delta") != 0
+        or orphan.get("change_rows_delta") != 0
+    ):
+        raise ValueError("R2 orphan scenario is invalid")
+
     encoded = fixture.get("opaque_envelopes", {}).get("minimal_v1_aes_gcm")
     if not isinstance(encoded, str):
         raise ValueError("minimal structural envelope is missing")
@@ -582,6 +709,8 @@ def _record_count(fixture: dict[str, Any]) -> int:
             "operation_logs",
             "change_logs",
             "atomic_scenarios",
+            "read_scenarios",
+            "r2_scenarios",
         )
     )
 

@@ -144,7 +144,7 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M06: runtime-enabled operation 15개 route-independent atomic dispatch 완성 (`ea731c7`)
 - [x] M06: `POST /v1/sync/operations` HTTP envelope와 unexpected 500 회귀 승인 (`d71d5eb`, `981490b`)
 - [x] local R2: checksum create-only upload·ready event·account-scoped download 승인 (`849d399`, `6d054af`, `8a6117c`, `45e0824`)
-- [ ] read path: shared canonical projection registry·changes pagination·MAC bootstrap cursor
+- [x] read path: shared canonical projection registry·changes pagination·MAC bootstrap cursor (`5a05efa`, `f289df5`, `84acc8c`)
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
 
