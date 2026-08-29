@@ -13,3 +13,10 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncWorkerClientTests.swift" \
   -o "$client_binary_path"
 "$client_binary_path"
+
+replica_binary_path="${TMPDIR:-/tmp}/gagaodok-sync-replica-tests"
+swiftc \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncReplicaStore.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncReplicaStoreTests.swift" \
+  -o "$replica_binary_path"
+"$replica_binary_path"
