@@ -90,6 +90,60 @@ class E2EEContractVectorTest {
         }
     }
 
+    @Test
+    fun derivesCanonicalRecoveryMaterial() {
+        val recovery = loadRoot().getValue("recovery").jsonObject
+        val material = SyncE2EE.deriveRecoveryMaterial(
+            recovery.string("recovery_entropy_hex").hexBytes(),
+        )
+        assertArrayEquals(recovery.string("recovery_lookup_hex").hexBytes(), material.recoveryLookup)
+        assertArrayEquals(recovery.string("recovery_auth_hex").hexBytes(), material.recoveryAuth)
+        assertArrayEquals(recovery.string("recovery_wrap_key_hex").hexBytes(), material.recoveryWrapKey)
+        assertArrayEquals(
+            recovery.string("recovery_auth_verifier_hex").hexBytes(),
+            SyncE2EE.recoveryAuthVerifier(material.recoveryAuth),
+        )
+    }
+
+    @Test
+    fun derivesCanonicalPairingMaterial() {
+        val pairing = loadRoot().getValue("pairing").jsonObject
+        val material = SyncE2EE.derivePairingMaterial(
+            pairing.string("pairing_secret_hex").hexBytes(),
+            pairing.string("claim_secret_hex").hexBytes(),
+        )
+        assertArrayEquals(
+            pairing.string("pairing_session_lookup_hex").hexBytes(),
+            material.pairingSessionLookup,
+        )
+        assertArrayEquals(pairing.string("pairing_claim_key_hex").hexBytes(), material.pairingClaimKey)
+        assertArrayEquals(pairing.string("claim_lookup_hex").hexBytes(), material.claimLookup)
+        assertArrayEquals(pairing.string("claim_redeem_auth_hex").hexBytes(), material.claimRedeemAuth)
+        assertArrayEquals(
+            pairing.string("pairing_delivery_key_hex").hexBytes(),
+            material.pairingDeliveryKey,
+        )
+        assertEquals(pairing.string("pairing_sas"), material.pairingSAS)
+        assertArrayEquals(
+            pairing.string("claim_aad_hex").hexBytes(),
+            SyncE2EE.encodePairingAAD(
+                pairing.string("session_id"),
+                pairing.string("claim_id"),
+                material.claimLookup,
+                SyncE2EE.PairingPayloadType.CLAIM,
+            ),
+        )
+        assertArrayEquals(
+            pairing.string("claim_redeem_verifier_hex").hexBytes(),
+            SyncE2EE.claimRedeemVerifier(
+                pairing.string("session_id"),
+                pairing.string("claim_id"),
+                material.claimLookup,
+                material.claimRedeemAuth,
+            ),
+        )
+    }
+
     private fun expectError(expected: SyncE2EE.ContractError, operation: () -> Unit) {
         try {
             operation()
@@ -100,12 +154,7 @@ class E2EEContractVectorTest {
     }
 
     private fun loadVector(): Vector {
-        val workingDirectory = System.getProperty("user.dir") ?: error("working directory missing")
-        val fixture = generateSequence(File(workingDirectory)) { it.parentFile }
-            .map { File(it, "tools/fixtures/e2ee_contract_vectors.json") }
-            .firstOrNull(File::isFile)
-            ?: error("repository E2EE fixture not found")
-        val root = Json.parseToJsonElement(fixture.readText()).jsonObject
+        val root = loadRoot()
         val field = root.getValue("field_aead").jsonObject
         val derivation = root.getValue("key_derivation").jsonObject
         return Vector(
@@ -123,6 +172,15 @@ class E2EEContractVectorTest {
             envelopeBase64 = field.string("envelope_base64"),
             scopeRootKey = derivation.string("scope_root_key").hexBytes(),
         )
+    }
+
+    private fun loadRoot(): Map<String, kotlinx.serialization.json.JsonElement> {
+        val workingDirectory = System.getProperty("user.dir") ?: error("working directory missing")
+        val fixture = generateSequence(File(workingDirectory)) { it.parentFile }
+            .map { File(it, "tools/fixtures/e2ee_contract_vectors.json") }
+            .firstOrNull(File::isFile)
+            ?: error("repository E2EE fixture not found")
+        return Json.parseToJsonElement(fixture.readText()).jsonObject
     }
 
     private data class Vector(

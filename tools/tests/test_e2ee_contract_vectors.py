@@ -14,6 +14,9 @@ from tools.e2ee_contract_vectors import (
     hkdf_extract,
     hkdf_info,
     pairing_aad,
+    derive_pairing_material,
+    derive_recovery_material,
+    recovery_auth_verifier,
 )
 
 
@@ -206,6 +209,51 @@ class E2EEContractVectorTests(unittest.TestCase):
                 }
             ),
         )
+
+    def test_recovery_material_matches_fixed_vector(self):
+        material = derive_recovery_material(bytes(range(0x40, 0x50)))
+
+        self.assertEqual(
+            material["recovery_lookup"].hex(),
+            "68993614c1807cecbfbb41008c177de68d0126c9a4220abce1684a1f92290c78",
+        )
+        self.assertEqual(
+            material["recovery_auth"].hex(),
+            "7d907172e4e6ecc79d0c264a112905d60251666dbb4ebdbfc1b61774965dd3f3",
+        )
+        self.assertEqual(
+            material["recovery_wrap_key"].hex(),
+            "9d966be74386be77379a575666b646ffd2ad03e9646096669b8f8656f2be78d5",
+        )
+        self.assertEqual(
+            recovery_auth_verifier(material["recovery_auth"]).hex(),
+            "f2ea393e569f54c87f344bab090bdb51dc9bb578959600fc4faf99cf41efd7a3",
+        )
+
+    def test_pairing_material_matches_fixed_vector(self):
+        material = derive_pairing_material(bytes(range(32)), bytes(range(32, 64)))
+
+        self.assertEqual(
+            material["pairing_session_lookup"].hex(),
+            "d1e24994a3a0ac3d7e3eefd3c10580c36e90b1ea664cda11080fd1dbbdbf8429",
+        )
+        self.assertEqual(
+            material["pairing_claim_key"].hex(),
+            "344e3c5917a0812d9ea97c5a7c0d13ea101315d54d392e229fd245b87b464be7",
+        )
+        self.assertEqual(
+            material["claim_lookup"].hex(),
+            "260a49f553a2f4cac96b0be7bda5257eefc092eeb3188fc167291b2a8f446422",
+        )
+        self.assertEqual(
+            material["claim_redeem_auth"].hex(),
+            "f762d9e6fbd0bd3c139182c0720efd2ca62b9758bc86d469a51017ae88ccf7d1",
+        )
+        self.assertEqual(
+            material["pairing_delivery_key"].hex(),
+            "e3fbb9c514eb2614c09fde21c9922bcc2e43717421753afc98272ccae501c7ad",
+        )
+        self.assertEqual(material["pairing_sas"], "842588")
 
 
 if __name__ == "__main__":

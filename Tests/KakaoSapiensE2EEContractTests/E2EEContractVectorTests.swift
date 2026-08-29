@@ -23,7 +23,9 @@ enum E2EEContractVectorTests {
         try rejectsAADOrEnvelopeIdentityDrift()
         try rejectsUnsupportedHeaderBeforeAuthentication()
         try rejectsNonCanonicalBase64()
-        print("Swift E2EE contract vectors: 4 passed")
+        try derivesCanonicalRecoveryMaterial()
+        try derivesCanonicalPairingMaterial()
+        print("Swift E2EE contract vectors: 6 passed")
     }
 
     private static func producesAndOpensCanonicalFieldEnvelope() throws {
@@ -121,17 +123,88 @@ enum E2EEContractVectorTests {
         }
     }
 
+    private static func derivesCanonicalRecoveryMaterial() throws {
+        let root = try loadRoot()
+        guard let recovery = root["recovery"] as? [String: Any] else {
+            throw TestError.invalidVector("recovery")
+        }
+        let entropy = try Data(hex: string("recovery_entropy_hex", in: recovery))
+        let material = try SyncE2EE.deriveRecoveryMaterial(recoveryEntropy: entropy)
+        try require(
+            material.recoveryLookup == Data(hex: string("recovery_lookup_hex", in: recovery)),
+            "recovery lookup mismatch"
+        )
+        try require(
+            material.recoveryAuth == Data(hex: string("recovery_auth_hex", in: recovery)),
+            "recovery auth mismatch"
+        )
+        try require(
+            material.recoveryWrapKey == Data(hex: string("recovery_wrap_key_hex", in: recovery)),
+            "recovery wrap key mismatch"
+        )
+        try require(
+            SyncE2EE.recoveryAuthVerifier(material.recoveryAuth)
+                == Data(hex: string("recovery_auth_verifier_hex", in: recovery)),
+            "recovery verifier mismatch"
+        )
+    }
+
+    private static func derivesCanonicalPairingMaterial() throws {
+        let root = try loadRoot()
+        guard let pairing = root["pairing"] as? [String: Any] else {
+            throw TestError.invalidVector("pairing")
+        }
+        let material = try SyncE2EE.derivePairingMaterial(
+            pairingSecret: Data(hex: string("pairing_secret_hex", in: pairing)),
+            claimSecret: Data(hex: string("claim_secret_hex", in: pairing))
+        )
+        try require(
+            material.pairingSessionLookup == Data(hex: string("pairing_session_lookup_hex", in: pairing)),
+            "pairing session lookup mismatch"
+        )
+        try require(
+            material.pairingClaimKey == Data(hex: string("pairing_claim_key_hex", in: pairing)),
+            "pairing claim key mismatch"
+        )
+        try require(
+            material.claimLookup == Data(hex: string("claim_lookup_hex", in: pairing)),
+            "claim lookup mismatch"
+        )
+        try require(
+            material.claimRedeemAuth == Data(hex: string("claim_redeem_auth_hex", in: pairing)),
+            "claim redeem auth mismatch"
+        )
+        try require(
+            material.pairingDeliveryKey == Data(hex: string("pairing_delivery_key_hex", in: pairing)),
+            "pairing delivery key mismatch"
+        )
+        try require(material.pairingSAS == string("pairing_sas", in: pairing), "pairing SAS mismatch")
+
+        let sessionID = try string("session_id", in: pairing)
+        let claimID = try string("claim_id", in: pairing)
+        try require(
+            SyncE2EE.encodePairingAAD(
+                sessionID: sessionID,
+                claimID: claimID,
+                claimLookup: material.claimLookup,
+                payloadType: .claim
+            ) == Data(hex: string("claim_aad_hex", in: pairing)),
+            "claim AAD mismatch"
+        )
+        try require(
+            SyncE2EE.claimRedeemVerifier(
+                sessionID: sessionID,
+                claimID: claimID,
+                claimLookup: material.claimLookup,
+                claimRedeemAuth: material.claimRedeemAuth
+            ) == Data(hex: string("claim_redeem_verifier_hex", in: pairing)),
+            "claim redeem verifier mismatch"
+        )
+    }
+
     private static func loadVector() throws -> Vector {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let url = repositoryRoot
-            .appendingPathComponent("tools")
-            .appendingPathComponent("fixtures")
-            .appendingPathComponent("e2ee_contract_vectors.json")
+        let root = try loadRoot()
         guard
-            let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
             let field = root["field_aead"] as? [String: Any],
             let derivation = root["key_derivation"] as? [String: Any]
         else {
@@ -152,6 +225,21 @@ enum E2EEContractVectorTests {
             envelopeBase64: try string("envelope_base64", in: field),
             scopeRootKey: try Data(hex: string("scope_root_key", in: derivation))
         )
+    }
+
+    private static func loadRoot() throws -> [String: Any] {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = repositoryRoot
+            .appendingPathComponent("tools")
+            .appendingPathComponent("fixtures")
+            .appendingPathComponent("e2ee_contract_vectors.json")
+        guard let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw TestError.invalidVector("root")
+        }
+        return root
     }
 
     private static func string(_ key: String, in object: [String: Any]) throws -> String {

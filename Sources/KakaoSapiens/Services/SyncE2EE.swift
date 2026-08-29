@@ -30,6 +30,26 @@ enum SyncE2EE {
         let compatTagKey: Data
     }
 
+    struct RecoveryMaterial: Equatable {
+        let recoveryLookup: Data
+        let recoveryAuth: Data
+        let recoveryWrapKey: Data
+    }
+
+    struct PairingMaterial: Equatable {
+        let pairingSessionLookup: Data
+        let pairingClaimKey: Data
+        let claimLookup: Data
+        let claimRedeemAuth: Data
+        let pairingDeliveryKey: Data
+        let pairingSAS: String
+    }
+
+    enum PairingPayloadType: String {
+        case claim
+        case delivery
+    }
+
     enum ContractError: Error, Equatable {
         case invalidAccountMasterKey
         case invalidKey
@@ -61,6 +81,106 @@ enum SyncE2EE {
             checkpointAEADKey: try derivedKey(label: "gagaodok/e2ee/v1/checkpoint-aead", scopeRoot: scopeRoot),
             attachmentWrapKey: try derivedKey(label: "gagaodok/e2ee/v1/attachment-wrap", scopeRoot: scopeRoot),
             compatTagKey: try derivedKey(label: "gagaodok/e2ee/v1/compat-tag", scopeRoot: scopeRoot)
+        )
+    }
+
+    static func deriveRecoveryMaterial(recoveryEntropy: Data) throws -> RecoveryMaterial {
+        guard recoveryEntropy.count == 16 else { throw ContractError.invalidKey }
+        return RecoveryMaterial(
+            recoveryLookup: try hkdfSHA256(
+                ikm: recoveryEntropy,
+                label: "gagaodok/e2ee/v1/recovery-lookup"
+            ),
+            recoveryAuth: try hkdfSHA256(
+                ikm: recoveryEntropy,
+                label: "gagaodok/e2ee/v1/recovery-auth"
+            ),
+            recoveryWrapKey: try hkdfSHA256(
+                ikm: recoveryEntropy,
+                label: "gagaodok/e2ee/v1/recovery-wrap"
+            )
+        )
+    }
+
+    static func recoveryAuthVerifier(_ recoveryAuth: Data) throws -> Data {
+        guard recoveryAuth.count == 32 else { throw ContractError.invalidKey }
+        return try labeledHash(
+            label: "gagaodok/e2ee/v1/recovery-auth-verifier",
+            payload: recoveryAuth
+        )
+    }
+
+    static func derivePairingMaterial(pairingSecret: Data, claimSecret: Data) throws -> PairingMaterial {
+        guard pairingSecret.count == 32, claimSecret.count == 32 else {
+            throw ContractError.invalidKey
+        }
+        let jointSecret = try encodeLP([(1, pairingSecret), (2, claimSecret)])
+        let sasBytes = try hkdfSHA256(
+            ikm: jointSecret,
+            label: "gagaodok/e2ee/v1/pairing-sas",
+            length: 4
+        )
+        let sasNumber = sasBytes.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) } % 1_000_000
+        return PairingMaterial(
+            pairingSessionLookup: try hkdfSHA256(
+                ikm: pairingSecret,
+                label: "gagaodok/e2ee/v1/pairing-session-lookup"
+            ),
+            pairingClaimKey: try hkdfSHA256(
+                ikm: pairingSecret,
+                label: "gagaodok/e2ee/v1/pairing-claim"
+            ),
+            claimLookup: try hkdfSHA256(
+                ikm: claimSecret,
+                label: "gagaodok/e2ee/v1/claim-lookup"
+            ),
+            claimRedeemAuth: try hkdfSHA256(
+                ikm: claimSecret,
+                label: "gagaodok/e2ee/v1/claim-redeem-auth"
+            ),
+            pairingDeliveryKey: try hkdfSHA256(
+                ikm: jointSecret,
+                label: "gagaodok/e2ee/v1/pairing-delivery"
+            ),
+            pairingSAS: String(format: "%06u", sasNumber)
+        )
+    }
+
+    static func encodePairingAAD(
+        sessionID: String,
+        claimID: String,
+        claimLookup: Data,
+        payloadType: PairingPayloadType
+    ) throws -> Data {
+        guard claimLookup.count == 32 else { throw ContractError.invalidIdentity }
+        return try encodeLP([
+            (1, Data(protocolVersion.bigEndianBytes)),
+            (2, canonicalUUID(sessionID)),
+            (3, canonicalUUID(claimID)),
+            (4, claimLookup),
+            (5, try ascii(payloadType.rawValue)),
+            (6, Data([algorithm])),
+        ])
+    }
+
+    static func claimRedeemVerifier(
+        sessionID: String,
+        claimID: String,
+        claimLookup: Data,
+        claimRedeemAuth: Data
+    ) throws -> Data {
+        guard claimLookup.count == 32, claimRedeemAuth.count == 32 else {
+            throw ContractError.invalidIdentity
+        }
+        let payload = try encodeLP([
+            (1, canonicalUUID(sessionID)),
+            (2, canonicalUUID(claimID)),
+            (3, claimLookup),
+            (4, claimRedeemAuth),
+        ])
+        return try labeledHash(
+            label: "gagaodok/e2ee/v1/claim-redeem-verifier",
+            payload: payload
         )
     }
 
@@ -163,6 +283,23 @@ enum SyncE2EE {
 
     private static func derivedKey(label: String, scopeRoot: Data) throws -> Data {
         try hkdfExpand(prk: scopeRoot, info: hkdfInfo(purpose: label, context: nil), length: 32)
+    }
+
+    private static func hkdfSHA256(ikm: Data, label: String, length: Int = 32) throws -> Data {
+        let protocolSalt = Data("gagaodok/e2ee/v1/hkdf-salt".utf8)
+        return try hkdfExpand(
+            prk: hmacSHA256(key: protocolSalt, message: ikm),
+            info: hkdfInfo(purpose: label, context: nil),
+            length: length
+        )
+    }
+
+    private static func labeledHash(label: String, payload: Data) throws -> Data {
+        let encoded = try encodeLP([
+            (1, try utf8(label)),
+            (2, payload),
+        ])
+        return Data(SHA256.hash(data: encoded))
     }
 
     private static func hkdfInfo(purpose: String, context: Data?) throws -> Data {

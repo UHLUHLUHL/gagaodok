@@ -101,11 +101,83 @@ def hkdf_info(purpose: str, context: bytes | None) -> bytes:
     ])
 
 
+def hkdf_sha256(*, ikm: bytes, label: str, length: int = 32) -> bytes:
+    """RFC 5869 Extract+Expand using the protocol salt and canonical info."""
+    return hkdf_expand(
+        hkdf_extract(PROTOCOL_SALT, ikm),
+        hkdf_info(label, None),
+        length,
+    )
+
+
 def labeled_hash(label: str, payload: bytes) -> bytes:
     return hashlib.sha256(encode_lp([
         (1, label.encode("utf-8")),
         (2, payload),
     ])).digest()
+
+
+def derive_recovery_material(recovery_entropy: bytes) -> dict[str, bytes]:
+    if len(recovery_entropy) != 16:
+        raise ValueError("recovery entropy must be 16 bytes")
+    return {
+        "recovery_lookup": hkdf_sha256(
+            ikm=recovery_entropy,
+            label="gagaodok/e2ee/v1/recovery-lookup",
+        ),
+        "recovery_auth": hkdf_sha256(
+            ikm=recovery_entropy,
+            label="gagaodok/e2ee/v1/recovery-auth",
+        ),
+        "recovery_wrap_key": hkdf_sha256(
+            ikm=recovery_entropy,
+            label="gagaodok/e2ee/v1/recovery-wrap",
+        ),
+    }
+
+
+def recovery_auth_verifier(recovery_auth: bytes) -> bytes:
+    if len(recovery_auth) != 32:
+        raise ValueError("recovery auth must be 32 bytes")
+    return labeled_hash("gagaodok/e2ee/v1/recovery-auth-verifier", recovery_auth)
+
+
+def derive_pairing_material(pairing_secret: bytes, claim_secret: bytes) -> dict[str, bytes | str]:
+    if len(pairing_secret) != 32:
+        raise ValueError("pairing secret must be 32 bytes")
+    if len(claim_secret) != 32:
+        raise ValueError("claim secret must be 32 bytes")
+    joint_secret = encode_lp([(1, pairing_secret), (2, claim_secret)])
+    sas_bytes = hkdf_sha256(
+        ikm=joint_secret,
+        label="gagaodok/e2ee/v1/pairing-sas",
+        length=4,
+    )
+    return {
+        "pairing_session_lookup": hkdf_sha256(
+            ikm=pairing_secret,
+            label="gagaodok/e2ee/v1/pairing-session-lookup",
+        ),
+        "pairing_claim_key": hkdf_sha256(
+            ikm=pairing_secret,
+            label="gagaodok/e2ee/v1/pairing-claim",
+        ),
+        "claim_lookup": hkdf_sha256(
+            ikm=claim_secret,
+            label="gagaodok/e2ee/v1/claim-lookup",
+        ),
+        "claim_redeem_auth": hkdf_sha256(
+            ikm=claim_secret,
+            label="gagaodok/e2ee/v1/claim-redeem-auth",
+        ),
+        "joint_secret": joint_secret,
+        "pairing_delivery_key": hkdf_sha256(
+            ikm=joint_secret,
+            label="gagaodok/e2ee/v1/pairing-delivery",
+        ),
+        "pairing_sas_bytes": sas_bytes,
+        "pairing_sas": f"{int.from_bytes(sas_bytes, 'big') % 1_000_000:06d}",
+    }
 
 
 def canonical_scope_context(
@@ -407,12 +479,73 @@ def documented_aead_vector() -> dict[str, str | int | None]:
     }
 
 
+def documented_recovery_vector() -> dict[str, str]:
+    entropy = bytes(range(0x40, 0x50))
+    material = derive_recovery_material(entropy)
+    recovery_auth = material["recovery_auth"]
+    assert isinstance(recovery_auth, bytes)
+    return {
+        "recovery_entropy_hex": entropy.hex(),
+        "recovery_lookup_hex": material["recovery_lookup"].hex(),
+        "recovery_auth_hex": recovery_auth.hex(),
+        "recovery_wrap_key_hex": material["recovery_wrap_key"].hex(),
+        "recovery_auth_verifier_hex": recovery_auth_verifier(recovery_auth).hex(),
+    }
+
+
+def documented_pairing_vector() -> dict[str, str]:
+    session_id = "33333333-3333-4333-8333-333333333333"
+    claim_id = "44444444-4444-4444-8444-444444444444"
+    pairing_secret = bytes(range(32))
+    claim_secret = bytes(range(32, 64))
+    material = derive_pairing_material(pairing_secret, claim_secret)
+    binary_keys = {
+        key: value.hex()
+        for key, value in material.items()
+        if isinstance(value, bytes)
+    }
+    claim_lookup = material["claim_lookup"]
+    claim_redeem_auth = material["claim_redeem_auth"]
+    assert isinstance(claim_lookup, bytes)
+    assert isinstance(claim_redeem_auth, bytes)
+    return {
+        "session_id": session_id,
+        "claim_id": claim_id,
+        "pairing_secret_hex": pairing_secret.hex(),
+        "claim_secret_hex": claim_secret.hex(),
+        **{f"{key}_hex": value for key, value in binary_keys.items()},
+        "pairing_sas": str(material["pairing_sas"]),
+        "claim_aad_hex": pairing_aad(
+            session_id=session_id,
+            claim_id=claim_id,
+            claim_lookup=claim_lookup,
+            payload_type="claim",
+            alg=1,
+        ).hex(),
+        "delivery_aad_hex": pairing_aad(
+            session_id=session_id,
+            claim_id=claim_id,
+            claim_lookup=claim_lookup,
+            payload_type="delivery",
+            alg=1,
+        ).hex(),
+        "claim_redeem_verifier_hex": claim_redeem_verifier(
+            session_id=session_id,
+            claim_id=claim_id,
+            claim_lookup=claim_lookup,
+            claim_redeem_auth=claim_redeem_auth,
+        ).hex(),
+    }
+
+
 def contract_vectors() -> dict[str, object]:
     return {
         "schema_version": 1,
         "classification": "SYNTHETIC_ONLY",
         "key_derivation": documented_vector(),
         "field_aead": documented_aead_vector(),
+        "recovery": documented_recovery_vector(),
+        "pairing": documented_pairing_vector(),
     }
 
 

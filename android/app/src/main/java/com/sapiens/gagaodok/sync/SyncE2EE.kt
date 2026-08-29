@@ -5,7 +5,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.Base64
+import java.util.Locale
 import java.util.UUID
 import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
@@ -44,6 +46,26 @@ internal object SyncE2EE {
         val compatTagKey: ByteArray,
     )
 
+    data class RecoveryMaterial(
+        val recoveryLookup: ByteArray,
+        val recoveryAuth: ByteArray,
+        val recoveryWrapKey: ByteArray,
+    )
+
+    data class PairingMaterial(
+        val pairingSessionLookup: ByteArray,
+        val pairingClaimKey: ByteArray,
+        val claimLookup: ByteArray,
+        val claimRedeemAuth: ByteArray,
+        val pairingDeliveryKey: ByteArray,
+        val pairingSAS: String,
+    )
+
+    enum class PairingPayloadType(val wireValue: String) {
+        CLAIM("claim"),
+        DELIVERY("delivery"),
+    }
+
     enum class ContractError {
         INVALID_ACCOUNT_MASTER_KEY,
         INVALID_KEY,
@@ -80,6 +102,78 @@ internal object SyncE2EE {
             attachmentWrapKey = derivedKey("gagaodok/e2ee/v1/attachment-wrap", scopeRoot),
             compatTagKey = derivedKey("gagaodok/e2ee/v1/compat-tag", scopeRoot),
         )
+    }
+
+    fun deriveRecoveryMaterial(recoveryEntropy: ByteArray): RecoveryMaterial {
+        requireContract(recoveryEntropy.size == 16, ContractError.INVALID_KEY)
+        return RecoveryMaterial(
+            recoveryLookup = hkdfSha256(recoveryEntropy, "gagaodok/e2ee/v1/recovery-lookup"),
+            recoveryAuth = hkdfSha256(recoveryEntropy, "gagaodok/e2ee/v1/recovery-auth"),
+            recoveryWrapKey = hkdfSha256(recoveryEntropy, "gagaodok/e2ee/v1/recovery-wrap"),
+        )
+    }
+
+    fun recoveryAuthVerifier(recoveryAuth: ByteArray): ByteArray {
+        requireContract(recoveryAuth.size == 32, ContractError.INVALID_KEY)
+        return labeledHash("gagaodok/e2ee/v1/recovery-auth-verifier", recoveryAuth)
+    }
+
+    fun derivePairingMaterial(pairingSecret: ByteArray, claimSecret: ByteArray): PairingMaterial {
+        requireContract(pairingSecret.size == 32, ContractError.INVALID_KEY)
+        requireContract(claimSecret.size == 32, ContractError.INVALID_KEY)
+        val jointSecret = encodeLP(listOf(1 to pairingSecret, 2 to claimSecret))
+        val sasBytes = hkdfSha256(jointSecret, "gagaodok/e2ee/v1/pairing-sas", 4)
+        val sasNumber = (ByteBuffer.wrap(sasBytes).order(ByteOrder.BIG_ENDIAN).int.toLong() and 0xffff_ffffL) %
+            1_000_000L
+        return PairingMaterial(
+            pairingSessionLookup = hkdfSha256(
+                pairingSecret,
+                "gagaodok/e2ee/v1/pairing-session-lookup",
+            ),
+            pairingClaimKey = hkdfSha256(pairingSecret, "gagaodok/e2ee/v1/pairing-claim"),
+            claimLookup = hkdfSha256(claimSecret, "gagaodok/e2ee/v1/claim-lookup"),
+            claimRedeemAuth = hkdfSha256(claimSecret, "gagaodok/e2ee/v1/claim-redeem-auth"),
+            pairingDeliveryKey = hkdfSha256(jointSecret, "gagaodok/e2ee/v1/pairing-delivery"),
+            pairingSAS = String.format(Locale.ROOT, "%06d", sasNumber),
+        )
+    }
+
+    fun encodePairingAAD(
+        sessionId: String,
+        claimId: String,
+        claimLookup: ByteArray,
+        payloadType: PairingPayloadType,
+    ): ByteArray {
+        requireContract(claimLookup.size == 32, ContractError.INVALID_IDENTITY)
+        return encodeLP(
+            listOf(
+                1 to uint16(PROTOCOL_VERSION),
+                2 to canonicalUuid(sessionId),
+                3 to canonicalUuid(claimId),
+                4 to claimLookup,
+                5 to ascii(payloadType.wireValue),
+                6 to byteArrayOf(ALGORITHM.toByte()),
+            ),
+        )
+    }
+
+    fun claimRedeemVerifier(
+        sessionId: String,
+        claimId: String,
+        claimLookup: ByteArray,
+        claimRedeemAuth: ByteArray,
+    ): ByteArray {
+        requireContract(claimLookup.size == 32, ContractError.INVALID_IDENTITY)
+        requireContract(claimRedeemAuth.size == 32, ContractError.INVALID_IDENTITY)
+        val payload = encodeLP(
+            listOf(
+                1 to canonicalUuid(sessionId),
+                2 to canonicalUuid(claimId),
+                3 to claimLookup,
+                4 to claimRedeemAuth,
+            ),
+        )
+        return labeledHash("gagaodok/e2ee/v1/claim-redeem-verifier", payload)
     }
 
     fun encodeAAD(context: AADContext): ByteArray {
@@ -187,6 +281,16 @@ internal object SyncE2EE {
     private fun derivedKey(label: String, scopeRoot: ByteArray): ByteArray =
         hkdfExpand(scopeRoot, hkdfInfo(label, null), 32)
 
+    private fun hkdfSha256(ikm: ByteArray, label: String, length: Int = 32): ByteArray = hkdfExpand(
+        hmacSha256("gagaodok/e2ee/v1/hkdf-salt".toByteArray(StandardCharsets.UTF_8), ikm),
+        hkdfInfo(label, null),
+        length,
+    )
+
+    private fun labeledHash(label: String, payload: ByteArray): ByteArray = MessageDigest
+        .getInstance("SHA-256")
+        .digest(encodeLP(listOf(1 to utf8(label), 2 to payload)))
+
     private fun hkdfInfo(purpose: String, context: ByteArray?): ByteArray = encodeLP(
         listOf(
             1 to uint16(PROTOCOL_VERSION),
@@ -242,7 +346,7 @@ internal object SyncE2EE {
         } catch (error: IllegalArgumentException) {
             throw ContractException(ContractError.INVALID_IDENTITY)
         }
-        requireContract(parsed.toString().uppercase() == value, ContractError.INVALID_IDENTITY)
+        requireContract(parsed.toString().uppercase(Locale.ROOT) == value, ContractError.INVALID_IDENTITY)
         return ascii(value)
     }
 
