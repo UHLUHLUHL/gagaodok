@@ -26,3 +26,10 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensE2EEContractTests/SyncEnrollmentBuilderTests.swift" \
   -o "$enrollment_binary_path"
 "$enrollment_binary_path" "$repo_root/Sources/KakaoSapiens/Resources/sync/english-bip39.txt"
+
+state_binary_path="${TMPDIR:-/tmp}/gagaodok-sync-connection-state-tests"
+swiftc \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncConnectionState.swift" \
+  "$repo_root/Tests/KakaoSapiensE2EEContractTests/SyncConnectionStateTests.swift" \
+  -o "$state_binary_path"
+"$state_binary_path"
