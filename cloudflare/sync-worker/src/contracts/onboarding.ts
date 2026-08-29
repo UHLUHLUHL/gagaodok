@@ -36,12 +36,12 @@ export interface EnrollmentRequest {
   };
 }
 
-function record(value: unknown): Record<string, unknown> {
+export function requireRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw validationFailed();
   return value as Record<string, unknown>;
 }
 
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): void {
+export function requireExactKeys(value: Record<string, unknown>, expected: readonly string[]): void {
   const actual = Object.keys(value).sort();
   const wanted = [...expected].sort();
   if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
@@ -49,18 +49,18 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
   }
 }
 
-function hex(bytes: Uint8Array): string {
+export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function binary32(value: unknown): { encoded: string; bytes: Uint8Array } {
+export function requireBinary32(value: unknown): { encoded: string; bytes: Uint8Array } {
   if (!isCanonicalBase64(value)) throw validationFailed();
   const decoded = decodeCanonicalBase64(value);
   if (decoded.length !== 32) throw validationFailed();
   return { encoded: value, bytes: decoded };
 }
 
-function envelope(value: unknown): { encoded: string; bytes: Uint8Array } {
+export function requireV1Envelope(value: unknown): { encoded: string; bytes: Uint8Array } {
   if (!isCanonicalBase64(value)) throw validationFailed();
   const decoded = decodeCanonicalBase64(value);
   if (
@@ -78,7 +78,7 @@ function envelope(value: unknown): { encoded: string; bytes: Uint8Array } {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+  return bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 }
 
 export async function parseEnrollmentRequest(request: Request): Promise<EnrollmentRequest> {
@@ -98,26 +98,26 @@ export async function parseEnrollmentRequest(request: Request): Promise<Enrollme
   } catch {
     throw validationFailed();
   }
-  const body = record(parsed);
-  exactKeys(body, ["protocol_version", "enrollment_id", "account_id", "device", "recovery"]);
+  const body = requireRecord(parsed);
+  requireExactKeys(body, ["protocol_version", "enrollment_id", "account_id", "device", "recovery"]);
   if (body["protocol_version"] !== 1) throw validationFailed();
 
-  const device = record(body["device"]);
-  exactKeys(device, ["device_id", "space_id", "platform", "display_name", "device_token_hash"]);
+  const device = requireRecord(body["device"]);
+  requireExactKeys(device, ["device_id", "space_id", "platform", "display_name", "device_token_hash"]);
   const spaceId = requireSpaceId(device["space_id"]);
   if (device["platform"] !== PLATFORM_BY_SPACE[spaceId]) throw validationFailed();
   if (typeof device["device_token_hash"] !== "string" || !LOWERCASE_SHA256.test(device["device_token_hash"])) {
     throw validationFailed();
   }
   let displayName: string | null = null;
-  if (device["display_name"] !== null) displayName = envelope(device["display_name"]).encoded;
+  if (device["display_name"] !== null) displayName = requireV1Envelope(device["display_name"]).encoded;
 
-  const recovery = record(body["recovery"]);
-  exactKeys(recovery, ["recovery_version", "recovery_lookup", "recovery_auth_verifier", "wrapped_master_key"]);
+  const recovery = requireRecord(body["recovery"]);
+  requireExactKeys(recovery, ["recovery_version", "recovery_lookup", "recovery_auth_verifier", "wrapped_master_key"]);
   if (recovery["recovery_version"] !== 1) throw validationFailed();
-  const lookup = binary32(recovery["recovery_lookup"]);
-  const verifier = binary32(recovery["recovery_auth_verifier"]);
-  const wrapped = envelope(recovery["wrapped_master_key"]);
+  const lookup = requireBinary32(recovery["recovery_lookup"]);
+  const verifier = requireBinary32(recovery["recovery_auth_verifier"]);
+  const wrapped = requireV1Envelope(recovery["wrapped_master_key"]);
 
   return {
     rawBytes,
@@ -134,7 +134,7 @@ export async function parseEnrollmentRequest(request: Request): Promise<Enrollme
     recovery: {
       version: 1,
       lookup: lookup.encoded,
-      authVerifierHex: hex(verifier.bytes),
+      authVerifierHex: bytesToHex(verifier.bytes),
       wrappedMasterKey: wrapped.encoded,
       wrappedMasterKeyBytes: wrapped.bytes,
     },
