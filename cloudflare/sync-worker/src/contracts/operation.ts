@@ -517,6 +517,16 @@ METADATA_RULES.create_attachment = {
  * a patch. An attachment's name, type and wrapped key are written once at
  * creation; a missing one would leave a row that can never be decrypted.
  */
+/**
+ * Creates that record creation provenance in plaintext metadata. Both fields
+ * must agree with the request itself; see the check in
+ * `parseOperationRequest`.
+ */
+const PROVENANCE_CREATES: ReadonlySet<string> = new Set([
+  "create_persona_snapshot",
+  "create_checkpoint",
+]);
+
 const REQUIRED_ENCRYPTED_FIELDS: Partial<Record<string, readonly string[]>> = {
   create_attachment: ["file_name", "mime_type", "wrapped_file_key"],
 };
@@ -872,6 +882,22 @@ export function parseOperationRequest(value: unknown): OperationRequest {
     }
   }
 
+  const deviceId = requireUuid(value["device_id"]);
+
+  if (PROVENANCE_CREATES.has(operation)) {
+    // The row records who made it and where. D1 states half of this as
+    // CHECK (owner_space_id = space_id), but only as an opaque failure the
+    // handler could not tell apart from a storage fault, and it says nothing
+    // about the device at all — a valid token could otherwise file a snapshot
+    // under another device's name.
+    if (metadata.set.owner_space_id !== target.space_id) {
+      throw validationFailed();
+    }
+    if (metadata.set.created_by_device_id !== deviceId) {
+      throw validationFailed();
+    }
+  }
+
   if (operation === "create_attachment") {
     // The origin is provenance for the very space that is allocating, so a
     // mismatch means the request describes two different spaces at once.
@@ -897,7 +923,7 @@ export function parseOperationRequest(value: unknown): OperationRequest {
   const request: OperationRequest = {
     protocol_version: 1,
     operation_id: requireUuid(value["operation_id"]),
-    device_id: requireUuid(value["device_id"]),
+    device_id: deviceId,
     op: operation,
     entity_type: spec.entityType,
     target,

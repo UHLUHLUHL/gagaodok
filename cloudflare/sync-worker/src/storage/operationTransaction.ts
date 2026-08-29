@@ -216,27 +216,67 @@ export async function applyPatchRoom(
  * operation writes. Shared so `create_room` and `patch_room` cannot drift
  * into recording the same fact two different ways.
  */
+/**
+ * The identity axes one change_log row carries. Each handler states its own
+ * explicitly rather than having them inferred from the target: migration 0008
+ * requires exactly one `entity_type` branch's axes to be non-null and every
+ * other axis to be null, and inference by nullable fallthrough is how a new
+ * entity silently lands in the wrong branch.
+ *
+ * The keys are a closed set that matches the column names, so no SQL
+ * identifier is ever assembled from a request value.
+ */
+interface ChangeIdentity {
+  space_id: string;
+  room_id?: string;
+  worldline_key?: string;
+  turn_id?: string;
+  message_id?: string;
+  checkpoint_id?: string;
+  persona_snapshot_id?: string;
+  snapshot_revision?: number;
+  engine_profile_id?: string;
+  profile_revision?: number;
+  attachment_id?: string;
+}
+
+const CHANGE_IDENTITY_COLUMNS: readonly (keyof ChangeIdentity)[] = Object.freeze([
+  "space_id",
+  "room_id",
+  "worldline_key",
+  "turn_id",
+  "message_id",
+  "checkpoint_id",
+  "persona_snapshot_id",
+  "snapshot_revision",
+  "engine_profile_id",
+  "profile_revision",
+  "attachment_id",
+]);
+
 function ledgerStatements(
   db: D1Database,
   accountId: string,
   request: OperationRequest,
   fingerprint: string,
   revision: number,
+  identity: ChangeIdentity,
 ): D1PreparedStatement[] {
-  const spaceId = request.target.space_id;
-  const roomId = request.target.room_id as string;
-  // The worldline axis belongs to the change identity only for entities whose
-  // storage key has one. migration 0008 states the same rule as a CHECK: the
-  // room and group_state branches require worldline_key IS NULL, the worldline
-  // branch requires it non-null and non-empty.
-  const identityWorldlineKey =
-    getEntityShape(getOperationSpec(request.op).entityType).worldlineRule === "required"
-      ? request.worldline_key
-      : null;
   // The entity_type comes from the validator's operation table, never from a
   // literal spelled out per handler, so the two ledgers can never disagree
   // about what a given operation wrote.
   const entityType = getOperationSpec(request.op).entityType;
+
+  const columns: string[] = [];
+  const values: (string | number)[] = [];
+  for (const column of CHANGE_IDENTITY_COLUMNS) {
+    const value = identity[column];
+    if (value !== undefined) {
+      columns.push(column);
+      values.push(value);
+    }
+  }
+
   return [
     db
       .prepare(
@@ -246,22 +286,13 @@ function ledgerStatements(
          VALUES (?, ?, ?, ?, 'upsert', ?, ${CURRENT_SEQ})`,
       )
       .bind(accountId, request.operation_id, fingerprint, entityType, revision, accountId),
-    identityWorldlineKey === null
-      ? db
-          .prepare(
-            `INSERT INTO change_log
-               (account_id, server_seq, entity_type, change_kind, revision, space_id, room_id)
-             VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ?, ?)`,
-          )
-          .bind(accountId, accountId, entityType, revision, spaceId, roomId)
-      : db
-          .prepare(
-            `INSERT INTO change_log
-               (account_id, server_seq, entity_type, change_kind, revision,
-                space_id, room_id, worldline_key)
-             VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ?, ?, ?)`,
-          )
-          .bind(accountId, accountId, entityType, revision, spaceId, roomId, identityWorldlineKey),
+    db
+      .prepare(
+        `INSERT INTO change_log
+           (account_id, server_seq, entity_type, change_kind, revision, ${columns.join(", ")})
+         VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ${columns.map(() => "?").join(", ")})`,
+      )
+      .bind(accountId, accountId, entityType, revision, ...values),
     db
       .prepare("UPDATE account SET next_server_seq = next_server_seq + 1 WHERE account_id = ?")
       .bind(accountId),
@@ -269,6 +300,23 @@ function ledgerStatements(
       .prepare("DELETE FROM transaction_guard WHERE account_id = ? AND operation_id = ?")
       .bind(accountId, request.operation_id),
   ];
+}
+
+/** The change identity of a named worldline row. */
+function worldlineIdentity(request: OperationRequest): ChangeIdentity {
+  return {
+    space_id: request.target.space_id,
+    room_id: request.target.room_id as string,
+    // The validator already computed this from the target; deriving it a
+    // second time here is how it would stop matching D1's
+    // CHECK (worldline_key = COALESCE(worldline_id, '')).
+    worldline_key: request.worldline_key,
+  };
+}
+
+/** The change identity of a room-level entity: room, group_state. */
+function roomIdentity(request: OperationRequest): ChangeIdentity {
+  return { space_id: request.target.space_id, room_id: request.target.room_id as string };
 }
 
 /** Upsert one extension envelope; the key is always a bound value. */
@@ -383,7 +431,7 @@ export async function applyCreateRoom(
     const envelope = request.set[`${EXTENSION_PREFIX}${key}`] as string;
     statements.push(extensionUpsert(db, accountId, spaceId, roomId, key, envelope));
   }
-  statements.push(...ledgerStatements(db, accountId, request, fingerprint, 0));
+  statements.push(...ledgerStatements(db, accountId, request, fingerprint, 0, roomIdentity(request)));
 
   try {
     await db.batch(statements);
@@ -524,7 +572,7 @@ export async function applyCreateGroupState(
         request.created_at,
         request.created_at,
       ),
-    ...ledgerStatements(db, accountId, request, fingerprint, 0),
+    ...ledgerStatements(db, accountId, request, fingerprint, 0, roomIdentity(request)),
   ];
 
   return await runBatch(db, accountId, request, fingerprint, statements, () =>
@@ -583,7 +631,7 @@ export async function applyPatchGroupState(
           WHERE account_id = ? AND space_id = ? AND room_id = ? AND revision = ?`,
       )
       .bind(...bindings, accountId, spaceId, roomId, baseRevision),
-    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision),
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision, roomIdentity(request)),
   ];
 
   return await runBatch(db, accountId, request, fingerprint, statements, () =>
@@ -771,7 +819,7 @@ export async function applyCreateWorldline(
         request.created_at,
         request.created_at,
       ),
-    ...ledgerStatements(db, accountId, request, fingerprint, 0),
+    ...ledgerStatements(db, accountId, request, fingerprint, 0, worldlineIdentity(request)),
   ];
 
   return await runBatch(db, accountId, request, fingerprint, statements, () =>
@@ -832,7 +880,7 @@ export async function applyPatchWorldline(
             AND revision = ?`,
       )
       .bind(...bindings, accountId, spaceId, roomId, key, baseRevision),
-    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision),
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision, worldlineIdentity(request)),
   ];
 
   return await runBatch(db, accountId, request, fingerprint, statements, () =>
@@ -901,6 +949,421 @@ async function classifyWorldlinePatchFailure(
   }
   if (revision !== baseRevision) {
     throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+const CHECKPOINT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  segments: "segments_enc",
+  summary_text: "summary_text_enc",
+  compaction_profile_id: "compaction_profile_id_enc",
+  compaction_contract_fingerprint: "compaction_contract_fingerprint_enc",
+});
+
+/**
+ * checkpoint's plaintext metadata columns. Provenance
+ * (owner_space_id/created_by_device_id/created_at) is deliberately absent: it
+ * is written once at create and the validator's patch allowlist has no way to
+ * name it.
+ */
+const CHECKPOINT_METADATA_COLUMNS: readonly string[] = Object.freeze([
+  "checkpoint_schema_version",
+  "compaction_compat_tag",
+  "first_turn_id",
+  "last_turn_id",
+  "through_server_seq",
+]);
+
+function checkpointIdentity(request: OperationRequest): ChangeIdentity {
+  return {
+    space_id: request.target.space_id,
+    room_id: request.target.room_id as string,
+    // The default scope's '' is a real identity value here: migration 0008's
+    // checkpoint branch requires worldline_key NOT NULL but, unlike the
+    // worldline branch, does not require it to be non-empty.
+    worldline_key: request.worldline_key,
+    checkpoint_id: request.target.checkpoint_id as string,
+  };
+}
+
+/** The metadata value this operation leaves in `name`, given the current row. */
+function finalMetadata(
+  request: OperationRequest,
+  name: string,
+  current: string | number | null,
+): string | number | null {
+  if (Object.prototype.hasOwnProperty.call(request.metadata_set, name)) {
+    return request.metadata_set[name] as string | number;
+  }
+  if (request.metadata_clear.includes(name)) {
+    return null;
+  }
+  return current;
+}
+
+/**
+ * `through_server_seq` names a sequence the account has already issued.
+ *
+ * The pending operation's own value is not yet issued when the batch starts,
+ * so `next_server_seq` is the first inadmissible value. Checking it before the
+ * batch means a bad value costs no sequence at all.
+ */
+async function assertThroughServerSeq(
+  db: D1Database,
+  accountId: string,
+  value: string | number | null,
+): Promise<void> {
+  if (value === null) {
+    return;
+  }
+  const account = await db
+    .prepare("SELECT next_server_seq FROM account WHERE account_id = ?")
+    .bind(accountId)
+    .first<{ next_server_seq: number }>();
+  if (account === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (typeof value !== "number" || value < 1 || value >= account.next_server_seq) {
+    throw validationFailed();
+  }
+}
+
+/** Guard fragment asserting both range turns exist in the checkpoint's scope. */
+function turnRangeGuard(request: OperationRequest, first: unknown, last: unknown): string | null {
+  if (first === null || first === undefined) {
+    return null;
+  }
+  void request;
+  return `(SELECT COUNT(*) FROM turn
+            WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+              AND turn_id IN (?, ?)) = (CASE WHEN ? = ? THEN 1 ELSE 2 END)`;
+}
+
+function turnRangeBindings(
+  accountId: string,
+  request: OperationRequest,
+  first: unknown,
+  last: unknown,
+): unknown[] {
+  if (first === null || first === undefined) {
+    return [];
+  }
+  return [
+    accountId,
+    request.target.space_id,
+    request.target.room_id,
+    request.worldline_key,
+    first,
+    last,
+    first,
+    last,
+  ];
+}
+
+async function turnRangeMissing(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  first: unknown,
+  last: unknown,
+): Promise<boolean> {
+  if (first === null || first === undefined) {
+    return false;
+  }
+  const expected = first === last ? 1 : 2;
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM turn
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+          AND turn_id IN (?, ?)`,
+    )
+    .bind(accountId, request.target.space_id, request.target.room_id, request.worldline_key, first, last)
+    .first<{ n: number }>();
+  return (row?.n ?? 0) !== expected;
+}
+
+/** Apply one validated `create_checkpoint`. */
+export async function applyCreateCheckpoint(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const checkpointId = request.target.checkpoint_id as string;
+
+  columnsOnly(Object.keys(request.set), CHECKPOINT_FIELD_COLUMNS);
+  columnsOnly(request.clear, CHECKPOINT_FIELD_COLUMNS);
+
+  const first = finalMetadata(request, "first_turn_id", null);
+  const last = finalMetadata(request, "last_turn_id", null);
+  const through = finalMetadata(request, "through_server_seq", null);
+  await assertThroughServerSeq(db, accountId, through);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const rangeGuard = turnRangeGuard(request, first, last);
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM room
+              WHERE account_id = ? AND space_id = ? AND room_id = ?) = 1
+            AND (SELECT COUNT(*) FROM checkpoint
+                  WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+                    AND checkpoint_id = ?) = 0${rangeGuard === null ? "" : `
+            AND ${rangeGuard}`}
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        accountId,
+        spaceId,
+        roomId,
+        key,
+        checkpointId,
+        ...turnRangeBindings(accountId, request, first, last),
+        accountId,
+      ),
+    db
+      .prepare(
+        `INSERT INTO checkpoint
+           (account_id, space_id, room_id, worldline_id, worldline_key, checkpoint_id,
+            first_turn_id, last_turn_id, through_server_seq,
+            segments_enc, summary_text_enc, checkpoint_schema_version,
+            compaction_profile_id_enc, compaction_contract_fingerprint_enc,
+            compaction_compat_tag, owner_space_id, created_by_device_id, created_at,
+            revision, server_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ${CURRENT_SEQ})`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        roomId,
+        request.target.worldline_id ?? null,
+        key,
+        checkpointId,
+        first,
+        last,
+        through,
+        request.set["segments"] ?? null,
+        request.set["summary_text"] ?? null,
+        request.metadata_set["checkpoint_schema_version"],
+        request.set["compaction_profile_id"] ?? null,
+        request.set["compaction_contract_fingerprint"] ?? null,
+        request.metadata_set["compaction_compat_tag"] ?? null,
+        request.metadata_set["owner_space_id"],
+        request.metadata_set["created_by_device_id"],
+        request.metadata_set["created_at"],
+        accountId,
+      ),
+    ...ledgerStatements(db, accountId, request, fingerprint, 0, checkpointIdentity(request)),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyCheckpointCreateFailure(db, accountId, request, fingerprint, first, last),
+  );
+}
+
+/** Apply one validated `patch_checkpoint`. */
+export async function applyPatchCheckpoint(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const checkpointId = request.target.checkpoint_id as string;
+  const baseRevision = request.base_revision as number;
+  const nextRevision = baseRevision + 1;
+
+  const clearColumns = columnsOnly(request.clear, CHECKPOINT_FIELD_COLUMNS);
+  columnsOnly(Object.keys(request.set), CHECKPOINT_FIELD_COLUMNS);
+
+  const current = await db
+    .prepare(
+      `SELECT first_turn_id, last_turn_id, through_server_seq FROM checkpoint
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+          AND checkpoint_id = ?`,
+    )
+    .bind(accountId, spaceId, roomId, key, checkpointId)
+    .first<{
+      first_turn_id: string | null;
+      last_turn_id: string | null;
+      through_server_seq: number | null;
+    }>();
+
+  const first = finalMetadata(request, "first_turn_id", current?.first_turn_id ?? null);
+  const last = finalMetadata(request, "last_turn_id", current?.last_turn_id ?? null);
+  // The bound is the final stored value, so a patch that leaves the field
+  // alone keeps whatever was already accepted.
+  await assertThroughServerSeq(
+    db,
+    accountId,
+    finalMetadata(request, "through_server_seq", current?.through_server_seq ?? null),
+  );
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const assignments: string[] = [];
+  const bindings: unknown[] = [];
+  for (const [name, column] of Object.entries(CHECKPOINT_FIELD_COLUMNS)) {
+    if (Object.prototype.hasOwnProperty.call(request.set, name)) {
+      assignments.push(`${column} = ?`);
+      bindings.push(request.set[name]);
+    }
+  }
+  for (const column of clearColumns) {
+    assignments.push(`${column} = NULL`);
+  }
+  for (const name of CHECKPOINT_METADATA_COLUMNS) {
+    if (Object.prototype.hasOwnProperty.call(request.metadata_set, name)) {
+      assignments.push(`${name} = ?`);
+      bindings.push(request.metadata_set[name]);
+    } else if (request.metadata_clear.includes(name)) {
+      assignments.push(`${name} = NULL`);
+    }
+  }
+  assignments.push("revision = revision + 1", `server_seq = ${CURRENT_SEQ}`);
+  bindings.push(accountId);
+
+  const rangeGuard = turnRangeGuard(request, first, last);
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT revision FROM checkpoint
+              WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+                AND checkpoint_id = ?) = ?${rangeGuard === null ? "" : `
+            AND ${rangeGuard}`}
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        key,
+        checkpointId,
+        baseRevision,
+        ...turnRangeBindings(accountId, request, first, last),
+        accountId,
+      ),
+    db
+      .prepare(
+        `UPDATE checkpoint SET ${assignments.join(", ")}
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND checkpoint_id = ? AND revision = ?`,
+      )
+      .bind(...bindings, accountId, spaceId, roomId, key, checkpointId, baseRevision),
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision, checkpointIdentity(request)),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyCheckpointPatchFailure(db, accountId, request, fingerprint, baseRevision, first, last),
+  );
+}
+
+async function readCheckpointRevision(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `SELECT revision FROM checkpoint
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+          AND checkpoint_id = ?`,
+    )
+    .bind(
+      accountId,
+      request.target.space_id,
+      request.target.room_id,
+      request.worldline_key,
+      request.target.checkpoint_id,
+    )
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
+async function classifyCheckpointCreateFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  first: unknown,
+  last: unknown,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const roomRevision = await readRoomRevision(
+    db,
+    accountId,
+    request.target.space_id,
+    request.target.room_id as string,
+  );
+  if (roomRevision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  const revision = await readCheckpointRevision(db, accountId, request);
+  if (revision !== null) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await turnRangeMissing(db, accountId, request, first, last)) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+async function classifyCheckpointPatchFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  baseRevision: number,
+  first: unknown,
+  last: unknown,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const revision = await readCheckpointRevision(db, accountId, request);
+  if (revision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (revision !== baseRevision) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await turnRangeMissing(db, accountId, request, first, last)) {
+    throw new ApiError("ENTITY_NOT_FOUND");
   }
   if (await sequenceExhausted(db, accountId)) {
     throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });

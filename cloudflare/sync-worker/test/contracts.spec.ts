@@ -1074,6 +1074,89 @@ describe("parseOperationRequest — extension owners", () => {
   });
 });
 
+describe("parseOperationRequest — create provenance", () => {
+  // A create records who made the row and where. If the recorded space or
+  // device could differ from the request's own, one device could file work
+  // under another's provenance, and D1's CHECK (owner_space_id = space_id)
+  // would only surface it as an opaque storage failure.
+  const OTHER_DEVICE = "80000000-0000-4000-8000-00000000000F";
+
+  function checkpointCreate(metadata: Record<string, unknown>): Record<string, unknown> {
+    return makeOperation({
+      op: "create_checkpoint",
+      entity_type: "checkpoint",
+      target: { space_id: "MAC_SPACE", room_id: ROOM, worldline_id: null, checkpoint_id: CHECKPOINT },
+      base_revision: undefined,
+      set: {},
+      metadata_set: { ...checkpointCreateMetadata("MAC_SPACE"), ...metadata },
+    });
+  }
+
+  function personaCreate(metadata: Record<string, unknown>): Record<string, unknown> {
+    return makeOperation({
+      op: "create_persona_snapshot",
+      entity_type: "persona_snapshot",
+      target: { space_id: "MAC_SPACE", persona_snapshot_id: PERSONA_SNAPSHOT, snapshot_revision: 1 },
+      base_revision: 0,
+      set: {},
+      metadata_set: {
+        owner_space_id: "MAC_SPACE",
+        created_by_device_id: DEVICE,
+        created_at: "2026-08-28T00:00:00Z",
+        persona_schema_version: 1,
+        ...metadata,
+      },
+    });
+  }
+
+  const CREATES: ReadonlyArray<[string, (m: Record<string, unknown>) => Record<string, unknown>]> = [
+    ["create_checkpoint", checkpointCreate],
+    ["create_persona_snapshot", personaCreate],
+  ];
+
+  it.each(CREATES)("accepts %s when provenance matches", (_op, build) => {
+    expect(() => parseOperationRequest(build({}))).not.toThrow();
+  });
+
+  it.each(CREATES)("rejects %s whose owner_space_id is another space", (_op, build) => {
+    expect(() => parseOperationRequest(build({ owner_space_id: "PHONE_SPACE" }))).toThrowError(
+      "VALIDATION_FAILED",
+    );
+  });
+
+  it.each(CREATES)("rejects %s whose created_by_device_id is another device", (_op, build) => {
+    expect(() => parseOperationRequest(build({ created_by_device_id: OTHER_DEVICE }))).toThrowError(
+      "VALIDATION_FAILED",
+    );
+  });
+
+  it("still rejects a create_attachment whose origin_space_id disagrees", () => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op: "create_attachment",
+          entity_type: "attachment",
+          target: { space_id: "MAC_SPACE", attachment_id: ATTACHMENT },
+          set: {
+            file_name: validEnvelope(),
+            mime_type: validEnvelope(),
+            wrapped_file_key: validEnvelope(),
+          },
+          metadata_set: {
+            origin_space_id: "PHONE_SPACE",
+            kind: "image",
+            source_byte_size: 100,
+            ciphertext_byte_size: 134,
+            ciphertext_hash: "a".repeat(64),
+            key_generation: 1,
+            created_at: "2026-08-28T00:00:00Z",
+          },
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+});
+
 describe("parseOperationRequest — safe integers", () => {
   it("rejects a numeric string as bubble_order", () => {
     // D1's INTEGER affinity would convert "3" to 3 before any CHECK could see
