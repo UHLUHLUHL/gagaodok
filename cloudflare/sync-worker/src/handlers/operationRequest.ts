@@ -5,7 +5,12 @@ import {
 } from "../auth/deviceToken";
 import { ApiError, validationFailed } from "../contracts/error";
 import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationRequest } from "../contracts/operation";
-import { applyCreateRoom, applyPatchRoom } from "../storage/operationTransaction";
+import {
+  applyCreateGroupState,
+  applyCreateRoom,
+  applyPatchGroupState,
+  applyPatchRoom,
+} from "../storage/operationTransaction";
 import type { OperationResult } from "../storage/operationTransaction";
 
 /**
@@ -103,6 +108,10 @@ export async function applyOperationRequest(
       return await applyCreateRoom(db, auth, operation, fingerprint);
     case "patch_room":
       return await applyPatchRoom(db, auth, operation, fingerprint);
+    case "create_group_state":
+      return await applyCreateGroupState(db, auth, operation, fingerprint);
+    case "patch_group_state":
+      return await applyPatchGroupState(db, auth, operation, fingerprint);
     default:
       throw validationFailed();
   }

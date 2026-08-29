@@ -35,6 +35,16 @@ const ROOM_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
   music_artist: "music_artist_enc",
 });
 
+/**
+ * group_state's canonical encrypted fields (canonical schema §11.1). It has no
+ * extension table, so an `extensions.*` path never reaches here — the
+ * validator refuses it via `ENTITY_SHAPES.group_state.allowsExtensions`.
+ */
+const GROUP_STATE_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  participants: "participants_enc",
+  active_worldline_id: "active_worldline_id_enc",
+});
+
 const EXTENSION_PREFIX = "extensions.";
 
 /** Highest allocatable sequence; `2^53` is the exhausted sentinel (§5.3). */
@@ -67,7 +77,10 @@ function storageUnavailable(): ApiError {
 }
 
 /** Split `set`/`clear` names into canonical room fields and extension keys. */
-function partitionFieldNames(names: readonly string[]): {
+function partitionFieldNames(
+  names: readonly string[],
+  mapping: Readonly<Record<string, string>>,
+): {
   columns: string[];
   extensionKeys: string[];
 } {
@@ -78,7 +91,7 @@ function partitionFieldNames(names: readonly string[]): {
       extensionKeys.push(name.slice(EXTENSION_PREFIX.length));
       continue;
     }
-    const column = ROOM_FIELD_COLUMNS[name];
+    const column = mapping[name];
     if (column === undefined) {
       // The validator checks the *grammar* of a field path; only the handler
       // knows which names the room table actually has. Ignoring the rest would
@@ -146,8 +159,8 @@ export async function applyPatchRoom(
   const nextRevision = baseRevision + 1;
 
   const setNames = Object.keys(request.set);
-  const setFields = partitionFieldNames(setNames);
-  const clearFields = partitionFieldNames(request.clear);
+  const setFields = partitionFieldNames(setNames, ROOM_FIELD_COLUMNS);
+  const clearFields = partitionFieldNames(request.clear, ROOM_FIELD_COLUMNS);
 
   const existing = await readOperationLog(db, accountId, request.operation_id);
   if (existing !== null) {
@@ -212,22 +225,26 @@ function ledgerStatements(
 ): D1PreparedStatement[] {
   const spaceId = request.target.space_id;
   const roomId = request.target.room_id as string;
+  // The entity_type comes from the validator's operation table, never from a
+  // literal spelled out per handler, so the two ledgers can never disagree
+  // about what a given operation wrote.
+  const entityType = getOperationSpec(request.op).entityType;
   return [
     db
       .prepare(
         `INSERT INTO operation_log
            (account_id, operation_id, request_fingerprint, entity_type, change_kind,
             result_revision, server_seq)
-         VALUES (?, ?, ?, 'room', 'upsert', ?, ${CURRENT_SEQ})`,
+         VALUES (?, ?, ?, ?, 'upsert', ?, ${CURRENT_SEQ})`,
       )
-      .bind(accountId, request.operation_id, fingerprint, revision, accountId),
+      .bind(accountId, request.operation_id, fingerprint, entityType, revision, accountId),
     db
       .prepare(
         `INSERT INTO change_log
            (account_id, server_seq, entity_type, change_kind, revision, space_id, room_id)
-         VALUES (?, ${CURRENT_SEQ}, 'room', 'upsert', ?, ?, ?)`,
+         VALUES (?, ${CURRENT_SEQ}, ?, 'upsert', ?, ?, ?)`,
       )
-      .bind(accountId, accountId, revision, spaceId, roomId),
+      .bind(accountId, accountId, entityType, revision, spaceId, roomId),
     db
       .prepare("UPDATE account SET next_server_seq = next_server_seq + 1 WHERE account_id = ?")
       .bind(accountId),
@@ -305,10 +322,10 @@ export async function applyCreateRoom(
   const spaceId = request.target.space_id;
   const roomId = request.target.room_id as string;
 
-  const setFields = partitionFieldNames(Object.keys(request.set));
+  const setFields = partitionFieldNames(Object.keys(request.set), ROOM_FIELD_COLUMNS);
   // A clear on a row that does not exist yet is just the absent value; the
   // partition still runs so an unmapped name is refused rather than ignored.
-  partitionFieldNames(request.clear);
+  partitionFieldNames(request.clear, ROOM_FIELD_COLUMNS);
 
   const existing = await readOperationLog(db, accountId, request.operation_id);
   if (existing !== null) {
@@ -395,6 +412,265 @@ async function classifyCreateFailure(
     throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
   }
   throw storageUnavailable();
+}
+
+/**
+ * Split a non-extension entity's field names into columns, refusing any
+ * extension path outright.
+ *
+ * The validator already refuses these (`allowsExtensions: false`); this is the
+ * fail-closed assertion that an envelope can never be dropped on the floor if
+ * that rule is ever relaxed by accident.
+ */
+function columnsOnly(
+  names: readonly string[],
+  mapping: Readonly<Record<string, string>>,
+): string[] {
+  const partitioned = partitionFieldNames(names, mapping);
+  if (partitioned.extensionKeys.length > 0) {
+    throw validationFailed();
+  }
+  return partitioned.columns;
+}
+
+/** Bind values for a non-extension entity's encrypted columns, in map order. */
+function encryptedValues(
+  request: OperationRequest,
+  mapping: Readonly<Record<string, string>>,
+): (string | null)[] {
+  return Object.keys(mapping).map((name) => (request.set[name] as string | undefined) ?? null);
+}
+
+/**
+ * Apply one validated `create_group_state`.
+ *
+ * The guard states all three preconditions the contract names — the parent
+ * room exists, no group_state exists yet, and the sequence is allocatable — as
+ * one boolean, so a miss on any of them aborts the same batch rather than
+ * leaving a half-written ledger. The FK on `group_state` would also catch a
+ * missing room, but only as an opaque driver failure that cannot be told apart
+ * from a storage fault.
+ */
+export async function applyCreateGroupState(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+
+  columnsOnly(Object.keys(request.set), GROUP_STATE_FIELD_COLUMNS);
+  columnsOnly(request.clear, GROUP_STATE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM room
+              WHERE account_id = ? AND space_id = ? AND room_id = ?) = 1
+            AND (SELECT COUNT(*) FROM group_state
+                  WHERE account_id = ? AND space_id = ? AND room_id = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        accountId,
+        spaceId,
+        roomId,
+        accountId,
+      ),
+    db
+      .prepare(
+        `INSERT INTO group_state
+           (account_id, space_id, room_id, participants_enc, active_worldline_id_enc,
+            revision, server_seq, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, ${CURRENT_SEQ}, ?, ?)`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        roomId,
+        ...encryptedValues(request, GROUP_STATE_FIELD_COLUMNS),
+        accountId,
+        request.created_at,
+        request.created_at,
+      ),
+    ...ledgerStatements(db, accountId, request, fingerprint, 0),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyGroupStateCreateFailure(db, accountId, request, fingerprint),
+  );
+}
+
+/** Apply one validated `patch_group_state`. */
+export async function applyPatchGroupState(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const baseRevision = request.base_revision as number;
+  const nextRevision = baseRevision + 1;
+
+  const clearColumns = columnsOnly(request.clear, GROUP_STATE_FIELD_COLUMNS);
+  columnsOnly(Object.keys(request.set), GROUP_STATE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const assignments: string[] = [];
+  const bindings: unknown[] = [];
+  for (const [name, column] of Object.entries(GROUP_STATE_FIELD_COLUMNS)) {
+    if (Object.prototype.hasOwnProperty.call(request.set, name)) {
+      assignments.push(`${column} = ?`);
+      bindings.push(request.set[name]);
+    }
+  }
+  for (const column of clearColumns) {
+    assignments.push(`${column} = NULL`);
+  }
+  assignments.push("revision = revision + 1", `server_seq = ${CURRENT_SEQ}`, "updated_at = ?");
+  bindings.push(accountId, request.created_at);
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT revision FROM group_state
+              WHERE account_id = ? AND space_id = ? AND room_id = ?) = ?
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(accountId, request.operation_id, accountId, spaceId, roomId, baseRevision, accountId),
+    db
+      .prepare(
+        `UPDATE group_state SET ${assignments.join(", ")}
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND revision = ?`,
+      )
+      .bind(...bindings, accountId, spaceId, roomId, baseRevision),
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyGroupStatePatchFailure(db, accountId, request, fingerprint, baseRevision),
+  );
+}
+
+async function readGroupStateRevision(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  const row = await db
+    .prepare(
+      "SELECT revision FROM group_state WHERE account_id = ? AND space_id = ? AND room_id = ?",
+    )
+    .bind(accountId, request.target.space_id, request.target.room_id)
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
+async function classifyGroupStateCreateFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const roomRevision = await readRoomRevision(
+    db,
+    accountId,
+    request.target.space_id,
+    request.target.room_id as string,
+  );
+  if (roomRevision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  const revision = await readGroupStateRevision(db, accountId, request);
+  if (revision !== null) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+async function classifyGroupStatePatchFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  baseRevision: number,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const revision = await readGroupStateRevision(db, accountId, request);
+  if (revision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (revision !== baseRevision) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+/**
+ * Run a prepared batch and turn the outcome into a result.
+ *
+ * The D1 error object is never inspected: on failure the caller's classifier
+ * re-derives the cause from storage, so no driver message or bound value can
+ * reach a response.
+ */
+async function runBatch(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  statements: D1PreparedStatement[],
+  classify: () => Promise<OperationResult>,
+): Promise<OperationResult> {
+  try {
+    await db.batch(statements);
+  } catch {
+    return await classify();
+  }
+  const applied = await readOperationLog(db, accountId, request.operation_id);
+  if (applied === null) {
+    throw storageUnavailable();
+  }
+  return {
+    status: "applied",
+    operation_id: request.operation_id,
+    server_seq: applied.server_seq,
+    revision: applied.result_revision,
+  };
 }
 
 interface BatchInput {

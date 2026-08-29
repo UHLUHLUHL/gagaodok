@@ -987,6 +987,93 @@ describe("parseOperationRequest — room targets are worldline null-only", () =>
   });
 });
 
+describe("parseOperationRequest — extension owners", () => {
+  // canonical schema §3.3: only room, turn, bubble and persona_snapshot have
+  // an extension table. An `extensions.*` path on any other entity has no
+  // owner to store it, so accepting one would either drop the envelope
+  // silently or force a handler to restate the rule. Fail closed here.
+  const OWNERS = ["room", "turn", "bubble", "persona_snapshot"] as const;
+  const NON_OWNERS = ["group_state", "worldline", "checkpoint", "engine_profile", "attachment"] as const;
+
+  it.each(OWNERS)("declares %s as an extension owner", (entity) => {
+    expect(getEntityShape(entity).allowsExtensions).toBe(true);
+  });
+
+  it.each(NON_OWNERS)("declares %s as not an extension owner", (entity) => {
+    expect(getEntityShape(entity).allowsExtensions).toBe(false);
+  });
+
+  const GROUP_TARGET = { space_id: "PHONE_SPACE", room_id: ROOM };
+  const WORLDLINE_TARGET = { space_id: "PHONE_SPACE", room_id: ROOM, worldline_id: WORLDLINE };
+
+  const FAMILY: ReadonlyArray<[string, string, Record<string, unknown>, number | undefined]> = [
+    ["create_group_state", "group_state", GROUP_TARGET, undefined],
+    ["patch_group_state", "group_state", GROUP_TARGET, 3],
+    ["create_worldline", "worldline", WORLDLINE_TARGET, undefined],
+    ["patch_worldline", "worldline", WORLDLINE_TARGET, 3],
+  ];
+
+  it.each(FAMILY)("rejects an extension path in %s's set", (op, entityType, target, baseRevision) => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op,
+          entity_type: entityType,
+          target,
+          base_revision: baseRevision,
+          set: { "extensions.kakao.room.mood": validEnvelope() },
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it.each(FAMILY)("rejects an extension path in %s's clear", (op, entityType, target, baseRevision) => {
+    expect(() =>
+      parseOperationRequest(
+        makeOperation({
+          op,
+          entity_type: entityType,
+          target,
+          base_revision: baseRevision,
+          set: {},
+          clear: ["extensions.kakao.room.mood"],
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it.each(FAMILY)("still accepts %s's own canonical fields", (op, entityType, target, baseRevision) => {
+    const field = entityType === "group_state" ? "participants" : "name";
+    const parsed = parseOperationRequest(
+      makeOperation({
+        op,
+        entity_type: entityType,
+        target,
+        base_revision: baseRevision,
+        set: { [field]: validEnvelope() },
+      }),
+    );
+    expect(parsed.entity_type).toBe(entityType);
+  });
+
+  it("keeps accepting extensions on the four owners", () => {
+    const room = parseOperationRequest(
+      makeOperation({ set: { "extensions.kakao.room.mood": validEnvelope() } }),
+    );
+    expect(Object.keys(room.set)).toEqual(["extensions.kakao.room.mood"]);
+    const turn = parseOperationRequest(
+      makeOperation({
+        op: "patch_turn",
+        entity_type: "turn",
+        target: { space_id: "MAC_SPACE", room_id: ROOM, worldline_id: null, turn_id: TURN },
+        base_revision: 3,
+        set: { "extensions.kakao.turn.mood": validEnvelope() },
+      }),
+    );
+    expect(Object.keys(turn.set)).toEqual(["extensions.kakao.turn.mood"]);
+  });
+});
+
 describe("parseOperationRequest — safe integers", () => {
   it("rejects a numeric string as bubble_order", () => {
     // D1's INTEGER affinity would convert "3" to 3 before any CHECK could see

@@ -65,6 +65,13 @@ interface EntityShape {
   readonly worldlineRule: WorldlineRule;
   /** Whether `room_id` is part of this entity's identity. */
   readonly roomScoped: boolean;
+  /**
+   * Whether this entity has an extension table to store an
+   * `extensions.<owner>.<entity>.<field>` envelope in (canonical schema §3.3).
+   * Only four entities do. An extension path on any other entity has nowhere
+   * to go, so it is refused here rather than dropped by a handler.
+   */
+  readonly allowsExtensions: boolean;
 }
 
 const ENTITY_SHAPES = {
@@ -73,23 +80,41 @@ const ENTITY_SHAPES = {
   // room-scoped targets, but a non-null value would address one physical row
   // two ways and could not be written to change_log, whose room branch
   // requires worldline_key IS NULL (migration 0008).
-  room: { required: ["room_id"], worldlineRule: "null-only", roomScoped: true },
+  room: {
+    required: ["room_id"],
+    worldlineRule: "null-only",
+    roomScoped: true,
+    allowsExtensions: true,
+  },
   persona_snapshot: {
     required: ["persona_snapshot_id", "snapshot_revision"],
     worldlineRule: "absent",
     roomScoped: false,
+    allowsExtensions: true,
   },
   engine_profile: {
     required: ["engine_profile_id", "profile_revision"],
     worldlineRule: "absent",
     roomScoped: false,
+    allowsExtensions: false,
   },
-  checkpoint: { required: ["room_id", "checkpoint_id"], worldlineRule: "nullable", roomScoped: true },
-  turn: { required: ["room_id", "turn_id"], worldlineRule: "nullable", roomScoped: true },
+  checkpoint: {
+    required: ["room_id", "checkpoint_id"],
+    worldlineRule: "nullable",
+    roomScoped: true,
+    allowsExtensions: false,
+  },
+  turn: {
+    required: ["room_id", "turn_id"],
+    worldlineRule: "nullable",
+    roomScoped: true,
+    allowsExtensions: true,
+  },
   bubble: {
     required: ["room_id", "turn_id", "message_id"],
     worldlineRule: "nullable",
     roomScoped: true,
+    allowsExtensions: true,
   },
   // A group_state row is room-level: its D1 identity is
   // (account_id, PHONE_SPACE, room_id) with no worldline component. The
@@ -97,9 +122,24 @@ const ENTITY_SHAPES = {
   // `active_worldline_id` field, never in the target. Allowing a target
   // `worldline_id` here would let one row be addressed two ways (null vs a
   // UUID) and leave the handler unable to say which belongs to the identity.
-  group_state: { required: ["room_id"], worldlineRule: "absent", roomScoped: true },
-  worldline: { required: ["room_id", "worldline_id"], worldlineRule: "required", roomScoped: true },
-  attachment: { required: ["attachment_id"], worldlineRule: "absent", roomScoped: false },
+  group_state: {
+    required: ["room_id"],
+    worldlineRule: "absent",
+    roomScoped: true,
+    allowsExtensions: false,
+  },
+  worldline: {
+    required: ["room_id", "worldline_id"],
+    worldlineRule: "required",
+    roomScoped: true,
+    allowsExtensions: false,
+  },
+  attachment: {
+    required: ["attachment_id"],
+    worldlineRule: "absent",
+    roomScoped: false,
+    allowsExtensions: false,
+  },
 } as const satisfies Record<string, EntityShape>;
 
 type EntityType = keyof typeof ENTITY_SHAPES;
@@ -534,11 +574,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Canonical wire field paths use the plain name; `_enc` is a D1 column
  * suffix only (draft §0.2). Extension paths are `extensions.<owner>.<entity>.<field>`.
  */
-function assertCanonicalFieldPath(path: string): void {
+function assertCanonicalFieldPath(path: string, allowsExtensions: boolean): void {
   if (path.length === 0 || path.endsWith("_enc")) {
     throw validationFailed();
   }
   if (path.startsWith("extensions.")) {
+    if (!allowsExtensions) {
+      // No extension table owns this entity, so there is no row to write.
+      throw validationFailed();
+    }
     const key = path.slice("extensions.".length);
     if (!EXTENSION_KEY_PATTERN.test(key)) {
       throw validationFailed();
@@ -728,7 +772,7 @@ function parseMetadata(
   return { set, clear };
 }
 
-function parseSet(value: unknown): Record<string, string> {
+function parseSet(value: unknown, allowsExtensions: boolean): Record<string, string> {
   if (value === undefined) {
     throw validationFailed();
   }
@@ -737,14 +781,14 @@ function parseSet(value: unknown): Record<string, string> {
   }
   const result: Record<string, string> = {};
   for (const [path, envelope] of Object.entries(value)) {
-    assertCanonicalFieldPath(path);
+    assertCanonicalFieldPath(path, allowsExtensions);
     assertFieldEnvelope(envelope);
     result[path] = envelope;
   }
   return result;
 }
 
-function parseClear(value: unknown, setPaths: Set<string>): string[] {
+function parseClear(value: unknown, setPaths: Set<string>, allowsExtensions: boolean): string[] {
   if (!Array.isArray(value)) {
     throw validationFailed();
   }
@@ -753,7 +797,7 @@ function parseClear(value: unknown, setPaths: Set<string>): string[] {
     if (typeof path !== "string") {
       throw validationFailed();
     }
-    assertCanonicalFieldPath(path);
+    assertCanonicalFieldPath(path, allowsExtensions);
     if (seen.has(path)) {
       throw validationFailed();
     }
@@ -812,7 +856,8 @@ export function parseOperationRequest(value: unknown): OperationRequest {
   }
 
   const metadata = parseMetadata(value["metadata_set"], value["metadata_clear"], operation);
-  const parsedSet = parseSet(value["set"]);
+  const entityShape = ENTITY_SHAPES[spec.entityType];
+  const parsedSet = parseSet(value["set"], entityShape.allowsExtensions);
 
   const requiredEncrypted = REQUIRED_ENCRYPTED_FIELDS[operation];
   if (requiredEncrypted !== undefined) {
@@ -843,7 +888,11 @@ export function parseOperationRequest(value: unknown): OperationRequest {
       throw validationFailed();
     }
   }
-  const parsedClear = parseClear(value["clear"], new Set(Object.keys(parsedSet)));
+  const parsedClear = parseClear(
+    value["clear"],
+    new Set(Object.keys(parsedSet)),
+    entityShape.allowsExtensions,
+  );
 
   const request: OperationRequest = {
     protocol_version: 1,
