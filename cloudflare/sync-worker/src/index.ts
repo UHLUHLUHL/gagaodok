@@ -2,6 +2,7 @@ import type { Env } from "./env";
 import { ApiError, PROTOCOL_VERSION } from "./contracts/error";
 import {
   handleAttachmentComplete,
+  handleAttachmentDownload,
   handleAttachmentUpload,
   matchAttachmentPath,
 } from "./routes/attachments";
@@ -26,6 +27,9 @@ export default {
       }
       if (request.method === "POST" && attachment.action === "complete") {
         return await handleAttachmentComplete(request, env, attachment.attachmentId);
+      }
+      if (request.method === "GET" && attachment.action === "content") {
+        return await handleAttachmentDownload(request, env, attachment.attachmentId);
       }
     }
 

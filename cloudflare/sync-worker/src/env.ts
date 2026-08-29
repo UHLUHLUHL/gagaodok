@@ -15,9 +15,9 @@
  *
  * `ATTACHMENTS` holds the encrypted attachment envelopes, keyed by the
  * server-generated `r2_object_key` that `create_attachment` recorded in D1.
- * Its only caller is the content upload route,
- * `PUT /v1/attachments/{attachment_id}/content`; the complete and download
- * paths are not implemented.
+ * It is reached by the three attachment content routes: the upload PUT, the
+ * complete POST that confirms the object before D1 marks it readable, and the
+ * download GET that streams it back.
  *
  * The test-only `TEST_MIGRATIONS` binding is *not* declared here: it is
  * injected by `vitest.config.ts` and typed inside `test/migrations.spec.ts`

@@ -344,7 +344,7 @@ describe("POST /v1/attachments/{id}/complete — routing", () => {
       const response = await call({ path });
       expect(response.status, `accepted ${path}`).toBe(404);
     }
-    for (const method of ["GET", "PUT", "DELETE", "PATCH"]) {
+    for (const method of ["PUT", "DELETE", "PATCH"]) {
       const response = await call({ attachmentId: UPLOADED, method });
       expect(response.status, `accepted ${method}`).toBe(404);
       expect((await errorOf(response))["code"]).toBe("NOT_FOUND");

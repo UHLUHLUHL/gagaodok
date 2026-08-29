@@ -354,7 +354,9 @@ describe("PUT /v1/attachments/{id}/content — routing", () => {
   });
 
   it("refuses the content path with another method", async () => {
-    for (const method of ["GET", "POST", "DELETE", "PATCH"]) {
+    // GET is now the download route, so it is excluded here: it has its own
+    // spec and answers by attachment state rather than with a 404.
+    for (const method of ["POST", "DELETE", "PATCH"]) {
       const response = await call({ attachmentId: ALLOCATED, method, body: null, contentLength: null });
       expect(response.status, `accepted ${method}`).toBe(404);
       expect((await errorOf(response))["code"]).toBe("NOT_FOUND");

@@ -2,14 +2,13 @@ import { ApiError } from "../contracts/error";
 import { isCanonicalUuid } from "../contracts/identity";
 import {
   completeAttachmentUpload,
+  downloadAttachmentContent,
   uploadAttachmentContent,
 } from "../storage/attachmentContent";
 import type { Env } from "../env";
 
 /**
- * Attachment content routes — API draft §6.3.
- *
- * The download half is a separate gate and is not routed here yet.
+ * Attachment content routes — API draft §6.3: upload, complete and download.
  */
 
 /** The two tails the attachment path may end in. */
@@ -99,4 +98,18 @@ export async function handleAttachmentComplete(
     await completeAttachmentUpload(request, env, attachmentId);
     return new Response(null, { status: 204 });
   });
+}
+
+/**
+ * `GET /v1/attachments/{attachment_id}/content`.
+ *
+ * The response is the R2 stream with the metadata's own size. No ETag, no
+ * stored R2 metadata and no object key travel with it.
+ */
+export async function handleAttachmentDownload(
+  request: Request,
+  env: Env,
+  attachmentId: string,
+): Promise<Response> {
+  return await respond(async () => await downloadAttachmentContent(request, env, attachmentId));
 }

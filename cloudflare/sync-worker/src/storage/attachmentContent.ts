@@ -493,3 +493,62 @@ export async function completeAttachmentUpload(
       throw new ApiError("ATTACHMENT_STATE_CONFLICT");
   }
 }
+
+/**
+ * `GET /v1/attachments/{attachment_id}/content` — API draft §6.3.
+ *
+ * The read side is account-scoped, not space-scoped: §2.1 fixes attachment
+ * identity as `(account_id, attachment_id)` with `origin_space_id` as
+ * plaintext metadata, so every linked device of the account may fetch a
+ * `ready` object. Upload and complete stay narrower because they write.
+ */
+export async function downloadAttachmentContent(
+  request: Request,
+  env: Env,
+  attachmentId: string,
+): Promise<Response> {
+  const auth = await authenticateDevice(request, env.DB);
+
+  if (request.headers.has("Range")) {
+    // v1 serves one AEAD message whole. A partial body cannot be verified or
+    // decrypted, so a range is refused rather than quietly answered in full.
+    throw validationFailed();
+  }
+
+  const row = await readAttachment(env.DB, auth.account_id, attachmentId);
+  if (row === null) {
+    throw new ApiError("NOT_FOUND");
+  }
+  if (row.state !== "ready") {
+    // Including `uploaded`: the bytes may be there, but nothing has confirmed
+    // them yet, and §6.3 makes readability the meaning of `ready`.
+    throw new ApiError("ATTACHMENT_STATE_CONFLICT");
+  }
+
+  let object: R2ObjectBody | null;
+  try {
+    object = await env.ATTACHMENTS.get(row.r2_object_key);
+  } catch {
+    throw storageUnavailable();
+  }
+  if (object === null || object.size !== row.ciphertext_byte_size) {
+    // The metadata says this object exists at this size. Anything else is a
+    // storage condition the client may retry, not a description of the row.
+    throw storageUnavailable();
+  }
+
+  // The stream is handed straight to the client: the Worker never buffers the
+  // envelope and never decrypts or interprets it.
+  return new Response(object.body, {
+    status: 200,
+    headers: {
+      // The real media type is inside the encrypted metadata, which the server
+      // cannot read, so every attachment is opaque bytes on the wire.
+      "Content-Type": "application/octet-stream",
+      // D1's value, not R2's: the metadata is the contract the client checked
+      // its AAD against.
+      "Content-Length": String(row.ciphertext_byte_size),
+      "Cache-Control": "private, no-store",
+    },
+  });
+}
