@@ -85,7 +85,9 @@ flowchart TB
 | orphan·expiry maintenance | local test와 원격 cron 실측; 보존·`allocated→abandoned`·pairing child-first 확인. 유예 초과 orphan 삭제는 R2 업로드 시각을 조작할 수 없어 원격 근거 없음 | ⚠️ | 24시간 뒤 orphan 삭제 원격 확인 |
 | 원격 합성 Cloudflare 환경 | `184bd2b`, `624b556`, `803a0a8`; 합성 전용 D1·private R2·Worker, migration 0001~0010, 원격 smoke 46 검사 | ✅ | 합성 계정 onboarding coordinator |
 | 원격 독립 요청 경합 | 별도 프로세스 2개의 CAS·`bubble_order`·replay 경합. 다중 isolate 여부는 관측 불가라 주장하지 않음 | ✅ | 부하 조건에서의 재확인 |
-| 앱 remote UI | client 기반은 완료, 화면·기존 mutation 연결은 미착수 | ⏳ | 합성 계정 UI (endpoint 확정됨) |
+| 앱 onboarding coordinator | `95587b2`, `45b8935`; 양 플랫폼 enrollment 순서 계약. phrase 확인 전 미전송, 수락 전 secret/config 미활성, 성공 후에만 journal acknowledge, 연결 뒤에도 sync 비활성 | ✅ | 합성 계정 onboarding 화면 |
+| 앱 bootstrap/changes coordinator | `8c0a462`, `612073b`; 양 플랫폼 strict envelope·watermark 인계·page 재적용 무해·실패 시 cursor 미전진. 기록 대상은 opaque replica뿐 | ✅ | 실제 대화 연결은 별도 승인 |
+| 앱 remote UI | client와 coordinator는 완료, 화면·기존 mutation 연결은 미착수 | ⏳ | 합성 계정 UI (endpoint 확정됨) |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
 원격 smoke 결과와 남은 한계는 [Cloudflare 합성 smoke 결과](CLOUDFLARE_SYNTHETIC_SMOKE_RESULT.md)에 있다.
