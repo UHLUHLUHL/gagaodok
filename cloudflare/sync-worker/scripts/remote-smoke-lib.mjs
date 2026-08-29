@@ -221,16 +221,23 @@ export function patchRoom(operation, baseRevision, deviceId, seed = 2) {
   };
 }
 
-export async function createAttachment(operation, deviceId, attachmentId = ATTACHMENT) {
+/**
+ * The allocating operation.
+ *
+ * The space is a parameter because a device may only write rows for the space
+ * it is registered in: an attachment allocated in PHONE_SPACE is the phone's
+ * to make, not the Mac's, and the origin space must match the target.
+ */
+export async function createAttachment(operation, deviceId, spaceId, attachmentId = ATTACHMENT) {
   return {
     protocol_version: 1,
     operation_id: operation,
     device_id: deviceId,
     op: "create_attachment",
     entity_type: "attachment",
-    target: { space_id: PHONE, attachment_id: attachmentId },
+    target: { space_id: spaceId, attachment_id: attachmentId },
     metadata_set: {
-      origin_space_id: PHONE,
+      origin_space_id: spaceId,
       kind: "attachment",
       source_byte_size: SOURCE_BYTES,
       ciphertext_byte_size: CIPHERTEXT_BYTES,

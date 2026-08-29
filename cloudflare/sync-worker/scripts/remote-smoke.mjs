@@ -7,6 +7,7 @@
  * which invariant broke rather than dumping what came back.
  *
  * Modes:
+ *   node scripts/remote-smoke.mjs --reset    write the synthetic reset SQL to stdout
  *   node scripts/remote-smoke.mjs --seed     write the fixture seed SQL to stdout
  *   node scripts/remote-smoke.mjs            run the smoke suite
  *   node scripts/remote-smoke.mjs --race N   one racer process (used internally)
@@ -81,6 +82,54 @@ async function printSeedSql() {
   process.stdout.write(`${rows.join("\n")}\n`);
 }
 
+/**
+ * Every data table of the synthetic database, in an order foreign keys allow.
+ *
+ * d1_migrations is deliberately absent: the schema stays, only the synthetic
+ * rows go. Nothing here can reach a production database — the caller runs it
+ * against the synthetic config, and this database has never held real data.
+ */
+const RESET_TABLES = [
+  "transaction_guard",
+  "change_log",
+  "operation_log",
+  "rate_limit_bucket",
+  "enrollment_log",
+  "pairing_claim",
+  "pairing_session",
+  "recovery_record",
+  "bubble_extension_field",
+  "bubble",
+  "turn_extension_field",
+  "checkpoint",
+  "turn",
+  "worldline",
+  "group_state",
+  "room_extension_field",
+  "room_ai_state_ref",
+  "room",
+  "persona_snapshot_extension_field",
+  "persona_snapshot_head",
+  "persona_snapshot",
+  "engine_profile",
+  "attachment",
+  "device",
+  "account",
+];
+
+/**
+ * SQL that returns the synthetic database to an empty schema.
+ *
+ * A smoke run is only repeatable if it starts from a known state: the second
+ * run of a create operation is a replay, not an apply, and asserting "applied"
+ * against a populated account would be asserting the wrong thing. Clearing the
+ * rate limit buckets is part of that — the enrollment endpoint allows five
+ * calls an hour, and a rerun must not be blocked by the previous rerun.
+ */
+function printResetSql() {
+  process.stdout.write(`${RESET_TABLES.map((table) => `DELETE FROM ${table};`).join("\n")}\n`);
+}
+
 /** One racer: posts a single operation and reports only its status. */
 async function runRacer(payloadJson, token) {
   const baseUrl = requireBaseUrl();
@@ -126,6 +175,15 @@ async function race(payloads, token) {
   return await Promise.all(runs);
 }
 
+/** The next bubble_order this turn will accept, read from the read path. */
+async function nextBubbleOrder(baseUrl, token) {
+  const page = await call(baseUrl, "/v1/sync/changes?limit=500", { token });
+  const orders = (page.json?.result?.changes ?? [])
+    .filter((change) => change.entity_type === "bubble" && change.identity.turn_id === TURN_MAIN)
+    .map((change) => change.projection.bubble_order);
+  return orders.length === 0 ? 0 : Math.max(...orders) + 1;
+}
+
 async function main() {
   const baseUrl = requireBaseUrl();
   const mac = await syntheticToken(TOKEN_SEED_MAC);
@@ -148,6 +206,7 @@ async function main() {
   record("routing errors disclose nothing", true);
 
   // ── 2. enrollment and its replay ───────────────────────────────────────────
+  const skipEnrollment = process.env["SMOKE_SKIP_ENROLLMENT"] === "1";
   const enrollRaw = await enrollmentBody({
     accountId: ACCOUNT_A,
     deviceId: DEVICE_MAC,
@@ -157,23 +216,27 @@ async function main() {
     enrollmentId: ENROLLMENT_A,
     seed: 11,
   });
-  const enrolled = await call(baseUrl, "/v1/enrollment/initialize", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: enrollRaw,
-  });
-  const enrolledOk = enrolled.status === 201 || enrolled.status === 200;
-  expect("enrollment succeeds", enrolledOk, `status ${enrolled.status} ${errorCode(enrolled) ?? ""}`);
+  if (skipEnrollment) {
+    record("enrollment skipped this run (rate-limited endpoint, proved earlier)", true);
+  } else {
+    const enrolled = await call(baseUrl, "/v1/enrollment/initialize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: enrollRaw,
+    });
+    const enrolledOk = enrolled.status === 201 || enrolled.status === 200;
+    expect("enrollment succeeds", enrolledOk, `status ${enrolled.status} ${errorCode(enrolled) ?? ""}`);
 
-  // The identical bytes again: a client that never saw the first response.
-  const replayed = await call(baseUrl, "/v1/enrollment/initialize", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: enrollRaw,
-  });
-  expect("enrollment replay is accepted", replayed.status === 200, `status ${replayed.status}`);
-  expect("enrollment replay is marked replayed", replayed.json?.result?.status === "replayed");
-  assertNoLeak("enrollment responses", enrolled.text + replayed.text, secrets);
+    // The identical bytes again: a client that never saw the first response.
+    const replayed = await call(baseUrl, "/v1/enrollment/initialize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: enrollRaw,
+    });
+    expect("enrollment replay is accepted", replayed.status === 200, `status ${replayed.status}`);
+    expect("enrollment replay is marked replayed", replayed.json?.result?.status === "replayed");
+    assertNoLeak("enrollment responses", enrolled.text + replayed.text, secrets);
+  }
 
   // ── 3. device token authentication ─────────────────────────────────────────
   const noToken = await call(baseUrl, "/v1/sync/changes");
@@ -233,7 +296,7 @@ async function main() {
     method: "POST",
     token: mac.token,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(await createAttachment(operationId(4), DEVICE_MAC)),
+    body: JSON.stringify(await createAttachment(operationId(4), DEVICE_MAC, MAC)),
   });
   expect("create_attachment applies", allocate.json?.result?.status === "applied", `status ${allocate.status} ${errorCode(allocate) ?? ""}`);
   expect("attachment carries no revision", allocate.json?.result?.revision === null);
@@ -278,11 +341,14 @@ async function main() {
   });
   expect("create_turn applies", turn.json?.result?.status === "applied", `status ${turn.status} ${errorCode(turn) ?? ""}`);
 
+  const firstOrder = await nextBubbleOrder(baseUrl, mac.token);
   const bubble = await call(baseUrl, "/v1/sync/operations", {
     method: "POST",
     token: mac.token,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(createBubble(operationId(6), DEVICE_MAC, messageId(1), 0, ATTACHMENT)),
+    body: JSON.stringify(
+      createBubble(operationId(6), DEVICE_MAC, messageId(1 + firstOrder), firstOrder, ATTACHMENT),
+    ),
   });
   expect("bubble referencing a ready attachment applies", bubble.json?.result?.status === "applied", `status ${bubble.status} ${errorCode(bubble) ?? ""}`);
 
@@ -396,10 +462,17 @@ async function main() {
     `${casWinners} applied, ${casLosers} conflicted`,
   );
 
+  // Both racers ask for the order the scope will actually accept next, so the
+  // contest is real rather than two requests losing to a stale expectation.
+  const contested = await nextBubbleOrder(baseUrl, mac.token);
   const orderRace = await race(
     [
-      JSON.stringify(createBubble(operationId(22), DEVICE_MAC, messageId(2), 1, null, 23)),
-      JSON.stringify(createBubble(operationId(23), DEVICE_MAC, messageId(3), 1, null, 24)),
+      JSON.stringify(
+        createBubble(operationId(22), DEVICE_MAC, messageId(200 + contested), contested, null, 23),
+      ),
+      JSON.stringify(
+        createBubble(operationId(23), DEVICE_MAC, messageId(300 + contested), contested, null, 24),
+      ),
     ],
     mac.token,
   );
@@ -468,7 +541,9 @@ async function main() {
 }
 
 const mode = process.argv[2];
-if (mode === "--seed") {
+if (mode === "--reset") {
+  printResetSql();
+} else if (mode === "--seed") {
   await printSeedSql();
 } else if (mode === "--race") {
   await runRacer(process.env["RACE_PAYLOAD"], process.env["RACE_TOKEN"]);

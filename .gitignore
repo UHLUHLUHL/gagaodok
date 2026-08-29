@@ -54,3 +54,4 @@ node_modules/
 cloudflare/sync-worker/wrangler.synthetic.jsonc
 cloudflare/sync-worker/.dev.vars
 cloudflare/sync-worker/.dev.vars.*
+cloudflare/sync-worker/.wrangler/
