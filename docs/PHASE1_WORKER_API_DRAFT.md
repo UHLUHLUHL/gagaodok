@@ -77,6 +77,12 @@ D1은 envelope byte를 있는 그대로 저장한다. 평문으로 decode하거�
 }
 ```
 
+Operation route의 성공 `request_id`는 검증된 `operation_id`와 같다. 오류에서는
+body가 canonical operation으로 완전히 parse된 뒤 발생한 auth-space·replay·CAS·storage
+실패에만 같은 ID를 포함한다. 인증 실패, body size·UTF-8·JSON·validator 실패처럼
+canonical operation이 확정되기 전의 오류와 unknown route에는 `request_id`를 넣지
+않는다. 이를 위해 body를 복제하거나 두 번 읽지 않는다.
+
 ### 2.3 오류 envelope
 
 ```json
