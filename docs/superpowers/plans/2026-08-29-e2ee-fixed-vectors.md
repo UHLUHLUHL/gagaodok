@@ -94,7 +94,7 @@ source did not exist.
 
 - [x] **Step 4: Add negative tests for changed identity/field/order/generation/algorithm and malformed Base64; run the focused Swift test until GREEN**
 
-- [ ] **Step 5: Commit the Swift implementation and executable contract harness**
+- [x] **Step 5: Commit the Swift implementation and executable contract harness**
 
 ---
 
@@ -108,18 +108,18 @@ source did not exist.
 - Consumes: the same root JSON artifact and Java `Cipher("AES/GCM/NoPadding")`.
 - Produces: Kotlin equivalents of the Swift `Scope`, `AAD`, `deriveScopeKeys`, `encodeAAD`, `seal`, and `open` APIs in shared `src/main`.
 
-- [ ] **Step 1: Write a JVM test that loads the root artifact and references missing `SyncE2EE` APIs**
+- [x] **Step 1: Write a JVM test that loads the root artifact and references missing `SyncE2EE` APIs**
 
 ```kotlin
 val envelope = SyncE2EE.seal(vector.plaintext, vector.fieldKey, vector.nonce, vector.aad)
 assertArrayEquals(vector.envelope, envelope)
 ```
 
-- [ ] **Step 2: Run `./gradlew :app:testPhoneDebugUnitTest --tests '*E2EEContractVectorTest*'` with JDK 17 and confirm RED because the implementation is absent**
+- [x] **Step 2: Run `./gradlew :app:testPhoneDebugUnitTest --tests '*E2EEContractVectorTest*'` with JDK 17 and confirm RED because the implementation is absent**
 
-- [ ] **Step 3: Implement LP v1/HKDF/AAD/envelope with strict validation before `Cipher.doFinal`**
+- [x] **Step 3: Implement LP v1/HKDF/AAD/envelope with strict validation before `Cipher.doFinal`**
 
-- [ ] **Step 4: Add the same negative mutations as Swift and run both phone and tablet-mentor focused JVM variants until GREEN**
+- [x] **Step 4: Add the same negative mutations as Swift and run both phone and tablet-mentor focused JVM variants until GREEN**
 
 - [ ] **Step 5: Commit the shared Kotlin implementation and tests**
 
