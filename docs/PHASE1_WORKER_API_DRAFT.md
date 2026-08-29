@@ -251,6 +251,8 @@ whole-room·whole-message PUT, `delete_bubble`(schema에 아예 없음), client�
 
 현재 선택된 세계선은 행 **안**의 암호화된 `active_worldline_id` field로만 존재한다(canonical schema §11.1, E2EE 제안서 §8.2). Worker는 이 값을 읽지 않으며, 각 write가 자기 canonical `worldline_id`를 평문으로 명시하므로 서버 routing에도 필요하지 않다.
 
+따라서 Worker는 `active_worldline_id`가 실제 `worldline` row를 가리키는지 검사하지 않는다. 이 참조의 의미와 존재 여부는 암호화된 group payload를 만든 권한 있는 client의 책임이며, 서버는 envelope를 복호화해 FK처럼 검증하거나 값을 보정하지 않는다.
+
 대조: `create_worldline`·`patch_worldline`은 target이 **세계선 행 자신**을 가리키므로 `worldline_id`가 필수이고 `null`일 수 없다. 두 entity를 헷갈리지 않도록 validator에서도 서로 다른 규칙(`absent` vs `required`)으로 분리했다.
 
 Room도 물리 identity에 worldline 축이 없지만 canonical room wire object가 `worldline_id: null`을 명시하므로 `absent`가 아니라 `null-only` 규칙을 사용한다. `create_room`·`patch_room` target은 키 누락과 non-null 값을 모두 거부한다. 따라서 `change_log`의 room identity도 `space_id`, `room_id`만 갖는다.
@@ -267,6 +269,8 @@ Room도 물리 identity에 worldline 축이 없지만 canonical room wire object
 | `isSchemaOperation()` / `isRuntimeEnabledOperation()` | 목록 멤버십 판정 |
 
 반환되는 객체와 배열은 모두 `Object.freeze`돼 있다. `as const`는 compile-time 보장일 뿐이라, handler가 런타임에 `phoneSpaceOnly`를 뒤집으면 validator가 참조하는 바로 그 객체가 바뀌기 때문이다. 규칙을 바꿔야 하면 표 자체를 고치고 이 문서를 함께 갱신한다.
+
+`ENTITY_SHAPES`는 target 규칙과 함께 `allowsExtensions`를 소유한다. v1에서 값이 `true`인 owner는 실제 물리 extension table이 있는 `room`·`turn`·`bubble`·`persona_snapshot`뿐이다. `group_state`·`worldline`을 포함한 나머지 entity의 `set`·`clear`에 `extensions.*`가 오면 validator가 `VALIDATION_FAILED`로 거부한다. Handler가 이를 entity별로 다시 선언하거나 조용히 무시해서는 안 된다.
 
 ### 4.1.4 `patch_room` v1 storage mapping
 

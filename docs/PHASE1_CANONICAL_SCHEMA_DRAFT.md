@@ -236,6 +236,7 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 - envelope column은 owner patch에 포함된 key 하나의 opaque 값을 그대로 저장한다. extension 전용 operation을 만들지 않으며 handler는 검증된 owning operation에서 어느 table을 쓸지 결정한다.
 - `clear`의 row 삭제와 patch 원자성은 handler 단계다. DDL trigger가 ciphertext를 해석하거나 extension 의미를 추론하지 않는다.
 - 향후 새 canonical owner가 extension을 필요로 하면 기존 table을 nullable axis로 rebuild하지 않고 해당 owner 전용 table을 그 owner의 migration 단계에 추가한다.
+- 물리 owner table이 없는 entity는 extension patch를 받지 않는다. v1의 `group_state`·`worldline`에는 extension table이 없으므로 Worker validator가 해당 operation의 `extensions.*`를 fail-closed로 거부한다.
 
 ### 3.4 Turn과 bubble canonical 필드
 
@@ -727,6 +728,8 @@ Phase 0 실측도 이와 일치한다. 단톡방·worldline은 `PHONE_SPACE`에�
 | `worldline` | `revision`, `server_seq` | ⬜ CAS·ordering |
 
 `participants`와 `participant_hearts`는 unknown member 보존이 가능한 canonical payload로 직렬화한다. 둘의 participant reference 값은 §13.2에 따라 암호화한다. `active_worldline_id`는 다음 message의 canonical scope를 결정하므로 local-only 선택 상태로 두지 않되, 서버 routing에는 각 write가 명시한 scope만 필요하므로 값은 암호화한다. **그러나 각 write의 평문 `worldline_id`와 timestamp를 관찰하면 서버가 최근 active worldline을 추론할 수 있으므로, 암호화가 선택 상태를 완전히 숨긴다고 보장하지 않는다.** `group_state`·`worldline` create/patch는 `PHONE_SPACE`가 아니면 거부한다.
+
+`active_worldline_id`는 암호문 내부 값이므로 D1 FK나 Worker 선조회로 대상 worldline의 존재를 강제하지 않는다. 권한 있는 phone client가 유효한 참조를 만들고 복호화 뒤 해석할 책임을 가지며, Worker는 존재하지 않는 참조를 추론·수정하지 않는다.
 
 **2026-08-28 확정 — `group_state` target에는 `worldline_id`가 없다.** `group_state`의 identity는 위 표대로 `(account_id, PHONE_SPACE, room_id)`이며 worldline 차원이 없다. 따라서 sync operation의 `target`에 `worldline_id`가 **있으면 값이 `null`이든 UUID든 거부한다**(Worker API 초안 §4.1.2).
 
