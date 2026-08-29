@@ -16,8 +16,8 @@ remote migration, Cloudflare 로그인·resource 생성, 앱 설치·데이터 �
 
 ## Gate 2 — 최초 계정·pairing·recovery Worker
 
-- [ ] 최초 기기 등록 endpoint의 exact wire·rate-limit·idempotency 계약 고정
-- [ ] recovery record, pairing session, pairing claim의 D1 schema와 TTL/consumed 제약
+- [x] 최초 기기 등록 endpoint의 exact wire·rate-limit·idempotency 계약 고정
+- [x] recovery record, pairing session, pairing claim의 D1 schema와 TTL/consumed 제약
 - [ ] 기존 device session 생성 → bearer claim 제출 → device 조회/승인 → 1회 redeem
 - [ ] recovery lookup/auth constant-time 검증과 새 device token 발급
 - [ ] 다른 account·claim·session, 승인 전, 만료, revoke, 동시 redeem negative suite

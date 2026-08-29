@@ -297,6 +297,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0006_attachment.sql",
       "0007_device_token.sql",
       "0008_atomic_write_ledger.sql",
+      "0009_pairing_recovery.sql",
     ]);
   });
 
@@ -331,11 +332,15 @@ describe("0002 starts enforcing the account reference", () => {
       "checkpoint",
       "device",
       "engine_profile",
+      "enrollment_log",
       "group_state",
       "operation_log",
+      "pairing_claim",
+      "pairing_session",
       "persona_snapshot",
       "persona_snapshot_extension_field",
       "persona_snapshot_head",
+      "recovery_record",
       "room",
       "room_ai_state_ref",
       "room_extension_field",

@@ -864,6 +864,10 @@ Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId
 | `operation_log` | `(account_id, operation_id)` | `(account_id, server_seq)` | fingerprint·결과 replay; raw body 없음 |
 | `change_log` | `(account_id, server_seq)` | — | account cursor; entity별 checked identity 축 |
 | `transaction_guard` | `(account_id, operation_id)` | — | batch-local scratch row; 성공 끝에 삭제 |
+| `enrollment_log` | `account_id` | `enrollment_id` | 최초 enrollment raw-body fingerprint만 보존 |
+| `recovery_record` | `(account_id, recovery_version)` | `recovery_lookup_b64`, `r2_object_key`; account별 active 1개 | auth는 verifier만 저장; wrapped key는 D1·private R2 중복 |
+| `pairing_session` | `session_id` | `session_lookup_hash` | account device가 만든 5분 TTL session |
+| `pairing_claim` | `(session_id, claim_id)` | `claim_lookup_b64` | submitted→approved→consumed; raw redeem auth 없음 |
 
 ### 14.2 nullable `worldline_id`를 키에 쓰는 문제
 

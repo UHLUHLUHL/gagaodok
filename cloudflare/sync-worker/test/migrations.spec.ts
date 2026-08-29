@@ -130,8 +130,9 @@ describe("M00 — local migration harness", () => {
       )
       .all<{ name: string }>();
     const names = rows.results.map((row) => row.name);
-    // M01 (0001, 0002), M02 (0003), M03 (0004), M04 (0005), M05 (0006) and M06 (0008). Each stage has
-    // its own contract file; this one only pins the set of tables that exists.
+    // M01..M06 plus the cross-cutting auth (0007) and pairing/recovery
+    // boundary (0009). Each stage has its own contract file; this one only
+    // pins the latest table set.
     expect(names).toEqual([
       "account",
       "attachment",
@@ -141,11 +142,15 @@ describe("M00 — local migration harness", () => {
       "checkpoint",
       "device",
       "engine_profile",
+      "enrollment_log",
       "group_state",
       "operation_log",
+      "pairing_claim",
+      "pairing_session",
       "persona_snapshot",
       "persona_snapshot_extension_field",
       "persona_snapshot_head",
+      "recovery_record",
       "room",
       "room_ai_state_ref",
       "room_extension_field",

@@ -76,6 +76,7 @@ flowchart TB
 | pull·bootstrap·cursor | `5a05efa`, `f289df5`, `84acc8c`; Codex focused 76 tests | ✅ | Phase 2 연결 E2E |
 | Phase 2 local synthetic E2E | `7cdeabe`, `5c54400`, `9c2827d`; Worker·D1·R2 recovery·비노출 | ✅ | pairing·recovery와 client outbox |
 | Swift·Kotlin field E2EE fixed vector | `d9a2ac0`, `a0dd551`, `cd0999d`; 공용 artifact exact bytes | ✅ | 키 보관·pairing·recovery |
+| pairing·recovery persistence | `0009_pairing_recovery.sql`; enrollment/recovery/session/claim D1 제약 | ✅ | local HTTP endpoint와 negative E2E |
 | 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | local client 저장·networking 구현 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 

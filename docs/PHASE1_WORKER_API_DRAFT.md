@@ -526,15 +526,96 @@ upload 규칙:
 
 ## 7. Pairing·recovery 경계
 
-세부 cryptographic contract는 E2EE 제안서가 source of truth다. Worker API 구현 plan에는 다음 endpoint 군만 포함한다.
+세부 cryptographic contract는 E2EE 제안서 §4~§7이 source of truth다. 이 절은
+Worker가 받아 저장하는 exact wire와 권한을 고정한다.
 
-- pairing session 생성: 기존 device 재인증 필요
-- claim 제출: QR bearer가 가능하되 claim 조회는 불가
-- claim 조회·승인: 기존 account device만 가능
-- package redeem: 승인된 claim의 verifier를 constant-time 검증하고 원자적으로 1회 소비
-- recovery lookup: 복구 문구에서 유도한 lookup/auth를 body로 전달
+### 7.1 공통 binary·token 규칙
 
-pairing/recovery material은 sync operation log와 일반 request log에 들어가지 않는다.
+- 32-byte lookup·auth·verifier 입력과 AEAD envelope는 canonical padded standard
+  Base64다. URL-safe·unpadded·whitespace·decode 후 다른 철자는 거부한다.
+- raw device token은 client가 CSPRNG로 만들고 기기 안에만 보관한다. onboarding
+  body에는 decoded token byte의 lowercase SHA-256 `device_token_hash`만 보낸다.
+  Worker가 raw token을 생성·반환·저장하지 않으므로 응답 유실 뒤 secret을
+  재구성하거나 로그에 흘릴 경로가 없다.
+- server clock이 `created_at`·`linked_at`·TTL을 정한다. client timestamp는 이
+  endpoint 군에 없다.
+- pairing/recovery body, lookup, verifier, envelope와 token hash는 sync operation
+  log·일반 request log·metric label에 넣지 않는다.
+
+### 7.2 최초 device enrollment
+
+`POST /v1/enrollment/initialize`는 인증 전 create-only endpoint다. body는 다음
+필드만 허용한다.
+
+```json
+{
+  "protocol_version": 1,
+  "enrollment_id": "UPPERCASE_UUID",
+  "account_id": "UPPERCASE_UUID",
+  "device": {
+    "device_id": "UPPERCASE_UUID",
+    "space_id": "MAC_SPACE|PHONE_SPACE|TABLET_SPACE",
+    "platform": "macos|android_phone|android_tablet",
+    "display_name": null,
+    "device_token_hash": "LOWERCASE_SHA256_HEX"
+  },
+  "recovery": {
+    "recovery_version": 1,
+    "recovery_lookup": "BASE64_32_BYTES",
+    "recovery_auth_verifier": "BASE64_32_BYTES",
+    "wrapped_master_key": "BASE64_V1_ENVELOPE"
+  }
+}
+```
+
+`display_name`이 non-null이면 canonical v1 envelope다. Worker는 recovery envelope를
+private R2의 server-generated `recovery/<UUID>` key에 create-only로 먼저 저장한
+뒤 account·device·recovery record·enrollment fingerprint를 한 D1 batch에 넣는다.
+같은 `enrollment_id`와 raw-body fingerprint 재전송은 같은 성공 응답이고, 같은 ID에
+다른 bytes 또는 이미 존재하는 account/device/lookup/token hash는 content-free
+conflict다. 이 endpoint는 remote 활성화 전에 rate limit gate를 반드시 통과한다.
+
+### 7.3 기존 device를 통한 pairing
+
+| Method·path | 인증 | body·응답의 핵심 |
+| --- | --- | --- |
+| `POST /v1/pairing/sessions` | 유효한 기존 device token | body: `protocol_version`, `session_id`, `pairing_session_lookup`; server가 5분 TTL 부여 |
+| `POST /v1/pairing/sessions/{session_id}/claims` | QR bearer body의 `pairing_session_lookup` | body: `claim_id`, `claim_lookup`, `claim_envelope`, `claim_redeem_verifier`; 응답은 ciphertext를 echo하지 않음 |
+| `GET /v1/pairing/sessions/{session_id}/claims` | 그 session account의 기존 device token | 아직 소비되지 않은 claim의 `claim_id`·`claim_lookup`·`claim_envelope`만 반환 |
+| `POST /v1/pairing/sessions/{session_id}/claims/{claim_id}/approve` | 그 session account의 기존 device token | SAS 확인 뒤 `claim_lookup`, delivery envelope, 새 device identity·platform·space·display envelope·token hash 제출 |
+| `POST /v1/pairing/sessions/{session_id}/claims/{claim_id}/redeem` | body의 `claim_lookup`·`claim_redeem_auth` | constant-time verifier 일치 + approved + unexpired일 때 device insert와 consumed 전이를 한 batch로 수행하고 delivery envelope를 한 번 반환 |
+
+새 device는 raw token과 `claim_secret`을 먼저 만들고 claim ciphertext 안에 token
+hash와 device metadata를 넣는다. 기존 device는 claim을 복호화하고 SAS를 사용자와
+대조한 뒤 **같은 값**을 approve body에 전달한다. delivery package에는 master key가
+들어가지만 raw device token은 넣을 필요가 없다. 새 device가 이미 자기 token을
+보관하기 때문이다.
+
+QR bearer는 claim 제출만 할 수 있고 claim list·ciphertext·approval 결과를 읽지
+못한다. 다른 account token, 다른 session의 lookup/verifier, 승인 전·만료 후 redeem,
+두 번째 또는 동시 redeem은 모두 content-free로 거부한다. 실패 응답은 session이나
+claim 존재 여부를 구분하는 oracle이 되지 않는다.
+
+### 7.4 전체 device 분실 recovery
+
+`POST /v1/recovery/redeem` body는 `protocol_version`, `recovery_lookup`,
+`recovery_auth`, 새 device의 identity·platform·space·optional display envelope와
+`device_token_hash`다. Worker는 E2EE §4의 labeled verifier를 계산해 저장값과
+constant-time 비교한다. 성공 batch가 새 device를 insert한 뒤 account id,
+`recovery_version`, `key_generation`, `wrapped_master_key`만 반환한다.
+
+lookup 부재·auth 불일치·폐기된 version은 같은 오류·응답 크기 범주로 처리하고 강한
+rate limit을 적용한다. 같은 유효 recovery credential로 이미 등록된 동일 device와
+token hash가 재전송되면 같은 wrapped key를 돌려주는 idempotent 성공이며, device
+identity나 hash가 다르면 conflict다.
+
+### 7.5 persistence 경계
+
+physical `0009_pairing_recovery.sql`은 논리 conversation M-stage가 아니다.
+`enrollment_log`, versioned `recovery_record`, short-lived `pairing_session`,
+claim state machine인 `pairing_claim`만 추가한다. raw token·recovery auth·pairing
+secret·claim redeem auth는 저장하지 않는다. expired row와 R2 orphan 삭제는 remote
+deploy 전 cleanup gate에서만 활성화한다.
 
 ## 8. 관측성과 privacy
 

@@ -72,9 +72,10 @@ flowchart TB
 | M05 | `0006_attachment.sql` | `5299b27` | ✅ attachment DDL·validator·bubble FK rebuild 승인 |
 | 인증 경계 | `0007_device_token.sql` | `fa49ed1` | ✅ token hash storage·local auth boundary 승인; 논리 M-stage 아님 |
 | M06 ledger DDL | `0008_atomic_write_ledger.sql` | `d33ee67`, `4a8bf26` | ✅ sequence·operation/change log·guard schema 승인 |
-| M06 handler | 미구현 | transaction preflight 대기 | ⏳ auth·replay·CAS atomic batch |
+| M06 handler·HTTP·read | `0008` 기반 runtime | family별 atomic handler, route, R2, changes/bootstrap | ✅ Phase 2 local E2E 승인 |
+| Pairing·recovery 경계 | `0009_pairing_recovery.sql` | local DDL·stage fixture | ✅ schema 구현; endpoint 구현 대기, 논리 M-stage 아님 |
 
-물리 파일 번호는 논리 M-stage와 같지 않다. `0001`과 `0002`가 함께 논리 M01이고, 논리 M02~M05는 각각 physical `0003`~`0006`이다. `0007`은 M06 전의 cross-cutting device 인증 migration이며, M06 ledger는 다음 physical `0008`부터 시작한다. M02~M05 row의 nullable `server_seq` column은 canonical row shape이지만 값을 발급하지 않는다. `account.next_server_seq`와 실제 sequence 할당은 M06에만 추가한다.
+물리 파일 번호는 논리 M-stage와 같지 않다. `0001`과 `0002`가 함께 논리 M01이고, 논리 M02~M05는 각각 physical `0003`~`0006`이다. `0007`은 M06 전의 cross-cutting device 인증 migration이며, M06 ledger는 physical `0008`이다. `0009`는 conversation schema 이후의 최초 enrollment·pairing·recovery security boundary다. M02~M05 row의 nullable `server_seq` column은 canonical row shape이지만 값을 발급하지 않는다. `account.next_server_seq`와 실제 sequence 할당은 M06에만 추가한다.
 
 D1 local probe에서는 `PRAGMA foreign_keys`가 `1`이며 `foreign_keys = OFF`와 `defer_foreign_keys = ON` 요청이 모두 무시됐다. 따라서 앞으로 rebuild가 필요한 migration은 PRAGMA로 제약을 끄거나 미루는 방식에 의존하지 않고, 항상 FK-valid한 copy/drop 순서로 설계한다. orphan row를 조용히 거르는 대신 migration 전체를 실패·rollback한다.
 
