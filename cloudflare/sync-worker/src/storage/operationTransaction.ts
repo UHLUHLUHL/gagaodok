@@ -1844,6 +1844,38 @@ export async function applyPatchBubble(
   );
 }
 
+/**
+ * The revision of the bubble at the exact identity the request named.
+ *
+ * A patch guard matches on all six axes, so its failure must be explained by
+ * the same six. The scope-wide lookup below would find a same-message bubble
+ * living under a different turn, agree about its revision, and leave the
+ * caller with no reason at all — which fell through to a retryable storage
+ * failure for what is really a target that does not exist.
+ */
+async function readBubbleRevisionByIdentity(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `SELECT revision FROM bubble
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+          AND turn_id = ? AND message_id = ?`,
+    )
+    .bind(
+      accountId,
+      request.target.space_id,
+      request.target.room_id,
+      request.worldline_key,
+      request.target.turn_id,
+      request.target.message_id,
+    )
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
 async function readBubbleRevisionByMessage(
   db: D1Database,
   accountId: string,
@@ -1951,7 +1983,7 @@ async function classifyBubblePatchFailure(
   if (existing !== null) {
     return replayResult(request.operation_id, existing, fingerprint);
   }
-  const revision = await readBubbleRevisionByMessage(db, accountId, request);
+  const revision = await readBubbleRevisionByIdentity(db, accountId, request);
   if (revision === null) {
     throw new ApiError("ENTITY_NOT_FOUND");
   }

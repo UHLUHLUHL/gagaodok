@@ -684,6 +684,42 @@ describe("patch_bubble", () => {
     );
   });
 
+  it("reports a target naming the wrong turn as ENTITY_NOT_FOUND", async () => {
+    // The bubble really lives in TURN. This patch names TURN_2 with the same
+    // message_id and the *correct* base revision, so a scope-wide lookup would
+    // find the row, agree about the revision, and fall through to a retryable
+    // storage failure. The identity the client asked for does not exist.
+    const before = await snapshot();
+    await expectApiError(
+      () =>
+        applyOperationRequest(
+          makeRequest(
+            patchBody({
+              target: {
+                space_id: MAC,
+                room_id: ROOM,
+                worldline_id: null,
+                turn_id: TURN_2,
+                message_id: MESSAGE,
+              },
+              base_revision: 0,
+              set: { sender: envelope(20) },
+            }),
+          ),
+          db,
+        ),
+      "ENTITY_NOT_FOUND",
+      "patch target names another turn",
+    );
+    expect(await snapshot()).toBe(before);
+    expect((await bubbleRow())?.["revision"]).toBe(0);
+    expect(await countOf("bubble_extension_field")).toBe(1);
+    expect(await countOf("operation_log")).toBe(1);
+    expect(await countOf("change_log")).toBe(1);
+    expect(await nextSeq()).toBe(2);
+    expect(await countOf("transaction_guard")).toBe(0);
+  });
+
   it("replays a byte-identical retry and rejects different bytes", async () => {
     const payload = patchBody({ set: { sender: envelope(5) } });
     const first = await applyOperationRequest(makeRequest(payload), db);
