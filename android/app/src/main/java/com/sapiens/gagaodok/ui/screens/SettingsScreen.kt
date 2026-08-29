@@ -101,6 +101,10 @@ fun SettingsScreen() {
             Text("설정", style = KakaoText.screenTitle, color = colors.textPrimary)
         }
 
+        // MARK: - 기기 간 동기화 (합성 시험)
+        // 실제 대화는 읽지도 올리지도 않습니다. 화면 진입만으로는 아무것도 보내지 않습니다.
+        SettingsSection("기기 간 동기화 (합성 시험)") { SyncSettingsSection() }
+
         // MARK: - 데이터
         SettingsSection("데이터") {
             val totalUSD = app.usage.totalCostUSD
