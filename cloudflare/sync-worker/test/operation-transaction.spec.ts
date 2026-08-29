@@ -521,42 +521,32 @@ describe("applyOperationRequest — refusals leave nothing behind", () => {
     expect(await guardCount()).toBe(0);
   });
 
-  it("does not partially apply an operation with no transaction service", async () => {
-    // create_attachment is the last runtime-enabled operation with no
-    // transaction service; it is refused whole rather than half-written.
+  it("does not partially apply a schema-only operation", async () => {
+    // Every runtime-enabled operation now has a transaction service, so the
+    // one that must still be refused whole is delete_turn: it exists in the
+    // schema but the runtime gate withholds it (user decision 15).
     const before = await snapshot();
     await expectApiError(
       () =>
         applyOperationRequest(
           makeRequest(
             patchRoomBody({
-              op: "create_attachment",
-              entity_type: "attachment",
+              op: "delete_turn",
+              entity_type: "turn",
               base_revision: undefined,
               target: {
                 space_id: SPACE,
-                attachment_id: "70000000-0000-4000-8000-0000000000FB",
+                room_id: ROOM,
+                worldline_id: null,
+                turn_id: "30000000-0000-4000-8000-0000000000CF",
               },
-              set: {
-                file_name: envelope(11),
-                mime_type: envelope(12),
-                wrapped_file_key: envelope(13),
-              },
-              metadata_set: {
-                origin_space_id: SPACE,
-                kind: "image",
-                source_byte_size: 100,
-                ciphertext_byte_size: 134,
-                ciphertext_hash: "a".repeat(64),
-                key_generation: 1,
-                created_at: TIMESTAMP,
-              },
+              set: {},
             }),
           ),
           db,
         ),
       "VALIDATION_FAILED",
-      "create_attachment has no service in this slice",
+      "delete_turn is withheld from the runtime",
     );
     expect(await snapshot()).toBe(before);
   });

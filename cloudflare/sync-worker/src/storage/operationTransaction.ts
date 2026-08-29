@@ -227,7 +227,9 @@ export async function applyPatchRoom(
  * identifier is ever assembled from a request value.
  */
 interface ChangeIdentity {
-  space_id: string;
+  // Optional: an attachment's change identity is the attachment alone, and
+  // 0008 requires space_id to be NULL on that branch.
+  space_id?: string;
   room_id?: string;
   worldline_key?: string;
   turn_id?: string;
@@ -259,7 +261,9 @@ function ledgerStatements(
   accountId: string,
   request: OperationRequest,
   fingerprint: string,
-  revision: number,
+  // Null only for a projection that has no revision of its own — attachment is
+  // the single such entity, and migration 0008 states the same rule as a CHECK.
+  revision: number | null,
   identity: ChangeIdentity,
 ): D1PreparedStatement[] {
   // The entity_type comes from the validator's operation table, never from a
@@ -1990,6 +1994,145 @@ async function classifyBubblePatchFailure(
   if (revision !== baseRevision) {
     throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
   }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+/**
+ * The R2 object key generator.
+ *
+ * The key is server-owned: it never appears in a request, a result, an error
+ * detail or a log line, so a client cannot steer where bytes land. Tests
+ * replace it to make a deliberate collision reproducible; nothing else does.
+ */
+let objectKeyUuid: () => string = () => crypto.randomUUID().toUpperCase();
+
+/** Test seam. Pass null to restore the CSPRNG generator. */
+export function setObjectKeyGeneratorForTest(generator: (() => string) | null): void {
+  objectKeyUuid = generator ?? (() => crypto.randomUUID().toUpperCase());
+}
+
+const ATTACHMENT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  file_name: "file_name_enc",
+  mime_type: "mime_type_enc",
+  wrapped_file_key: "wrapped_file_key_enc",
+});
+
+/**
+ * Apply one validated `create_attachment`.
+ *
+ * This is the only path that allocates attachment metadata: there is no
+ * separate allocation endpoint, so the row, both ledgers and the sequence move
+ * together like every other operation. The row starts in `allocated`; moving
+ * it to `uploaded`/`ready` is the upload path's job and is not implemented
+ * here. No R2 call happens in this function.
+ */
+export async function applyCreateAttachment(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const attachmentId = request.target.attachment_id as string;
+
+  columnsOnly(Object.keys(request.set), ATTACHMENT_FIELD_COLUMNS);
+  columnsOnly(request.clear, ATTACHMENT_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const objectKey = `obj/${objectKeyUuid()}`;
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM attachment
+              WHERE account_id = ? AND attachment_id = ?) = 0
+            AND (SELECT COUNT(*) FROM attachment
+                  WHERE account_id = ? AND r2_object_key = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        attachmentId,
+        accountId,
+        objectKey,
+        accountId,
+      ),
+    db
+      .prepare(
+        `INSERT INTO attachment
+           (account_id, attachment_id, origin_space_id, r2_object_key, kind, state,
+            source_byte_size, ciphertext_byte_size, ciphertext_hash, key_generation,
+            file_name_enc, mime_type_enc, wrapped_file_key_enc, created_at, server_seq)
+         VALUES (?, ?, ?, ?, ?, 'allocated', ?, ?, ?, ?, ?, ?, ?, ?, ${CURRENT_SEQ})`,
+      )
+      .bind(
+        accountId,
+        attachmentId,
+        request.metadata_set["origin_space_id"],
+        objectKey,
+        request.metadata_set["kind"],
+        request.metadata_set["source_byte_size"],
+        request.metadata_set["ciphertext_byte_size"],
+        request.metadata_set["ciphertext_hash"],
+        request.metadata_set["key_generation"],
+        request.set["file_name"],
+        request.set["mime_type"],
+        request.set["wrapped_file_key"],
+        request.metadata_set["created_at"],
+        accountId,
+      ),
+    ...ledgerStatements(db, accountId, request, fingerprint, null, { attachment_id: attachmentId }),
+  ];
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyAttachmentFailure(db, accountId, request, fingerprint, objectKey),
+  );
+}
+
+async function classifyAttachmentFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  objectKey: string,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const duplicate = await db
+    .prepare("SELECT 1 AS present FROM attachment WHERE account_id = ? AND attachment_id = ?")
+    .bind(accountId, request.target.attachment_id)
+    .first();
+  if (duplicate !== null) {
+    // The identity is already allocated. It is a state conflict rather than a
+    // revision conflict: an attachment has no revision, and the client's next
+    // move depends on what state the existing row is in.
+    throw new ApiError("ATTACHMENT_STATE_CONFLICT");
+  }
+
+  const keyTaken = await db
+    .prepare("SELECT 1 AS present FROM attachment WHERE account_id = ? AND r2_object_key = ?")
+    .bind(accountId, objectKey)
+    .first();
+  if (keyTaken !== null) {
+    // A server-side random collision. Retrying draws a new key, so this one is
+    // retryable — and the key itself is never named in the error.
+    throw storageUnavailable();
+  }
+
   if (await sequenceExhausted(db, accountId)) {
     throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
   }
