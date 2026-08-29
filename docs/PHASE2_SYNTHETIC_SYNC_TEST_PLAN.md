@@ -31,7 +31,8 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M06 room family | `2b456a3` create_room + `8d7a8fd`·`f712c8e`·`62a83f4` patch_room | local atomic handler 완료 |
 | M06 group/worldline family | `37e408c`, `f8e766b`, `06d401e` create·patch·동시 create 회귀 | local atomic handler 완료 |
 | M06 versioned AI family | `f7195f3`, `da5b201`, `b69d8ee`, `04c9197` checkpoint·engine·persona/head | local atomic handler 완료 |
-| M06 remaining handlers | turn/bubble부터 남은 runtime operation family | 구현 대기 |
+| M06 turn/bubble family | `2875ef4`, `7328825`, `60594d8` create·patch·order·attachment guard | local atomic handler 완료 |
+| M06 remaining handler | `create_attachment` | 구현 대기 |
 | local R2 attachment flow | source 12,582,912 / binary ciphertext 12,582,946 계약·합성 metadata fixture | M06 ledger·endpoint 대기 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 
