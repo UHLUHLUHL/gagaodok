@@ -491,6 +491,32 @@ describe("patch_checkpoint", () => {
     expect(await snapshot()).toBe(before);
   });
 
+  it("refuses to clear the schema version and leaves everything untouched", async () => {
+    const before = await snapshot();
+    await expectApiError(
+      () => applyOperationRequest(makeRequest(patchBody({ metadata_clear: ["checkpoint_schema_version"] })), db),
+      "VALIDATION_FAILED",
+      "clearing a NOT NULL schema version",
+    );
+    // The refusal happens before any statement runs, so the row, its revision,
+    // both ledgers, the sequence and the guard table are all as they were.
+    expect(await snapshot()).toBe(before);
+    expect((await checkpointRow())?.["revision"]).toBe(0);
+    expect((await checkpointRow())?.["checkpoint_schema_version"]).toBe(1);
+    expect(await countOf("operation_log")).toBe(1);
+    expect(await countOf("change_log")).toBe(1);
+    expect(await nextSeq()).toBe(2);
+    expect(await countOf("transaction_guard")).toBe(0);
+  });
+
+  it("still accepts a new schema version", async () => {
+    await applyOperationRequest(
+      makeRequest(patchBody({ metadata_set: { checkpoint_schema_version: 2 } })),
+      db,
+    );
+    expect((await checkpointRow())?.["checkpoint_schema_version"]).toBe(2);
+  });
+
   it("refuses a stale base_revision", async () => {
     const before = await snapshot();
     await expectApiError(

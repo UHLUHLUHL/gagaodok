@@ -1157,6 +1157,50 @@ describe("parseOperationRequest — create provenance", () => {
   });
 });
 
+describe("parseOperationRequest — patch_checkpoint schema version", () => {
+  // D1's checkpoint.checkpoint_schema_version is NOT NULL, so a clear has no
+  // legal outcome: it would pass the validator and abort inside the batch as
+  // an opaque storage failure. Setting a new version stays allowed.
+  function patch(metadata: Record<string, unknown>, clear: string[] = []): Record<string, unknown> {
+    return makeOperation({
+      op: "patch_checkpoint",
+      entity_type: "checkpoint",
+      target: { space_id: "MAC_SPACE", room_id: ROOM, worldline_id: null, checkpoint_id: CHECKPOINT },
+      base_revision: 0,
+      set: {},
+      metadata_set: metadata,
+      metadata_clear: clear,
+    });
+  }
+
+  it("accepts a new schema version", () => {
+    const parsed = parseOperationRequest(patch({ checkpoint_schema_version: 2 }));
+    expect(parsed.metadata_set.checkpoint_schema_version).toBe(2);
+  });
+
+  it("rejects clearing the schema version", () => {
+    expect(() => parseOperationRequest(patch({}, ["checkpoint_schema_version"]))).toThrowError(
+      "VALIDATION_FAILED",
+    );
+  });
+
+  it("keeps the other clears legal", () => {
+    expect(parseOperationRequest(patch({}, ["through_server_seq"])).metadata_clear).toEqual([
+      "through_server_seq",
+    ]);
+    expect(parseOperationRequest(patch({}, ["compaction_compat_tag"])).metadata_clear).toEqual([
+      "compaction_compat_tag",
+    ]);
+    expect(
+      parseOperationRequest(patch({}, ["first_turn_id", "last_turn_id"])).metadata_clear.sort(),
+    ).toEqual(["first_turn_id", "last_turn_id"]);
+  });
+
+  it("still refuses half a range pair", () => {
+    expect(() => parseOperationRequest(patch({}, ["first_turn_id"]))).toThrowError("VALIDATION_FAILED");
+  });
+});
+
 describe("parseOperationRequest — safe integers", () => {
   it("rejects a numeric string as bubble_order", () => {
     // D1's INTEGER affinity would convert "3" to 3 before any CHECK could see

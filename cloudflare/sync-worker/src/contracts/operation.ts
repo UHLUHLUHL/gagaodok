@@ -459,6 +459,14 @@ const CHECKPOINT_PATCHABLE = [
   "compaction_compat_tag",
 ] as const;
 
+// D1's checkpoint.checkpoint_schema_version is NOT NULL, so clearing it has no
+// legal outcome: it would pass validation and then abort inside the batch as an
+// opaque storage failure the handler could not tell apart from a real fault.
+// Setting a new version stays allowed; only the clear is refused.
+const CHECKPOINT_CLEARABLE = CHECKPOINT_PATCHABLE.filter(
+  (field) => field !== "checkpoint_schema_version",
+);
+
 const METADATA_RULES: Partial<Record<string, MetadataRule>> = {
   patch_room: {
     required: [],
@@ -488,7 +496,7 @@ const METADATA_RULES: Partial<Record<string, MetadataRule>> = {
   patch_checkpoint: {
     required: [],
     optional: CHECKPOINT_PATCHABLE,
-    clearable: CHECKPOINT_PATCHABLE,
+    clearable: CHECKPOINT_CLEARABLE,
   },
 };
 
