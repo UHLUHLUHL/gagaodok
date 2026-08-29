@@ -405,6 +405,8 @@ Checkpoint는 turn·bubble과 같은 conversation scope 규칙을 쓴다. 따라
 
 `first_turn_id`와 `last_turn_id`는 둘 다 null이거나 둘 다 non-null이다. non-null이면 checkpoint와 같은 scope의 turn을 각각 composite FK로 참조한다. `through_server_seq`는 null이거나 `1...2^53-1`이며, M06 handler는 write 직전의 `account.next_server_seq`보다 작은 이미 발급된 값만 허용한다. 새 checkpoint operation 자신에게 배정될 sequence와 미래 sequence는 coverage가 될 수 없다. legacy unversioned digest도 같은 table을 쓰며 null range/sequence를 허용한다. checkpoint `revision`은 0부터 시작하는 mutable CAS version이고 create는 base revision 없이 revision 0을 만들며 patch가 현재 revision과 `base_revision`을 비교한다.
 
+`checkpoint_schema_version`은 모든 checkpoint row에 필요한 non-null discriminator다. Patch로 값을 전진시킬 수는 있지만 clear할 수 없으며, Worker validator가 clear request를 D1 write 전에 거부한다.
+
 `owner_space_id = space_id`를 v1에서 강제하고 `created_by_device_id`는 인증된 request의 `device_id`와 같아야 한다. 같은 account의 다른 device를 provenance로 사칭할 수 없다. generation authority의 실제 write 허용 판정은 handler 책임이다.
 
 ### 6.1 generation authority 규칙

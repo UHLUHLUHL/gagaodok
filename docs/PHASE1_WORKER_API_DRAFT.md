@@ -205,10 +205,12 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 | `create_engine_profile` | 없음 | `compaction_compat_tag` | 없음 (`[]`만 허용) |
 | `create_persona_snapshot` | `owner_space_id`, `created_by_device_id`, `created_at`, `persona_schema_version` | 없음 | 없음 (`[]`만 허용) |
 | `create_checkpoint` | `checkpoint_schema_version`, `owner_space_id`, `created_by_device_id`, `created_at` | `first_turn_id` + `last_turn_id`; `through_server_seq`; `compaction_compat_tag` | 없음 (`[]`만 허용) |
-| `patch_checkpoint` | 없음 | `first_turn_id` + `last_turn_id`; `through_server_seq`; `checkpoint_schema_version`; `compaction_compat_tag` | 같은 optional fields만 허용하며 range는 pair 단위 |
+| `patch_checkpoint` | 없음 | `first_turn_id` + `last_turn_id`; `through_server_seq`; `checkpoint_schema_version`; `compaction_compat_tag` | `first_turn_id` + `last_turn_id`; `through_server_seq`; `compaction_compat_tag`. range는 pair 단위이며 `checkpoint_schema_version` clear는 금지 |
 | `create_attachment` | `origin_space_id`, `kind`, `source_byte_size`, `ciphertext_byte_size`, `ciphertext_hash`, `key_generation`, `created_at` | 없음 | 없음 (`[]`만 허용) |
 
 `owner_space_id`·`created_by_device_id`·`created_at`은 생성 provenance이므로 `patch_checkpoint`가 바꾸거나 지우지 못한다. encrypted segments·summary·profile/fingerprint는 계속 `set`·`clear`를 사용한다. `create_persona_snapshot`은 위 필수 metadata와 `base_revision`을 받고, 최초 `(base=0,target=1)` 또는 연속 `(target=base+1)`만 허용한다.
+
+`checkpoint_schema_version`은 D1의 non-null compatibility discriminator다. `patch_checkpoint.metadata_set`으로 새 값에 전진시킬 수 있지만 `metadata_clear`에는 넣을 수 없다. 이를 clear하려는 request는 handler에 도달하기 전에 `VALIDATION_FAILED`이며 D1 `NOT NULL` 실패를 `STORAGE_UNAVAILABLE`로 오분류해서는 안 된다.
 
 Create provenance는 인증 경계와 일치해야 한다. `owner_space_id`는 `target.space_id`와 같고, `created_by_device_id`는 token으로 인증되어 request의 `device_id`와 일치한 device여야 한다. Validator가 이 cross-field equality를 D1 write 전에 거부하며, 다른 같은-account device를 provenance로 대신 적을 수 없다.
 
