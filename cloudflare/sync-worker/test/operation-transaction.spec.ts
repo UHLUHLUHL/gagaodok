@@ -522,30 +522,41 @@ describe("applyOperationRequest — refusals leave nothing behind", () => {
   });
 
   it("does not partially apply an operation with no transaction service", async () => {
-    // create_room and patch_room have services; every other runtime-enabled
-    // operation is refused whole rather than half-written.
+    // create_attachment is the last runtime-enabled operation with no
+    // transaction service; it is refused whole rather than half-written.
     const before = await snapshot();
     await expectApiError(
       () =>
         applyOperationRequest(
           makeRequest(
             patchRoomBody({
-              op: "create_turn",
-              entity_type: "turn",
+              op: "create_attachment",
+              entity_type: "attachment",
               base_revision: undefined,
               target: {
                 space_id: SPACE,
-                room_id: ROOM,
-                worldline_id: null,
-                turn_id: "30000000-0000-4000-8000-0000000000CF",
+                attachment_id: "70000000-0000-4000-8000-0000000000FB",
               },
-              set: { content: envelope(11) },
+              set: {
+                file_name: envelope(11),
+                mime_type: envelope(12),
+                wrapped_file_key: envelope(13),
+              },
+              metadata_set: {
+                origin_space_id: SPACE,
+                kind: "image",
+                source_byte_size: 100,
+                ciphertext_byte_size: 134,
+                ciphertext_hash: "a".repeat(64),
+                key_generation: 1,
+                created_at: TIMESTAMP,
+              },
             }),
           ),
           db,
         ),
       "VALIDATION_FAILED",
-      "create_turn has no service in this slice",
+      "create_attachment has no service in this slice",
     );
     expect(await snapshot()).toBe(before);
   });

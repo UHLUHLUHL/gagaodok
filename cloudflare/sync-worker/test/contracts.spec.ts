@@ -67,6 +67,16 @@ function checkpointCreateMetadata(spaceId: string): Record<string, unknown> {
   };
 }
 
+/** The required create metadata for each op that has any. */
+function createMetadataFor(op: string, spaceId: string): Record<string, unknown> {
+  if (op === "create_checkpoint") return checkpointCreateMetadata(spaceId);
+  if (op === "create_turn") {
+    return { created_by_device_id: DEVICE, created_at: "2026-08-28T00:00:00Z" };
+  }
+  if (op === "create_bubble") return { timestamp: "2026-08-28T00:00:00Z" };
+  return {};
+}
+
 function makeOperation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     protocol_version: 1,
@@ -883,7 +893,7 @@ describe("parseOperationRequest — a named worldline is PHONE_SPACE only", () =
       base_revision: isCreate ? undefined : 41,
       bubble_order: op === "create_bubble" ? 3 : undefined,
       set: { title: validEnvelope() },
-      metadata_set: op === "create_checkpoint" ? checkpointCreateMetadata(spaceId) : {},
+      metadata_set: createMetadataFor(op, spaceId),
     });
   }
 
@@ -1198,6 +1208,162 @@ describe("parseOperationRequest — patch_checkpoint schema version", () => {
 
   it("still refuses half a range pair", () => {
     expect(() => parseOperationRequest(patch({}, ["first_turn_id"]))).toThrowError("VALIDATION_FAILED");
+  });
+});
+
+describe("parseOperationRequest — turn and bubble metadata", () => {
+  const TIMESTAMP = "2026-08-28T00:00:00Z";
+  const OTHER_DEVICE = "80000000-0000-4000-8000-00000000000F";
+
+  function turnCreate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return makeOperation({
+      op: "create_turn",
+      entity_type: "turn",
+      target: { space_id: "MAC_SPACE", room_id: ROOM, worldline_id: null, turn_id: TURN },
+      base_revision: undefined,
+      set: {},
+      metadata_set: { created_by_device_id: DEVICE, created_at: TIMESTAMP },
+      ...overrides,
+    });
+  }
+
+  function bubbleCreate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return makeOperation({
+      op: "create_bubble",
+      entity_type: "bubble",
+      target: {
+        space_id: "MAC_SPACE",
+        room_id: ROOM,
+        worldline_id: null,
+        turn_id: TURN,
+        message_id: MESSAGE,
+      },
+      base_revision: undefined,
+      bubble_order: 0,
+      set: {},
+      metadata_set: { timestamp: TIMESTAMP },
+      ...overrides,
+    });
+  }
+
+  it("accepts a create_turn carrying its provenance", () => {
+    const parsed = parseOperationRequest(turnCreate());
+    expect(parsed.metadata_set.created_by_device_id).toBe(DEVICE);
+    expect(parsed.metadata_set.created_at).toBe(TIMESTAMP);
+  });
+
+  it("rejects a create_turn with no provenance", () => {
+    expect(() => parseOperationRequest(turnCreate({ metadata_set: {} }))).toThrowError(
+      "VALIDATION_FAILED",
+    );
+  });
+
+  it("rejects a create_turn attributed to another device", () => {
+    expect(() =>
+      parseOperationRequest(
+        turnCreate({ metadata_set: { created_by_device_id: OTHER_DEVICE, created_at: TIMESTAMP } }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("rejects a non-RFC-3339 turn created_at", () => {
+    expect(() =>
+      parseOperationRequest(
+        turnCreate({ metadata_set: { created_by_device_id: DEVICE, created_at: "2026-08-28" } }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("accepts a create_bubble with only its timestamp", () => {
+    expect(parseOperationRequest(bubbleCreate()).metadata_set.timestamp).toBe(TIMESTAMP);
+  });
+
+  it("rejects a create_bubble with no timestamp", () => {
+    expect(() => parseOperationRequest(bubbleCreate({ metadata_set: {} }))).toThrowError(
+      "VALIDATION_FAILED",
+    );
+  });
+
+  it("accepts a complete attachment reference pair", () => {
+    const parsed = parseOperationRequest(
+      bubbleCreate({
+        metadata_set: {
+          timestamp: TIMESTAMP,
+          attachment_ref_attachment_id: ATTACHMENT,
+          attachment_ref_byte_size: 134,
+        },
+      }),
+    );
+    expect(parsed.metadata_set.attachment_ref_attachment_id).toBe(ATTACHMENT);
+    expect(parsed.metadata_set.attachment_ref_byte_size).toBe(134);
+  });
+
+  it.each(["attachment_ref_attachment_id", "attachment_ref_byte_size"])(
+    "rejects %s without its partner",
+    (field) => {
+      const half: Record<string, unknown> = { timestamp: TIMESTAMP };
+      half[field] = field === "attachment_ref_byte_size" ? 134 : ATTACHMENT;
+      expect(() => parseOperationRequest(bubbleCreate({ metadata_set: half }))).toThrowError(
+        "VALIDATION_FAILED",
+      );
+    },
+  );
+
+  it("rejects a negative attachment byte size", () => {
+    expect(() =>
+      parseOperationRequest(
+        bubbleCreate({
+          metadata_set: {
+            timestamp: TIMESTAMP,
+            attachment_ref_attachment_id: ATTACHMENT,
+            attachment_ref_byte_size: -1,
+          },
+        }),
+      ),
+    ).toThrowError("VALIDATION_FAILED");
+  });
+
+  it("accepts a zero attachment byte size", () => {
+    expect(() =>
+      parseOperationRequest(
+        bubbleCreate({
+          metadata_set: {
+            timestamp: TIMESTAMP,
+            attachment_ref_attachment_id: ATTACHMENT,
+            attachment_ref_byte_size: 0,
+          },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["patch_turn", "turn", { turn_id: TURN }],
+    ["patch_bubble", "bubble", { turn_id: TURN, message_id: MESSAGE }],
+  ])("refuses any metadata on %s", (op, entityType, extra) => {
+    const base = {
+      op,
+      entity_type: entityType,
+      target: { space_id: "MAC_SPACE", room_id: ROOM, worldline_id: null, ...extra },
+      base_revision: 3,
+      set: { text: validEnvelope() },
+    };
+    expect(() =>
+      parseOperationRequest(makeOperation({ ...base, metadata_set: { timestamp: TIMESTAMP } })),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() =>
+      parseOperationRequest(makeOperation({ ...base, metadata_clear: ["timestamp"] })),
+    ).toThrowError("VALIDATION_FAILED");
+    expect(() => parseOperationRequest(makeOperation(base))).not.toThrow();
+  });
+
+  it("refuses a metadata_clear on either create", () => {
+    expect(() => parseOperationRequest(turnCreate({ metadata_clear: ["created_at"] }))).toThrowError(
+      "VALIDATION_FAILED",
+    );
+    expect(() => parseOperationRequest(bubbleCreate({ metadata_clear: ["timestamp"] }))).toThrowError(
+      "VALIDATION_FAILED",
+    );
   });
 });
 

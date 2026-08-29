@@ -397,6 +397,15 @@ function requirePlaintextTag(value: unknown): string {
   return value;
 }
 
+/** A byte count copied from an attachment row: 0 is legal, negatives are not. */
+function requireNonNegativeSafeInteger(value: unknown): number {
+  const parsed = requireSafeInteger(value);
+  if (parsed < 0) {
+    throw validationFailed();
+  }
+  return parsed;
+}
+
 const METADATA_PARSERS = {
   engine_profile_id: requireUuid,
   engine_profile_revision: requireRevisionAtLeastOne,
@@ -419,6 +428,11 @@ const METADATA_PARSERS = {
   ciphertext_byte_size: requireCiphertextByteSize,
   ciphertext_hash: requireSha256Hex,
   key_generation: requireKeyGenerationOne,
+  // A bubble's own plaintext time, not the sync request's: last_message_time is
+  // the maximum of these (E2EE proposal §8.5).
+  timestamp: requireRfc3339Utc,
+  attachment_ref_attachment_id: requireUuid,
+  attachment_ref_byte_size: requireNonNegativeSafeInteger,
 } as const satisfies Record<string, (value: unknown) => MetadataValue>;
 
 type MetadataField = keyof typeof METADATA_PARSERS;
@@ -428,6 +442,7 @@ const METADATA_PAIRS: readonly (readonly [MetadataField, MetadataField])[] = [
   ["engine_profile_id", "engine_profile_revision"],
   ["persona_snapshot_id", "persona_snapshot_revision"],
   ["first_turn_id", "last_turn_id"],
+  ["attachment_ref_attachment_id", "attachment_ref_byte_size"],
 ];
 
 interface MetadataRule {
@@ -498,6 +513,22 @@ const METADATA_RULES: Partial<Record<string, MetadataRule>> = {
     optional: CHECKPOINT_PATCHABLE,
     clearable: CHECKPOINT_CLEARABLE,
   },
+  // A turn records which device produced it and when. Both columns are NOT
+  // NULL in D1 and neither is derivable from the request envelope, so they
+  // travel as explicit metadata rather than being inferred.
+  create_turn: {
+    required: ["created_by_device_id", "created_at"],
+    optional: [],
+    clearable: [],
+  },
+  // `timestamp` is the bubble's own time. The attachment pair is optional and
+  // moves together: a size without an ID names nothing, and an ID without a
+  // size cannot be checked against the stored ciphertext.
+  create_bubble: {
+    required: ["timestamp"],
+    optional: ["attachment_ref_attachment_id", "attachment_ref_byte_size"],
+    clearable: [],
+  },
 };
 
 const EMPTY_METADATA_RULE: MetadataRule = { required: [], optional: [], clearable: [] };
@@ -533,6 +564,17 @@ METADATA_RULES.create_attachment = {
 const PROVENANCE_CREATES: ReadonlySet<string> = new Set([
   "create_persona_snapshot",
   "create_checkpoint",
+]);
+
+/**
+ * Creates that name the device that made the row. A turn has no
+ * `owner_space_id` — its space comes from the target — but the device claim
+ * must still be the requesting device's own.
+ */
+const DEVICE_PROVENANCE_CREATES: ReadonlySet<string> = new Set([
+  "create_persona_snapshot",
+  "create_checkpoint",
+  "create_turn",
 ]);
 
 const REQUIRED_ENCRYPTED_FIELDS: Partial<Record<string, readonly string[]>> = {
@@ -892,6 +934,11 @@ export function parseOperationRequest(value: unknown): OperationRequest {
 
   const deviceId = requireUuid(value["device_id"]);
 
+  if (DEVICE_PROVENANCE_CREATES.has(operation) && metadata.set.created_by_device_id !== deviceId) {
+    // A valid token could otherwise file work under another device's name.
+    throw validationFailed();
+  }
+
   if (PROVENANCE_CREATES.has(operation)) {
     // The row records who made it and where. D1 states half of this as
     // CHECK (owner_space_id = space_id), but only as an opaque failure the
@@ -899,9 +946,6 @@ export function parseOperationRequest(value: unknown): OperationRequest {
     // about the device at all — a valid token could otherwise file a snapshot
     // under another device's name.
     if (metadata.set.owner_space_id !== target.space_id) {
-      throw validationFailed();
-    }
-    if (metadata.set.created_by_device_id !== deviceId) {
       throw validationFailed();
     }
   }

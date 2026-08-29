@@ -11,10 +11,12 @@ import {
   applyCreateGroupState,
   applyCreatePersonaSnapshot,
   applyCreateRoom,
+  applyCreateTurn,
   applyCreateWorldline,
   applyPatchCheckpoint,
   applyPatchGroupState,
   applyPatchRoom,
+  applyPatchTurn,
   applyPatchWorldline,
 } from "../storage/operationTransaction";
 import type { OperationResult } from "../storage/operationTransaction";
@@ -126,6 +128,10 @@ export async function applyOperationRequest(
       return await applyCreateCheckpoint(db, auth, operation, fingerprint);
     case "patch_checkpoint":
       return await applyPatchCheckpoint(db, auth, operation, fingerprint);
+    case "create_turn":
+      return await applyCreateTurn(db, auth, operation, fingerprint);
+    case "patch_turn":
+      return await applyPatchTurn(db, auth, operation, fingerprint);
     case "create_worldline":
       return await applyCreateWorldline(db, auth, operation, fingerprint);
     case "patch_worldline":

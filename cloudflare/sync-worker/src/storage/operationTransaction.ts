@@ -1243,6 +1243,302 @@ async function classifyPersonaSnapshotFailure(
   throw storageUnavailable();
 }
 
+const TURN_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  canonical_text: "canonical_text_enc",
+  heart_changes: "heart_changes_enc",
+  generation_profile_ref: "generation_profile_ref_enc",
+  fallback_reason: "fallback_reason_enc",
+});
+
+function turnIdentity(request: OperationRequest): ChangeIdentity {
+  return {
+    space_id: request.target.space_id,
+    room_id: request.target.room_id as string,
+    worldline_key: request.worldline_key,
+    turn_id: request.target.turn_id as string,
+  };
+}
+
+/**
+ * Upsert or delete one turn extension envelope.
+ *
+ * The room helper binds (account, space, room, key) and would silently address
+ * a different row here: a turn extension's identity also carries the worldline
+ * and the turn.
+ */
+function turnExtensionStatement(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  key: string,
+  envelope: string | null,
+): D1PreparedStatement {
+  const scope = [
+    accountId,
+    request.target.space_id,
+    request.target.room_id,
+    request.worldline_key,
+    request.target.turn_id,
+  ];
+  if (envelope === null) {
+    return db
+      .prepare(
+        `DELETE FROM turn_extension_field
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND turn_id = ? AND extension_key = ?`,
+      )
+      .bind(...scope, key);
+  }
+  return db
+    .prepare(
+      `INSERT INTO turn_extension_field
+         (account_id, space_id, room_id, worldline_key, turn_id, extension_key, envelope_enc)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (account_id, space_id, room_id, worldline_key, turn_id, extension_key)
+       DO UPDATE SET envelope_enc = excluded.envelope_enc`,
+    )
+    .bind(...scope, key, envelope);
+}
+
+/** Apply one validated `create_turn`. */
+export async function applyCreateTurn(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const turnId = request.target.turn_id as string;
+
+  const setFields = partitionFieldNames(Object.keys(request.set), TURN_FIELD_COLUMNS);
+  partitionFieldNames(request.clear, TURN_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const columns = Object.values(TURN_FIELD_COLUMNS);
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT COUNT(*) FROM room
+              WHERE account_id = ? AND space_id = ? AND room_id = ?) = 1
+            AND (SELECT COUNT(*) FROM turn
+                  WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+                    AND turn_id = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        accountId,
+        spaceId,
+        roomId,
+        key,
+        turnId,
+        accountId,
+      ),
+    db
+      .prepare(
+        `INSERT INTO turn
+           (account_id, space_id, room_id, worldline_id, worldline_key, turn_id,
+            ${columns.join(", ")}, created_by_device_id, created_at,
+            revision, server_seq, is_tombstoned)
+         VALUES (?, ?, ?, ?, ?, ?, ${columns.map(() => "?").join(", ")}, ?, ?, 0, ${CURRENT_SEQ}, 0)`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        roomId,
+        request.target.worldline_id ?? null,
+        key,
+        turnId,
+        ...encryptedValues(request, TURN_FIELD_COLUMNS),
+        request.metadata_set["created_by_device_id"],
+        request.metadata_set["created_at"],
+        accountId,
+      ),
+  ];
+  for (const extensionKey of setFields.extensionKeys) {
+    statements.push(
+      turnExtensionStatement(
+        db,
+        accountId,
+        request,
+        extensionKey,
+        request.set[`${EXTENSION_PREFIX}${extensionKey}`] as string,
+      ),
+    );
+  }
+  statements.push(...ledgerStatements(db, accountId, request, fingerprint, 0, turnIdentity(request)));
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyTurnCreateFailure(db, accountId, request, fingerprint),
+  );
+}
+
+/** Apply one validated `patch_turn`. */
+export async function applyPatchTurn(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const turnId = request.target.turn_id as string;
+  const baseRevision = request.base_revision as number;
+  const nextRevision = baseRevision + 1;
+
+  const setFields = partitionFieldNames(Object.keys(request.set), TURN_FIELD_COLUMNS);
+  const clearFields = partitionFieldNames(request.clear, TURN_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const assignments: string[] = [];
+  const bindings: unknown[] = [];
+  for (const [name, column] of Object.entries(TURN_FIELD_COLUMNS)) {
+    if (Object.prototype.hasOwnProperty.call(request.set, name)) {
+      assignments.push(`${column} = ?`);
+      bindings.push(request.set[name]);
+    }
+  }
+  for (const column of clearFields.columns) {
+    assignments.push(`${column} = NULL`);
+  }
+  assignments.push("revision = revision + 1", `server_seq = ${CURRENT_SEQ}`);
+  bindings.push(accountId);
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT revision FROM turn
+              WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+                AND turn_id = ?) = ?
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(accountId, request.operation_id, accountId, spaceId, roomId, key, turnId, baseRevision, accountId),
+    db
+      .prepare(
+        `UPDATE turn SET ${assignments.join(", ")}
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND turn_id = ? AND revision = ?`,
+      )
+      .bind(...bindings, accountId, spaceId, roomId, key, turnId, baseRevision),
+  ];
+  for (const extensionKey of setFields.extensionKeys) {
+    statements.push(
+      turnExtensionStatement(
+        db,
+        accountId,
+        request,
+        extensionKey,
+        request.set[`${EXTENSION_PREFIX}${extensionKey}`] as string,
+      ),
+    );
+  }
+  for (const extensionKey of clearFields.extensionKeys) {
+    statements.push(turnExtensionStatement(db, accountId, request, extensionKey, null));
+  }
+  statements.push(
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision, turnIdentity(request)),
+  );
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyTurnPatchFailure(db, accountId, request, fingerprint, baseRevision),
+  );
+}
+
+async function readTurnRevision(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `SELECT revision FROM turn
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ? AND turn_id = ?`,
+    )
+    .bind(
+      accountId,
+      request.target.space_id,
+      request.target.room_id,
+      request.worldline_key,
+      request.target.turn_id,
+    )
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
+async function classifyTurnCreateFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const roomRevision = await readRoomRevision(
+    db,
+    accountId,
+    request.target.space_id,
+    request.target.room_id as string,
+  );
+  if (roomRevision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  const revision = await readTurnRevision(db, accountId, request);
+  if (revision !== null) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+async function classifyTurnPatchFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  baseRevision: number,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const revision = await readTurnRevision(db, accountId, request);
+  if (revision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (revision !== baseRevision) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
 const CHECKPOINT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
   segments: "segments_enc",
   summary_text: "summary_text_enc",
