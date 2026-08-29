@@ -320,6 +320,20 @@ GET /v1/sync/changes?after_seq=10400&limit=100
 - projection의 `server_seq`가 page 마지막 sequence보다 클 수 있다. client는 entity revision/server_seq가 더 낮거나 같은 후속 event를 idempotently 무시한다.
 - turn·bubble tombstone은 canonical 행의 soft-delete 상태로 영구 유지해 bootstrap과 pull 모두에서 삭제를 재현한다. v1 Worker는 tombstone 행을 물리 삭제하지 않는다.
 
+Query 계약:
+
+- `after_seq` 기본값은 0이며 canonical decimal safe integer `0...2^53-1`만 허용한다.
+- `limit` 기본값은 100, 범위는 `1...500`이다.
+- unknown·중복 query parameter, 빈 값, sign·leading zero·지수 철자는 `VALIDATION_FAILED`다.
+- 인증 account의 요청 시작 high watermark보다 큰 `after_seq`는 `VALIDATION_FAILED`다.
+- page snapshot은 요청 시작 시 `account.next_server_seq - 1`로 고정하고 `after_seq < server_seq <= watermark`를 오름차순으로 최대 `limit`개 읽는다.
+- row가 있으면 `scanned_through_seq`는 마지막 row sequence다. row가 없거나 마지막 row 뒤 watermark까지 event가 없으면 watermark로 전진한다. `has_more`는 같은 watermark 안에 다음 change row가 실제로 있을 때만 true다. sequence gap만으로 true가 되지 않는다.
+- v1은 page 내부 identity를 deduplicate하지 않고 change row마다 현재 projection을 붙인다. 같은 projection이 반복돼도 client의 revision/server-seq 적용 규칙으로 무해하다.
+
+`identity`는 문자열/blob이 아니라 entity별 canonical object다. `worldline_key`는 절대 노출하지 않고 `worldline_id`의 null 또는 UUID로 되돌린다. `projection`은 같은 registry가 읽은 현재 owner row의 flat canonical object이며 identity field도 포함한다. D1 encrypted column의 `_enc` suffix는 wire에서 제거하지만 Base64 envelope 문자열은 받은 그대로 보존한다. `account_id`는 인증 context이므로 projection에서 반복하지 않는다.
+
+Owner extension이 있는 room·turn·bubble·persona snapshot은 `extensions`를 `[{"key": <extension_key>, "value": <envelope>}]`의 key 오름차순 목록으로 포함한다. Room은 `room_ai_state_ref`의 네 exact-revision field를 null 포함해 병합하고 persona snapshot은 `current_snapshot_revision`을 null 포함해 병합한다. Attachment는 hash·size·state·wrapped key를 포함하지만 내부 `r2_object_key`는 제외한다. 이 registry를 changes와 bootstrap이 함께 사용하며 route별 projection mapping을 따로 만들지 않는다.
+
 ```json
 {
   "protocol_version": 1,
@@ -357,6 +371,18 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 - projection이 snapshot watermark보다 새 버전이어도 적용 가능하다. bootstrap 종료 뒤 `after_seq = snapshot_high_watermark_seq`로 pull하면 중복 event가 오지만 revision check로 무해하다.
 - cursor 변조·다른 account 재사용·만료는 `VALIDATION_FAILED`로 거부한다.
 - bootstrap 완료 전 remote 탭을 쓰기 가능 상태로 바꾸지 않는다.
+
+Bootstrap도 §4.2의 identity·projection registry를 그대로 사용한다. Page item은 `entity_type`, `identity`, `projection`이며 change sequence는 없다.
+
+- `limit` 기본값은 200, 범위는 `1...500`이고 query strictness는 changes와 같다.
+- 첫 page는 `account.next_server_seq - 1`을 `snapshot_high_watermark_seq`로 잡고 server-generated canonical uppercase UUID를 top-level `request_id`로 반환한다.
+- stable entity 순서는 `room`, `group_state`, `worldline`, `turn`, `bubble`, `engine_profile`, `persona_snapshot`, `checkpoint`, `attachment`다. 각 entity 안에서는 canonical storage primary-key 축을 오름차순으로 정렬하되 `worldline_key`는 cursor 내부 storage ordering에만 쓰고 projection에는 노출하지 않는다.
+- `next_cursor`는 다음 page가 있을 때만 non-null이다. Cursor payload는 version 1, account ID, snapshot watermark, 마지막 entity order·storage key, 만료 epoch seconds를 canonical JSON array로 직렬화하고 padding 없는 Base64URL로 인코딩한 뒤 HMAC-SHA256을 붙인다.
+- HMAC key는 `CURSOR_MAC_KEY`의 UTF-8 bytes이며 최소 32 bytes다. Cursor 유효기간은 발급부터 3600초다. 변조·non-canonical Base64URL·다른 account·만료·unknown version·짧은 server key는 `VALIDATION_FAILED`다.
+- Cursor는 opaque지만 secret은 아니다. Payload나 MAC을 로그에 쓰지 않으며 cursor가 있어도 현재 account 인증을 생략하지 않는다.
+- 첫 page 뒤 concurrent write가 cursor보다 앞선 storage key에 생겨 bootstrap에서 빠져도 그 sequence는 snapshot watermark보다 크므로 종료 뒤 changes pull이 회수한다. 더 최신 projection을 bootstrap에서 먼저 읽는 것도 허용한다.
+
+Changes와 bootstrap route가 인식되면 server-generated `request_id`를 만들고 success 및 content-free error envelope에 사용한다. Request ID·cursor·token·identity·projection은 로그에 출력하지 않는다. v1은 read replication을 쓰지 않으므로 `X-Sync-Bookmark`를 읽거나 반환하지 않는다.
 
 ## 5. D1 transaction 계약
 

@@ -34,7 +34,7 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M06 turn/bubble family | `2875ef4`, `7328825`, `60594d8` create·patch·order·attachment guard | local atomic handler 완료 |
 | M06 attachment handler | `ea731c7` allocated metadata·null revision·internal R2 key | local atomic handler 완료 |
 | M06 operation route | `d71d5eb`, `981490b` §2.2 envelope·validated request ID·content-free 500 | local route 완료 |
-| local R2 attachment flow | `849d399` streaming create-only upload; source 12,582,912 / ciphertext 12,582,946 | R2 checksum·complete·download 통합 대기 |
+| local R2 attachment flow | `849d399`, `6d054af`, `8a6117c`, `45e0824` checksum upload·ready event·download | local lifecycle 완료 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 
 물리 migration 파일 `0002_device_account_fk.sql`은 논리 M02가 아니라 **M01 account boundary의 FK 보완**이다. 논리 M02는 `room`·`group_state`·`worldline`이다.
