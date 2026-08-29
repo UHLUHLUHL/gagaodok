@@ -60,18 +60,18 @@ def seal_v1_envelope(key: bytes, nonce: bytes, plaintext: bytes, aad: bytes) -> 
 
 ---
 
-### Task 2: Swift Contract Crypto and Executable Test Target
+### Task 2: Swift Contract Crypto and Executable Test Harness
 
 **Files:**
-- Modify: `Package.swift`
 - Create: `Sources/KakaoSapiens/Services/SyncE2EE.swift`
 - Create: `Tests/KakaoSapiensE2EEContractTests/E2EEContractVectorTests.swift`
+- Create: `tools/test_swift_e2ee_contract.sh`
 
 **Interfaces:**
 - Consumes: root `tools/fixtures/e2ee_contract_vectors.json` and CryptoKit.
 - Produces: `SyncE2EE.Scope`, `SyncE2EE.AAD`, `deriveScopeKeys`, `encodeAAD`, `seal`, and `open`.
 
-- [ ] **Step 1: Add the isolated test target and a test that loads the root artifact and references missing `SyncE2EE` APIs**
+- [x] **Step 1: Add an isolated test harness that loads the root artifact and references missing `SyncE2EE` APIs**
 
 ```swift
 let envelope = try SyncE2EE.seal(
@@ -80,16 +80,21 @@ let envelope = try SyncE2EE.seal(
     nonce: vector.nonce,
     aad: vector.aad
 )
-XCTAssertEqual(envelope, vector.envelope)
+try require(envelope == vector.envelope, "envelope mismatch")
 ```
 
-- [ ] **Step 2: Run `swift test --filter E2EEContractVectorTests` and confirm RED because `SyncE2EE` is absent**
+- [x] **Step 2: Confirm RED because `SyncE2EE.swift` is absent**
 
-- [ ] **Step 3: Implement LP v1/HKDF/AAD/envelope using CryptoKit AES.GCM and strict pre-decrypt header validation**
+The selected Apple Command Line Tools contain neither `XCTest` nor `Testing`, so
+the executable harness compiles the production source and contract test in one
+module without adding a dependency. The initial run failed because the production
+source did not exist.
 
-- [ ] **Step 4: Add negative tests for changed identity/field/order/generation/algorithm and malformed Base64; run the focused Swift test until GREEN**
+- [x] **Step 3: Implement LP v1/HKDF/AAD/envelope using CryptoKit AES.GCM and strict pre-decrypt header validation**
 
-- [ ] **Step 5: Commit the Swift implementation, package test target, and tests**
+- [x] **Step 4: Add negative tests for changed identity/field/order/generation/algorithm and malformed Base64; run the focused Swift test until GREEN**
+
+- [ ] **Step 5: Commit the Swift implementation and executable contract harness**
 
 ---
 
@@ -138,4 +143,3 @@ assertArrayEquals(vector.envelope, envelope)
 - [ ] **Step 3: Record only actual evidence and remaining pairing/recovery or device-key-storage gaps in canonical docs**
 
 - [ ] **Step 4: Run `git diff --check`, review the scoped diff, and commit the documentation gate**
-
