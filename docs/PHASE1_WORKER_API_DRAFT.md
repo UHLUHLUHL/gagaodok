@@ -484,12 +484,18 @@ retryable `STORAGE_UNAVAILABLE`이며, 실패한 batch는 row·ledger·sequence�
 upload 규칙:
 
 - `Content-Length` 필수. 없거나 ciphertext 상한 초과면 body를 읽기 전에 거부한다.
+- PUT은 같은 account이면서 token의 `registered_space_id`가 attachment의 `origin_space_id`와 같은 device만 허용한다. `allocated`에서만 실제 R2 write를 수행한다.
+- 이미 `uploaded`인 PUT retry는 R2 `head()`가 존재하고 size가 D1 metadata와 같으면 body를 읽거나 기존 object를 덮어쓰지 않고 성공으로 응답한다. object가 없거나 size가 다르면 retryable `STORAGE_UNAVAILABLE`이다.
+- `ready`, `abandoned`, `tombstoned`, `garbage_collected` 상태의 PUT은 body를 읽기 전에 `ATTACHMENT_STATE_CONFLICT`로 거부한다.
 - client가 보낸 `ciphertext_hash`, `key_generation`, source byte size, ciphertext byte size를 metadata에 보존한다.
 - Worker는 v1 hot path에서 12MiB 전체를 buffer해 hash하지 않는다. AEAD 검증은 download client가 하고, Phase 2에서 streaming hash의 CPU 비용을 측정한다.
 - upload 성공 전 `ready`로 보이지 않는다.
-- complete는 R2 object 존재와 byte size를 확인한다. 실패하면 `uploaded/allocated` 상태를 유지해 재시도할 수 있다.
-- R2 성공 뒤 D1 complete가 실패한 orphan은 TTL cleanup 대상이지만 Phase 1에서는 삭제하지 않고 보고서로만 찾는다.
-- download response는 `Cache-Control: private, no-store`이며 object key를 외부 URL로 노출하지 않는다.
+- complete도 origin space device만 허용한다. `uploaded`에서 R2 object 존재와 byte size를 확인한 뒤 `ready`로 CAS 전이하며, 이미 `ready`이면 새 sequence를 소비하지 않는 멱등 성공이다. 다른 상태는 `ATTACHMENT_STATE_CONFLICT`다.
+- `uploaded` 전이는 전송 중간 상태이므로 account sequence·change log를 소비하지 않는다. `ready` 전이는 attachment row의 `server_seq`를 새 값으로 갱신하고 revision null인 attachment `change_log` 한 행을 발행한 뒤 account sequence를 증가시킨다. HTTP endpoint 전이에는 client operation ID가 없으므로 `operation_log`는 만들지 않는다.
+- R2 PUT 성공 뒤 D1 `uploaded` 전이가 실패한 orphan object는 TTL cleanup 대상이지만 Phase 1에서는 삭제하지 않고 보고서로만 찾는다. Client는 같은 PUT을 재시도할 수 있다.
+- download는 origin space와 무관하게 같은 account의 유효한 device가 `ready` object를 받을 수 있다. 다른 account의 같은 UUID와 missing row는 모두 content 없는 `NOT_FOUND`, non-ready row는 `ATTACHMENT_STATE_CONFLICT`다.
+- download response는 `Content-Type: application/octet-stream`, D1 metadata와 같은 `Content-Length`, `Cache-Control: private, no-store`이며 object key를 외부 URL·body·log에 노출하지 않는다.
+- allocated row의 abandoned/TTL cleanup과 rate limiting은 이 local slice에 넣지 않지만 remote deploy 전 별도 gate로 닫는다.
 
 ## 7. Pairing·recovery 경계
 
