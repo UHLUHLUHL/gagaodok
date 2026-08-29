@@ -1,6 +1,6 @@
 import { validationFailed } from "../contracts/error";
-import { BOOTSTRAP_ENTITY_ORDER } from "./projection";
-import type { StorageKey } from "./projection";
+import { BOOTSTRAP_ENTITY_ORDER, storageKeyShape } from "./projection";
+import type { EntityType, StorageKey } from "./projection";
 
 /**
  * The bootstrap cursor — API draft 4.3.
@@ -223,6 +223,20 @@ export async function verifyCursor(
   }
   if (!Array.isArray(storageKey) || !storageKey.every(isStorageKeyValue)) {
     throw validationFailed();
+  }
+  // A valid signature says the token was issued here, not that its key can
+  // address a row. A key of the wrong arity or type would reach SQLite as a
+  // row value it cannot compare, and a request problem would come back as a
+  // storage failure. The shape is checked here, and never described back.
+  const shape = storageKeyShape(BOOTSTRAP_ENTITY_ORDER[entityIndex] as EntityType);
+  if (storageKey.length !== shape.length) {
+    throw validationFailed();
+  }
+  for (let axis = 0; axis < shape.length; axis += 1) {
+    const value = storageKey[axis];
+    if (shape[axis] === "integer" ? typeof value !== "number" : typeof value !== "string") {
+      throw validationFailed();
+    }
   }
   if (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt)) {
     throw validationFailed();

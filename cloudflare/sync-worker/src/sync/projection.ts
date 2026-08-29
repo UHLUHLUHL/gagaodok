@@ -273,6 +273,29 @@ const ENTITY_SPECS: Readonly<Record<EntityType, EntitySpec>> = Object.freeze({
   },
 });
 
+/**
+ * The two key axes that are integers rather than text. Every other axis is a
+ * canonical UUID or the space enum, and so is a string.
+ */
+const INTEGER_KEY_COLUMNS: ReadonlySet<string> = new Set(["profile_revision", "snapshot_revision"]);
+
+export type StorageKeyType = "text" | "integer";
+
+/**
+ * The exact shape of an entity storage key: how many axes it has, and what
+ * each one is.
+ *
+ * Exported because the bootstrap cursor has to refuse a position no entity
+ * could occupy. A signature proves the token was issued here, not that its key
+ * can address a row, and a key of the wrong arity would reach SQLite as a row
+ * value it cannot compare.
+ */
+export function storageKeyShape(entityType: EntityType): readonly StorageKeyType[] {
+  return ENTITY_SPECS[entityType].keyColumns.map((column) =>
+    INTEGER_KEY_COLUMNS.has(column) ? "integer" : "text",
+  );
+}
+
 export function getEntitySpec(entityType: EntityType): EntitySpec {
   return ENTITY_SPECS[entityType];
 }

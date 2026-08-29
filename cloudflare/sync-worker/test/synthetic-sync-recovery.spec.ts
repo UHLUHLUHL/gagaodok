@@ -3,6 +3,7 @@ import { handleAttachmentComplete } from "../src/routes/attachments";
 import type { Env } from "../src/env";
 import {
   ATTACHMENT,
+  CURSOR_MAC_KEY,
   DEVICE_MAC,
   MAC,
   ROOM_SHARED,
@@ -313,5 +314,63 @@ describe("what never leaves the server", () => {
     // Nothing was logged at all, which is the strongest form of the rule.
     expectNoLeak(captured.join("\n"), objectKey);
     expect(captured.join("\n")).not.toContain(TOKEN_MAC);
+  });
+});
+
+describe("the bootstrap cursor's storage key", () => {
+  it("refuses a shape no entity could have, even with a valid signature", async () => {
+    await postOperation(createRoom(operationId(1), MAC, ROOM_SHARED, DEVICE_MAC));
+    await postOperation(createTurn(operationId(2)));
+
+    const key = new TextEncoder().encode(CURSOR_MAC_KEY) as Uint8Array;
+    const macKey = await crypto.subtle.importKey(
+      "raw",
+      key as BufferSource,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const encode = (bytes: Uint8Array): string => {
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    };
+    const sign = async (payload: unknown[]): Promise<string> => {
+      const bytes = new TextEncoder().encode(JSON.stringify(payload));
+      const signature = new Uint8Array(
+        await crypto.subtle.sign("HMAC", macKey, bytes as BufferSource),
+      );
+      return `${encode(bytes)}.${encode(signature)}`;
+    };
+    const expiry = Math.floor(Date.now() / 1000) + 600;
+    const account = "A0000000-0000-4000-8000-000000000001";
+
+    // Each of these signs correctly. None of them names a position this
+    // server could ever have issued.
+    const impossible: unknown[][] = [
+      // bubble (index 4) takes five axes; two cannot address a row.
+      [1, account, 1, 4, [MAC, ROOM_SHARED], expiry],
+      // room (index 0) takes two; four is not a room key either.
+      [1, account, 1, 0, [MAC, ROOM_SHARED, "", "x"], expiry],
+      // an empty key is not the same as "start from the beginning".
+      [1, account, 1, 0, [], expiry],
+      // engine_profile's third axis is an integer revision, not a string.
+      [1, account, 1, 5, [MAC, ROOM_SHARED, "3"], expiry],
+      // and room's axes are strings, not integers.
+      [1, account, 1, 0, [1, 2], expiry],
+    ];
+
+    for (const payload of impossible) {
+      const token = await sign(payload);
+      const response = await getBootstrap(`?cursor=${encodeURIComponent(token)}&limit=5`);
+      expect(response.status, `accepted an impossible key shape`).toBe(400);
+      expect(JSON.parse(response.text)["error"]).toEqual({
+        code: "VALIDATION_FAILED",
+        retryable: false,
+      });
+      // The refusal describes nothing about the key it refused.
+      expect(response.text).not.toContain(ROOM_SHARED);
+      expectNoLeak(response.text);
+    }
   });
 });
