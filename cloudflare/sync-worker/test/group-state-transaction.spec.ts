@@ -264,6 +264,59 @@ describe("create_group_state", () => {
     expect((caught as { detail?: unknown }).detail).toEqual({ current_revision: 0 });
     expect(await snapshot()).toBe(before);
   });
+
+  it("applies a concurrent identical create exactly once", async () => {
+    const payload = body({ set: { participants: envelope(40) } });
+    const results = await Promise.all([
+      applyOperationRequest(makeRequest(payload), db),
+      applyOperationRequest(makeRequest(payload), db),
+    ]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(["applied", "replayed"]);
+    expect(results[0].server_seq).toBe(results[1].server_seq);
+    expect(results[0].revision).toBe(results[1].revision);
+    expect(results[0].revision).toBe(0);
+
+    expect(await countOf("group_state")).toBe(1);
+    expect(await countOf("operation_log")).toBe(1);
+    expect(await countOf("change_log")).toBe(1);
+    // One operation, one sequence: the account moved from 1 to 2, not to 3.
+    expect(await nextSeq()).toBe(2);
+    expect(await countOf("transaction_guard")).toBe(0);
+  });
+
+  it("lets only one of two operations create the same identity", async () => {
+    // Distinct envelopes so the stored row proves which operation won and
+    // that the loser's ciphertext was never written.
+    const envelopes: Record<string, string> = {
+      [OPERATION]: envelope(41),
+      [OPERATION_2]: envelope(42),
+    };
+    const outcomes = await Promise.allSettled([
+      applyOperationRequest(makeRequest(body({ set: { participants: envelopes[OPERATION] } })), db),
+      applyOperationRequest(
+        makeRequest(body({ operation_id: OPERATION_2, set: { participants: envelopes[OPERATION_2] } })),
+        db,
+      ),
+    ]);
+
+    expect(outcomes.filter((o) => o.status === "fulfilled").length).toBe(1);
+    const rejected = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
+    expect((rejected.reason as { code?: string }).code).toBe("REVISION_CONFLICT");
+
+    expect(await countOf("group_state")).toBe(1);
+    expect(await countOf("operation_log")).toBe(1);
+    expect(await countOf("change_log")).toBe(1);
+    expect(await nextSeq()).toBe(2);
+    expect(await countOf("transaction_guard")).toBe(0);
+
+    const log = await db.prepare("SELECT operation_id FROM operation_log").first<{ operation_id: string }>();
+    const winner = log?.operation_id as string;
+    const loser = winner === OPERATION ? OPERATION_2 : OPERATION;
+    const row = await groupRow();
+    expect(row?.["participants_enc"]).toBe(envelopes[winner]);
+    expect(row?.["participants_enc"]).not.toBe(envelopes[loser]);
+  });
 });
 
 describe("patch_group_state", () => {

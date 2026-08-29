@@ -271,6 +271,79 @@ describe("create_worldline", () => {
     expect((caught as { detail?: unknown }).detail).toEqual({ current_revision: 0 });
     expect(await snapshot()).toBe(before);
   });
+
+  it("applies a concurrent identical create exactly once", async () => {
+    const payload = body({ set: { name: envelope(40) } });
+    const results = await Promise.all([
+      applyOperationRequest(makeRequest(payload), db),
+      applyOperationRequest(makeRequest(payload), db),
+    ]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(["applied", "replayed"]);
+    expect(results[0].server_seq).toBe(results[1].server_seq);
+    expect(results[0].revision).toBe(results[1].revision);
+    expect(results[0].revision).toBe(0);
+
+    expect(await countOf("worldline")).toBe(1);
+    expect(await countOf("operation_log")).toBe(1);
+    expect(await countOf("change_log")).toBe(1);
+    // One operation, one sequence: the account moved from 1 to 2, not to 3.
+    expect(await nextSeq()).toBe(2);
+    expect(await countOf("transaction_guard")).toBe(0);
+
+    const rows = await db.prepare("SELECT worldline_id, worldline_key FROM worldline").all();
+    for (const stored of rows.results as Record<string, unknown>[]) {
+      expect(stored["worldline_id"]).toBe(WORLDLINE);
+      expect(stored["worldline_key"]).toBe(WORLDLINE);
+    }
+    const empty = await db
+      .prepare("SELECT COUNT(*) AS n FROM worldline WHERE worldline_key IS NULL OR worldline_key = ''")
+      .first<{ n: number }>();
+    expect(empty?.n).toBe(0);
+  });
+
+  it("lets only one of two operations create the same identity", async () => {
+    // Distinct envelopes so the stored row proves which operation won and
+    // that the loser's ciphertext was never written.
+    const envelopes: Record<string, string> = {
+      [OPERATION]: envelope(41),
+      [OPERATION_2]: envelope(42),
+    };
+    const outcomes = await Promise.allSettled([
+      applyOperationRequest(makeRequest(body({ set: { name: envelopes[OPERATION] } })), db),
+      applyOperationRequest(
+        makeRequest(body({ operation_id: OPERATION_2, set: { name: envelopes[OPERATION_2] } })),
+        db,
+      ),
+    ]);
+
+    expect(outcomes.filter((o) => o.status === "fulfilled").length).toBe(1);
+    const rejected = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
+    expect((rejected.reason as { code?: string }).code).toBe("REVISION_CONFLICT");
+
+    expect(await countOf("worldline")).toBe(1);
+    expect(await countOf("operation_log")).toBe(1);
+    expect(await countOf("change_log")).toBe(1);
+    expect(await nextSeq()).toBe(2);
+    expect(await countOf("transaction_guard")).toBe(0);
+
+    const log = await db.prepare("SELECT operation_id FROM operation_log").first<{ operation_id: string }>();
+    const winner = log?.operation_id as string;
+    const loser = winner === OPERATION ? OPERATION_2 : OPERATION;
+    const row = await worldlineRow();
+    expect(row?.["name_enc"]).toBe(envelopes[winner]);
+    expect(row?.["name_enc"]).not.toBe(envelopes[loser]);
+
+    const rows = await db.prepare("SELECT worldline_id, worldline_key FROM worldline").all();
+    for (const stored of rows.results as Record<string, unknown>[]) {
+      expect(stored["worldline_id"]).toBe(WORLDLINE);
+      expect(stored["worldline_key"]).toBe(WORLDLINE);
+    }
+    const empty = await db
+      .prepare("SELECT COUNT(*) AS n FROM worldline WHERE worldline_key IS NULL OR worldline_key = ''")
+      .first<{ n: number }>();
+    expect(empty?.n).toBe(0);
+  });
 });
 
 describe("patch_worldline", () => {
