@@ -70,6 +70,7 @@ flowchart TB
 | attachment atomic handler | `ea731c7`; Codex focused 249 tests | ✅ | operation HTTP route envelope |
 | D1 transaction·CAS·idempotency | `0008` ledger와 runtime-enabled operation 15개 atomic handler | ✅ | HTTP route와 Phase 2 다중 isolate 합성 검증 |
 | operation HTTP route | `d71d5eb`, `981490b`; Codex focused 20 tests | ✅ | local R2 attachment routes |
+| local R2 upload route | `849d399`; Codex focused 70 tests | 🟡 | R2 SHA-256 checksum 강제 뒤 complete·download 통합 |
 | R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약, `5299b27` persistence | 🟡 | M06 ledger 뒤 local R2 state transition test |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
@@ -129,7 +130,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 | Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M05, device token 인증, M06 ledger DDL, runtime-enabled operation 15개의 atomic handler와 `POST /v1/sync/operations` HTTP route는 모두 승인됐다. 다음은 별도 allocation route 없이 local R2 upload·complete·download state flow를 연다. Upload·complete는 origin space device에 한정하고, ready 전이만 account sequence와 attachment change event를 발행한다.
+M03~M05, device token 인증, M06 ledger DDL, runtime-enabled operation 15개의 atomic handler와 `POST /v1/sync/operations` HTTP route는 모두 승인됐다. Local R2 upload의 streaming·create-only·D1 수렴 경계도 통과했으며, 다음 묶음에서 저장 시 R2 SHA-256 checksum을 강제하고 complete·download와 전체 상태 회귀를 함께 닫는다. Upload·complete는 origin space device에 한정하고, ready 전이만 account sequence와 attachment change event를 발행한다.
 
 ## 🔗 관련 문서
 

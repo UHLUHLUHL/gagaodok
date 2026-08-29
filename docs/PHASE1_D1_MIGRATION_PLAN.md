@@ -143,7 +143,7 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M06 attachment handler 계약: `create_attachment`만 allocation하며 내부 난수 R2 key·null ledger revision·duplicate state conflict 사용
 - [x] M06: runtime-enabled operation 15개 route-independent atomic dispatch 완성 (`ea731c7`)
 - [x] M06: `POST /v1/sync/operations` HTTP envelope와 unexpected 500 회귀 승인 (`d71d5eb`, `981490b`)
-- [ ] local R2: allocated upload·uploaded retry·ready event·account-scoped download 구현
+- [ ] local R2: upload 구현 (`849d399`), R2 checksum 보정과 ready event·account-scoped download 통합 대기
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
 

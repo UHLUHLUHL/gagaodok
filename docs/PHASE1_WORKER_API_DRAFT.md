@@ -484,7 +484,7 @@ retryable `STORAGE_UNAVAILABLE`이며, 실패한 batch는 row·ledger·sequence�
 upload 규칙:
 
 - `Content-Length` 필수. 없거나 ciphertext 상한 초과면 body를 읽기 전에 거부한다.
-- PUT은 같은 account이면서 token의 `registered_space_id`가 attachment의 `origin_space_id`와 같은 device만 허용한다. `allocated`에서만 실제 R2 write를 수행하며 R2 `put()`에 create-only 조건(`onlyIf.etagDoesNotMatch = "*"`)을 건다. 동시에 같은 attachment를 올려도 먼저 생성된 object만 남고 후속 body가 같은 key를 덮어쓰지 못한다.
+- PUT은 같은 account이면서 token의 `registered_space_id`가 attachment의 `origin_space_id`와 같은 device만 허용한다. `allocated`에서만 실제 R2 write를 수행하며 R2 `put()`에 create-only 조건(`onlyIf.etagDoesNotMatch = "*"`)과 D1의 lowercase hex `ciphertext_hash`를 decode한 32-byte `sha256` checksum을 함께 건다. R2가 stream bytes를 checksum과 대조하므로 Worker가 body를 buffer·재해시하지 않아도 짧거나 변조된 body를 object로 확정하지 않는다. 동시에 같은 attachment를 올려도 먼저 검증·생성된 object만 남고 후속 body가 같은 key를 덮어쓰지 못한다.
 - create-only 조건 실패는 곧바로 일반 오류로 내보내지 않는다. R2 `head()`가 존재하고 size가 D1 metadata와 같으면 선행·동시 PUT의 성공으로 간주해 D1을 `uploaded`로 수렴시키고, object가 없거나 size가 다르면 retryable `STORAGE_UNAVAILABLE`이다.
 - 이미 `uploaded`인 PUT retry는 R2 `head()`가 존재하고 size가 D1 metadata와 같으면 body를 읽거나 기존 object를 덮어쓰지 않고 성공으로 응답한다. object가 없거나 size가 다르면 retryable `STORAGE_UNAVAILABLE`이다.
 - `ready`, `abandoned`, `tombstoned`, `garbage_collected` 상태의 PUT은 body를 읽기 전에 `ATTACHMENT_STATE_CONFLICT`로 거부한다.
