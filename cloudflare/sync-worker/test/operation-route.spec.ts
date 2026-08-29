@@ -2,6 +2,8 @@ import { applyD1Migrations, env } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
 import type { D1Migration } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { handleOperationRequest } from "../src/routes/operations";
+import type { Env } from "../src/env";
 
 declare global {
   namespace Cloudflare {
@@ -302,6 +304,41 @@ describe("POST /v1/sync/operations — errors with no request id", () => {
     expect(response?.status).toBe(413);
     const body = (await response?.json()) as Record<string, unknown>;
     expect(body["request_id"]).toBeUndefined();
+  });
+});
+
+describe("POST /v1/sync/operations — unexpected failure", () => {
+  it("answers a content-free 500 and says nothing about the cause", async () => {
+    // A storage double that throws a plain Error rather than an ApiError. The
+    // production path is untouched: only the binding handed to the route is
+    // synthetic, and the throw happens inside device authentication.
+    const SENTINEL = "storage exploded at line 42 while running SELECT token_hash";
+    const brokenEnv = {
+      DB: {
+        prepare(): never {
+          throw new Error(SENTINEL);
+        },
+      },
+    };
+    const request = new Request(`https://example.test${PATH}`, {
+      method: "POST",
+      headers: new Headers({ Authorization: `Device ${TOKEN}` }),
+      body: JSON.stringify(patchRoom()),
+    });
+
+    // The exported worker resolves its own bindings, so the double has to be
+    // handed to the route function itself.
+    const response = await handleOperationRequest(request, brokenEnv as unknown as Env);
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body["error"]).toEqual({ code: "INTERNAL_ERROR", retryable: false });
+    expect(body["request_id"]).toBeUndefined();
+
+    const serialised = JSON.stringify(body);
+    expect(serialised).not.toContain(SENTINEL);
+    expect(serialised).not.toContain("exploded");
+    expect(serialised).not.toContain("line 42");
+    expectContentFree(serialised);
   });
 });
 
