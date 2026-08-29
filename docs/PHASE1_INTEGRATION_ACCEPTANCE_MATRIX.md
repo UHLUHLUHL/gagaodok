@@ -52,7 +52,7 @@ flowchart TB
 | 제품 방향·공개 범위 | [사용자 결정 17개](CROSS_DEVICE_SYNC_USER_DECISIONS.md) | ✅ | 구현은 별도 승인 필요 |
 | identity·`worldline_id`·`bubble_order` | [canonical schema](PHASE1_CANONICAL_SCHEMA_DRAFT.md), Python contract fixture | ✅ | local D1 제약 test |
 | legacy turn·비파괴 조사 | [Phase 0 계획](PHASE0_INVENTORY_PLAN.md), inventory tool·집계 보고서 | ✅ | 합성 importer test |
-| E2EE key·AAD·pairing 계약 | [E2EE 제안서](2026-08-27-sync-encryption-proposal.md), vector test | ✅ | Worker pairing endpoint test |
+| E2EE key·AAD·pairing 계약 | [E2EE 제안서](2026-08-27-sync-encryption-proposal.md), vector test | ✅ | 앱 onboarding UI |
 | canonical field ownership·extension | canonical schema, Python contract fixture | ✅ | D1 field·extension row 구현 |
 | Worker health·기본 boundary | `2fa06b3`의 local Worker 71 tests | ✅ | D1 연결 뒤 health 회귀 test |
 | operation target·field envelope 검사 | `e83bce1`, [Worker validator 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md) | ✅ | handler가 exported operation table 재사용 |
@@ -76,8 +76,10 @@ flowchart TB
 | pull·bootstrap·cursor | `5a05efa`, `f289df5`, `84acc8c`; Codex focused 76 tests | ✅ | Phase 2 연결 E2E |
 | Phase 2 local synthetic E2E | `7cdeabe`, `5c54400`, `9c2827d`; Worker·D1·R2 recovery·비노출 | ✅ | pairing·recovery와 client outbox |
 | Swift·Kotlin field E2EE fixed vector | `d9a2ac0`, `a0dd551`, `cd0999d`; 공용 artifact exact bytes | ✅ | 키 보관·pairing·recovery |
-| pairing·recovery persistence | `0009_pairing_recovery.sql`; enrollment/recovery/session/claim D1 제약 | ✅ | local HTTP endpoint와 negative E2E |
-| 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | local client 저장·networking 구현 |
+| pairing·recovery persistence·HTTP | `0331043`, `82706f6`, `2711ddc`, `739b6ab`; enrollment/recovery/session/claim D1·route | ✅ | rate limit·expiry cleanup |
+| 앱 device-local key custody | `3dd2635`; macOS ThisDeviceOnly Keychain, Android non-exportable Keystore wrapping | ✅ | onboarding UI·실제 client 연결 |
+| 앱 durable outbox | `325a2cf`; 양 플랫폼 exact raw-body atomic journal·restart test | ✅ | 기존 local mutation 연결·HTTP drain |
+| 앱 remote UI | canonical 계약만 존재 | ⏳ | local client networking 뒤 구현 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
 ## 🔍 Phase 1 통합 gate
@@ -117,6 +119,9 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] local Worker + local D1 + local R2 synthetic end-to-end test (`7cdeabe`)
 - [x] request·error·metric에서 content/token/ciphertext가 새지 않는 test (`5c54400`)
 - [x] 실데이터 없이 fixture만 사용했다는 commit-level 확인 (`7cdeabe`, `5c54400`)
+- [x] 최초 enrollment·recovery·pairing local HTTP와 secret 비노출 회귀 (`82706f6`, `2711ddc`, `739b6ab`)
+- [x] 양 플랫폼 master key·device token의 device-local custody 경계 (`3dd2635`)
+- [x] 같은 operation retry가 최초 raw bytes를 재사용하는 durable outbox (`325a2cf`)
 
 ## ⚠️ 지금 하면 안 되는 일
 
@@ -133,10 +138,11 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 | Codex | canonical docs, 공용 crypto artifact, Swift·Kotlin client crypto와 후속 local integration | fixed-vector 통합 판정과 pairing·outbox·remote UI gate |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M06, operation·attachment HTTP route, local R2 lifecycle, changes/bootstrap,
-Phase 2 local synthetic E2E와 Swift·Kotlin field E2EE fixed vector까지 local 통합
-승인됐다. 다음 gate는 pairing·recovery, client durable outbox·remote UI와 운영 안전
-경계이며, remote Cloudflare resource와 실제 data는 계속 금지한다.
+M03~M06, operation·attachment·pairing·recovery HTTP route, local R2 lifecycle,
+changes/bootstrap, Phase 2 local synthetic E2E, 양 플랫폼 E2EE·device-local key
+custody·durable outbox까지 local 통합 승인됐다. 다음 gate는 client networking·remote
+UI와 rate limit·expiry/orphan cleanup 같은 운영 안전 경계이며, remote Cloudflare
+resource와 실제 data는 계속 금지한다.
 
 ## 🔗 관련 문서
 

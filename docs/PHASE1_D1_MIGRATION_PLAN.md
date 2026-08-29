@@ -73,7 +73,7 @@ flowchart TB
 | 인증 경계 | `0007_device_token.sql` | `fa49ed1` | ✅ token hash storage·local auth boundary 승인; 논리 M-stage 아님 |
 | M06 ledger DDL | `0008_atomic_write_ledger.sql` | `d33ee67`, `4a8bf26` | ✅ sequence·operation/change log·guard schema 승인 |
 | M06 handler·HTTP·read | `0008` 기반 runtime | family별 atomic handler, route, R2, changes/bootstrap | ✅ Phase 2 local E2E 승인 |
-| Pairing·recovery 경계 | `0009_pairing_recovery.sql` | local DDL·stage fixture | ✅ schema 구현; endpoint 구현 대기, 논리 M-stage 아님 |
+| Pairing·recovery 경계 | `0009_pairing_recovery.sql` | local DDL·stage fixture·HTTP route | ✅ enrollment/recovery/pairing local endpoint까지 구현, 논리 M-stage 아님 |
 
 물리 파일 번호는 논리 M-stage와 같지 않다. `0001`과 `0002`가 함께 논리 M01이고, 논리 M02~M05는 각각 physical `0003`~`0006`이다. `0007`은 M06 전의 cross-cutting device 인증 migration이며, M06 ledger는 physical `0008`이다. `0009`는 conversation schema 이후의 최초 enrollment·pairing·recovery security boundary다. M02~M05 row의 nullable `server_seq` column은 canonical row shape이지만 값을 발급하지 않는다. `account.next_server_seq`와 실제 sequence 할당은 M06에만 추가한다.
 
