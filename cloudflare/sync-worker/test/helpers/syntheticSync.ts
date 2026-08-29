@@ -29,6 +29,7 @@ declare global {
 }
 
 export const db = env.DB;
+export const CURSOR_MAC_KEY = env.CURSOR_MAC_KEY;
 export const bucket = env.ATTACHMENTS;
 const worker = (exports as { default: ExportedHandler }).default;
 type WorkerRequest = Parameters<NonNullable<ExportedHandler["fetch"]>>[0];
