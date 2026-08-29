@@ -6,6 +6,7 @@ import {
   handleAttachmentUpload,
   matchAttachmentPath,
 } from "./routes/attachments";
+import { handleChangesRequest } from "./routes/changes";
 import { handleOperationRequest } from "./routes/operations";
 
 export default {
@@ -18,6 +19,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/v1/sync/operations") {
       return await handleOperationRequest(request, env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/v1/sync/changes") {
+      return await handleChangesRequest(request, env);
     }
 
     const attachment = matchAttachmentPath(url.pathname);
