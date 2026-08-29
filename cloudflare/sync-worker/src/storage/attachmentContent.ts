@@ -307,3 +307,189 @@ export async function uploadAttachmentContent(
       throw new ApiError("ATTACHMENT_STATE_CONFLICT");
   }
 }
+
+/**
+ * `POST /v1/attachments/{attachment_id}/complete` — API draft §6.3.
+ *
+ * Where the upload is transfer-internal, this is the transition other devices
+ * are waiting for: it is the point at which the attachment becomes readable,
+ * so it is the only one of the two that consumes an account sequence and files
+ * a `change_log` row.
+ */
+
+/** Highest allocatable sequence; `2^53` is the exhausted sentinel (§5.3). */
+const MAX_ALLOCATABLE_SEQ = 9007199254740991;
+const EXHAUSTED_SENTINEL = 9007199254740992;
+
+const CURRENT_SEQ = "(SELECT next_server_seq FROM account WHERE account_id = ?)";
+
+/**
+ * Refuse a request that carries a body.
+ *
+ * The body is never read: `complete` takes all of its meaning from the path
+ * and the token, and a handler that parsed a body here would be a second,
+ * undeclared way to say what to do. A declared length is the whole check.
+ */
+function assertNoRequestBody(request: Request): void {
+  const declared = request.headers.get("Content-Length");
+  if (declared !== null && declared !== "0") {
+    throw validationFailed();
+  }
+  if (request.body !== null) {
+    // A body with no declared length — chunked, or a directly constructed
+    // request — is refused on sight rather than drained and ignored.
+    throw validationFailed();
+  }
+}
+
+async function sequenceExhausted(db: D1Database, accountId: string): Promise<boolean> {
+  try {
+    const account = await db
+      .prepare("SELECT next_server_seq FROM account WHERE account_id = ?")
+      .bind(accountId)
+      .first<{ next_server_seq: number }>();
+    return account !== null && account.next_server_seq >= EXHAUSTED_SENTINEL;
+  } catch {
+    throw storageUnavailable();
+  }
+}
+
+/**
+ * Explain a batch that did not apply, by asking storage rather than the driver.
+ *
+ * The D1 error object is never inspected: a bound value or a constraint name
+ * in a message would describe the row back to the caller.
+ */
+async function classifyCompleteFailure(
+  db: D1Database,
+  accountId: string,
+  attachmentId: string,
+): Promise<void> {
+  const current = await readAttachment(db, accountId, attachmentId);
+  if (current === null) {
+    throw new ApiError("NOT_FOUND");
+  }
+  if (current.state === "ready") {
+    // A concurrent complete won the race. Both callers wanted the same end
+    // state, and exactly one sequence was consumed to reach it.
+    return;
+  }
+  if (current.state !== "uploaded") {
+    throw new ApiError("ATTACHMENT_STATE_CONFLICT");
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    // Not retryable: no later attempt can allocate a sequence either, and D1
+    // is left exactly as it was.
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+/**
+ * Move `uploaded` to `ready` in one transaction.
+ *
+ * `batch()` is a single transaction, so a CAS miss must be a constraint
+ * violation rather than an `UPDATE 0 rows` the batch would happily accept —
+ * that is what the `transaction_guard` insert is for, exactly as the operation
+ * handlers use it. Its `operation_id` is a server-generated UUID because an
+ * HTTP transition has no client operation id; it lives only for the length of
+ * the batch and never reaches a response, an error or a log.
+ *
+ * No `operation_log` row is written for the same reason: that table is keyed
+ * by the client's operation id and exists to answer replays, and there is no
+ * replay identity here to answer with.
+ */
+async function markReady(
+  db: D1Database,
+  accountId: string,
+  attachmentId: string,
+): Promise<void> {
+  const guardId = crypto.randomUUID().toUpperCase();
+
+  try {
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO transaction_guard (account_id, operation_id, ok)
+           VALUES (?, ?,
+             ((SELECT COUNT(*) FROM attachment
+                WHERE account_id = ? AND attachment_id = ? AND state = 'uploaded') = 1
+              AND ${CURRENT_SEQ} <= ${MAX_ALLOCATABLE_SEQ}))`,
+        )
+        .bind(accountId, guardId, accountId, attachmentId, accountId),
+      db
+        .prepare(
+          `UPDATE attachment
+              SET state = 'ready', server_seq = ${CURRENT_SEQ}
+            WHERE account_id = ? AND attachment_id = ? AND state = 'uploaded'`,
+        )
+        .bind(accountId, accountId, attachmentId),
+      db
+        .prepare(
+          `INSERT INTO change_log
+             (account_id, server_seq, entity_type, change_kind, revision, attachment_id)
+           VALUES (?, ${CURRENT_SEQ}, 'attachment', 'upsert', NULL, ?)`,
+        )
+        .bind(accountId, accountId, attachmentId),
+      db
+        .prepare("UPDATE account SET next_server_seq = next_server_seq + 1 WHERE account_id = ?")
+        .bind(accountId),
+      db
+        .prepare("DELETE FROM transaction_guard WHERE account_id = ? AND operation_id = ?")
+        .bind(accountId, guardId),
+    ]);
+  } catch {
+    await classifyCompleteFailure(db, accountId, attachmentId);
+    return;
+  }
+
+  const applied = await readAttachment(db, accountId, attachmentId);
+  if (applied === null || applied.state !== "ready") {
+    throw storageUnavailable();
+  }
+}
+
+/**
+ * Apply one completion.
+ *
+ * Resolves when the attachment is `ready`; every other outcome throws an
+ * `ApiError`. The caller turns that into the response.
+ */
+export async function completeAttachmentUpload(
+  request: Request,
+  env: Env,
+  attachmentId: string,
+): Promise<void> {
+  const auth = await authenticateDevice(request, env.DB);
+  assertNoRequestBody(request);
+
+  const row = await readAttachment(env.DB, auth.account_id, attachmentId);
+  if (row === null) {
+    throw new ApiError("NOT_FOUND");
+  }
+  if (!isSpaceId(row.origin_space_id)) {
+    throw new ApiError("AUTH_INVALID");
+  }
+  // §6.3: like the upload, completion belongs to the space the attachment came
+  // from. Download is the wider, account-scoped permission.
+  assertAuthenticatedWriteSpace(auth, row.origin_space_id);
+
+  switch (row.state) {
+    case "ready":
+      // Idempotent: R2 is not written again and no second sequence is spent.
+      return;
+
+    case "uploaded":
+      // The object must actually be there, at the size the metadata fixed,
+      // before anything is told it can be read.
+      if (!(await objectMatchesMetadata(env.ATTACHMENTS, row.r2_object_key, row.ciphertext_byte_size))) {
+        throw storageUnavailable();
+      }
+      await markReady(env.DB, auth.account_id, attachmentId);
+      return;
+
+    default:
+      // allocated, abandoned, tombstoned, garbage_collected.
+      throw new ApiError("ATTACHMENT_STATE_CONFLICT");
+  }
+}

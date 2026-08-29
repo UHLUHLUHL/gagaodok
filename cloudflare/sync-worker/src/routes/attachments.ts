@@ -1,19 +1,27 @@
 import { ApiError } from "../contracts/error";
 import { isCanonicalUuid } from "../contracts/identity";
-import { uploadAttachmentContent } from "../storage/attachmentContent";
+import {
+  completeAttachmentUpload,
+  uploadAttachmentContent,
+} from "../storage/attachmentContent";
 import type { Env } from "../env";
 
 /**
  * Attachment content routes — API draft §6.3.
  *
- * Only the upload half exists: `POST .../complete` and `GET .../content` are
- * separate gates and are not routed here yet.
+ * The download half is a separate gate and is not routed here yet.
  */
 
-const CONTENT_SEGMENTS = ["", "v1", "attachments", "", "content"];
+/** The two tails the attachment path may end in. */
+export type AttachmentAction = "content" | "complete";
+
+export interface AttachmentRoute {
+  attachmentId: string;
+  action: AttachmentAction;
+}
 
 /**
- * Return the attachment id in `/v1/attachments/{id}/content`, or null.
+ * Match `/v1/attachments/{id}/content` or `/v1/attachments/{id}/complete`.
  *
  * The match is exact rather than prefix-based: an extra segment, a missing
  * one, or an id that is not a canonical uppercase UUID all yield null, and the
@@ -21,19 +29,40 @@ const CONTENT_SEGMENTS = ["", "v1", "attachments", "", "content"];
  * passed as a query parameter never reaches this function, because only the
  * path is inspected.
  */
-export function matchAttachmentContentPath(pathname: string): string | null {
+export function matchAttachmentPath(pathname: string): AttachmentRoute | null {
   const segments = pathname.split("/");
-  if (segments.length !== CONTENT_SEGMENTS.length) {
+  if (segments.length !== 5) {
     return null;
   }
-  for (let index = 0; index < CONTENT_SEGMENTS.length; index += 1) {
-    const expected = CONTENT_SEGMENTS[index];
-    if (expected !== "" && segments[index] !== expected) {
-      return null;
-    }
+  const [empty, version, collection, attachmentId, action] = segments;
+  if (empty !== "" || version !== "v1" || collection !== "attachments") {
+    return null;
   }
-  const attachmentId = segments[3] ?? "";
-  return isCanonicalUuid(attachmentId) ? attachmentId : null;
+  if (action !== "content" && action !== "complete") {
+    return null;
+  }
+  if (!isCanonicalUuid(attachmentId)) {
+    return null;
+  }
+  return { attachmentId, action };
+}
+
+/**
+ * Turn a handler outcome into the response.
+ *
+ * There is no client operation id on an HTTP transition, so the envelope never
+ * carries a request id here, and an unexpected throw says nothing at all: no
+ * stack, no message, no hint of what storage was doing.
+ */
+async function respond(run: () => Promise<Response>): Promise<Response> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return error.toResponse(null);
+    }
+    return new ApiError("INTERNAL_ERROR").toResponse(null);
+  }
 }
 
 /**
@@ -48,17 +77,26 @@ export async function handleAttachmentUpload(
   env: Env,
   attachmentId: string,
 ): Promise<Response> {
-  try {
+  return await respond(async () => {
     await uploadAttachmentContent(request, env, attachmentId);
     return new Response(null, { status: 204 });
-  } catch (error) {
-    if (error instanceof ApiError) {
-      // There is no client operation id on an HTTP transition, so the envelope
-      // never carries a request id here.
-      return error.toResponse(null);
-    }
-    // An unexpected throw says nothing: no stack, no message, no hint of what
-    // storage was doing.
-    return new ApiError("INTERNAL_ERROR").toResponse(null);
-  }
+  });
+}
+
+/**
+ * `POST /v1/attachments/{attachment_id}/complete`.
+ *
+ * Success is 204. The new `server_seq` is deliberately not returned: the
+ * client learns about the change through the pull cursor like every other
+ * device, rather than through a second, privileged channel.
+ */
+export async function handleAttachmentComplete(
+  request: Request,
+  env: Env,
+  attachmentId: string,
+): Promise<Response> {
+  return await respond(async () => {
+    await completeAttachmentUpload(request, env, attachmentId);
+    return new Response(null, { status: 204 });
+  });
 }

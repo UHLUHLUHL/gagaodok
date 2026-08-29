@@ -1,6 +1,10 @@
 import type { Env } from "./env";
 import { ApiError, PROTOCOL_VERSION } from "./contracts/error";
-import { handleAttachmentUpload, matchAttachmentContentPath } from "./routes/attachments";
+import {
+  handleAttachmentComplete,
+  handleAttachmentUpload,
+  matchAttachmentPath,
+} from "./routes/attachments";
 import { handleOperationRequest } from "./routes/operations";
 
 export default {
@@ -15,16 +19,19 @@ export default {
       return await handleOperationRequest(request, env);
     }
 
-    if (request.method === "PUT") {
-      const attachmentId = matchAttachmentContentPath(url.pathname);
-      if (attachmentId !== null) {
-        return await handleAttachmentUpload(request, env, attachmentId);
+    const attachment = matchAttachmentPath(url.pathname);
+    if (attachment !== null) {
+      if (request.method === "PUT" && attachment.action === "content") {
+        return await handleAttachmentUpload(request, env, attachment.attachmentId);
+      }
+      if (request.method === "POST" && attachment.action === "complete") {
+        return await handleAttachmentComplete(request, env, attachment.attachmentId);
       }
     }
 
-    // Anything else — the operation path with another method, an attachment
-    // path with an extra segment or a non-canonical id — is the same
-    // content-free 404 with no request id.
+    // Anything else — a known path with another method, an attachment path
+    // with an extra segment or a non-canonical id — is the same content-free
+    // 404 with no request id.
     return new ApiError("NOT_FOUND").toResponse(null);
   },
 } satisfies ExportedHandler<Env>;
