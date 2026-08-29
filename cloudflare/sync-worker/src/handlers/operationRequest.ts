@@ -4,7 +4,13 @@ import {
   authenticateDevice,
 } from "../auth/deviceToken";
 import { ApiError, validationFailed } from "../contracts/error";
-import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationRequest } from "../contracts/operation";
+import {
+  MAX_OPERATION_BODY_BYTES,
+  assertOperationBodySize,
+  parseOperationRequest,
+} from "../contracts/operation";
+import type { OperationRequest } from "../contracts/operation";
+import type { AuthContext } from "../auth/deviceToken";
 import {
   applyCreateAttachment,
   applyCreateBubble,
@@ -105,6 +111,26 @@ export async function applyOperationRequest(
   }
 
   const operation = parseOperationRequest(parsedJson);
+
+  try {
+    return await applyValidatedOperation(db, auth, operation, fingerprint);
+  } catch (error) {
+    // Everything from here on concerns an operation the server has fully
+    // validated, so the client may be told which one failed. Errors raised
+    // before this point deliberately carry no id.
+    if (error instanceof ApiError && error.requestId === null) {
+      error.requestId = operation.operation_id;
+    }
+    throw error;
+  }
+}
+
+async function applyValidatedOperation(
+  db: D1Database,
+  auth: AuthContext,
+  operation: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
   assertAuthenticatedDeviceId(auth, operation.device_id);
   // Before any storage read. The replay lookup answers with a stored
   // sequence and revision, so running it first would let a phone token read

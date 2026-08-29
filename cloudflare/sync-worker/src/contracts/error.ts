@@ -51,6 +51,15 @@ export class ApiError extends Error {
   readonly code: ErrorCode;
   readonly retryable: boolean;
   readonly detail: Record<string, number | boolean>;
+  /**
+   * The validated `operation_id`, once one exists.
+   *
+   * Not a wire field of its own: `toResponse` puts it at the top level of the
+   * envelope as `request_id` and never inside `detail`. It stays null for
+   * anything raised before the body parsed, so a malformed request cannot echo
+   * an unvalidated identifier back.
+   */
+  requestId: string | null = null;
 
   constructor(
     code: ErrorCode,

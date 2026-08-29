@@ -5,15 +5,14 @@
  * tests. No remote Cloudflare resource is referenced: the D1 `database_id`
  * is the zero UUID and the R2 bucket is named do-not-create.
  *
- * `DB` holds the schema built by `migrations/`. As of M05 that is identity,
- * conversation scope, turns and bubbles, versioned AI state and attachment
- * metadata, plus the device token column the authentication boundary uses.
- * The operation and change ledger and the account sequence arrive with M06
- * (see `docs/PHASE1_D1_MIGRATION_PLAN.md`).
+ * `DB` holds the schema built by `migrations/`: identity, conversation scope,
+ * turns and bubbles, versioned AI state, attachment metadata, the device token
+ * column the authentication boundary uses, and the M06 operation/change ledger
+ * with the account sequence (see `docs/PHASE1_D1_MIGRATION_PLAN.md`).
  *
- * The only code that reads `DB` today is `src/auth/deviceToken.ts`, and no
- * route calls it yet: the sole endpoint is public health. The attachment
- * endpoints are the first callers.
+ * `DB` is read by the device authentication boundary and by every operation
+ * transaction, reached through `POST /v1/sync/operations`. `ATTACHMENTS` still
+ * has no caller: the upload, complete and download paths are not implemented.
  *
  * The test-only `TEST_MIGRATIONS` binding is *not* declared here: it is
  * injected by `vitest.config.ts` and typed inside `test/migrations.spec.ts`
