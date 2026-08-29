@@ -6,6 +6,7 @@ import {
   handleAttachmentUpload,
   matchAttachmentPath,
 } from "./routes/attachments";
+import { handleBootstrapRequest } from "./routes/bootstrap";
 import { handleChangesRequest } from "./routes/changes";
 import { handleOperationRequest } from "./routes/operations";
 
@@ -23,6 +24,10 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/v1/sync/changes") {
       return await handleChangesRequest(request, env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/v1/sync/bootstrap") {
+      return await handleBootstrapRequest(request, env);
     }
 
     const attachment = matchAttachmentPath(url.pathname);

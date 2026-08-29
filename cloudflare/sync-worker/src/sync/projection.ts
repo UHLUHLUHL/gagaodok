@@ -579,6 +579,8 @@ export function requireProjection(
 
 export interface BootstrapPage {
   items: ProjectedEntity[];
+  /** The storage key of each item, positionally aligned with `items`. */
+  keys: StorageKey[];
   lastKey: StorageKey | null;
 }
 
@@ -624,7 +626,7 @@ export async function readBootstrapPage(
       .bind(accountId, ...(afterKey ?? []), limit),
   );
   if (owners.length === 0) {
-    return { items: [], lastKey: null };
+    return { items: [], keys: [], lastKey: null };
   }
 
   const firstRow = owners[0] as Row;
@@ -683,5 +685,6 @@ export async function readBootstrapPage(
       spec.auxiliary === null ? null : (auxiliary.get(ownerAuxiliaryKey(spec, row)) ?? null),
     ),
   );
-  return { items, lastKey };
+  const keys = owners.map((row) => spec.keyColumns.map((column) => row[column] as string | number));
+  return { items, keys, lastKey };
 }
