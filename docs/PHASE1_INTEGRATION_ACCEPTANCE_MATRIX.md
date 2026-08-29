@@ -79,9 +79,11 @@ flowchart TB
 | pairing·recovery persistence·HTTP | `0331043`, `82706f6`, `2711ddc`, `739b6ab`; enrollment/recovery/session/claim D1·route | ✅ | rate limit·expiry cleanup |
 | 앱 device-local key custody | `3dd2635`; macOS ThisDeviceOnly Keychain, Android non-exportable Keystore wrapping | ✅ | onboarding UI·실제 client 연결 |
 | 앱 durable outbox | `325a2cf`; 양 플랫폼 exact raw-body atomic journal·restart test | ✅ | 기존 local mutation 연결·HTTP drain |
+| 앱 Worker client·연결 상태 | `9365258`, `4a824cd`; HTTPS·device auth·기본 비활성·enrollment exact-byte journal | ✅ | onboarding UI와 사용자 활성화 |
+| 앱 remote shadow replica | `eb348e8`; 양 플랫폼 opaque projection atomic store·원본 불변 회귀 | ✅ | 합성 page coordinator 연결 |
 | HTTP rate limiting | `0010_rate_limit.sql`; keyed subject·atomic budget local test | ✅ | remote `RATE_LIMIT_MAC_KEY` secret 주입 |
 | orphan·expiry maintenance | 24시간 유예, referenced object 보존, allocated→abandoned·pairing child-first cleanup | ✅ | remote cron 활성 상태 확인 |
-| 앱 remote UI | canonical 계약만 존재 | ⏳ | local client networking 뒤 구현 |
+| 앱 remote UI | client 기반은 완료, 화면·기존 mutation 연결은 미착수 | ⏳ | Cloudflare endpoint 확정 뒤 합성 계정 UI |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
 ## 🔍 Phase 1 통합 gate
@@ -124,6 +126,8 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] 최초 enrollment·recovery·pairing local HTTP와 secret 비노출 회귀 (`82706f6`, `2711ddc`, `739b6ab`)
 - [x] 양 플랫폼 master key·device token의 device-local custody 경계 (`3dd2635`)
 - [x] 같은 operation retry가 최초 raw bytes를 재사용하는 durable outbox (`325a2cf`)
+- [x] 최초 enrollment retry가 비밀·복구 문구 없이 동일 raw bytes를 재사용 (`4a824cd`)
+- [x] remote projection이 기존 local conversation file을 바꾸지 않는 shadow replica (`eb348e8`)
 
 ## ⚠️ 지금 하면 안 되는 일
 
@@ -142,9 +146,10 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 M03~M06, operation·attachment·pairing·recovery HTTP route, local R2 lifecycle,
 changes/bootstrap, Phase 2 local synthetic E2E, 양 플랫폼 E2EE·device-local key
-custody·durable outbox까지 local 통합 승인됐다. 다음 gate는 client networking·remote
-UI와 rate limit·expiry/orphan cleanup 같은 운영 안전 경계이며, remote Cloudflare
-resource와 실제 data는 계속 금지한다.
+custody·durable outbox·Worker client·기본 비활성 연결 상태·remote shadow replica와
+rate limit·expiry/orphan cleanup까지 local 통합 승인됐다. 다음 gate는 합성 계정용
+onboarding UI와 기존 local mutation의 operation adapter다. remote Cloudflare resource와
+실제 data는 계속 별도 승인 대상이다.
 
 ## 🔗 관련 문서
 

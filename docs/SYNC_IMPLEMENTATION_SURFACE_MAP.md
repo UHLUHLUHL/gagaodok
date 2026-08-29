@@ -8,7 +8,9 @@ _가가오독 소스 기준 사전조사 · 2026-08-27 · 기준 commit `377b717
 
 ## 📌 먼저 보는 결론
 
-현재 저장소에는 동기화 전용 client, Cloudflare Worker, D1 schema, R2 uploader가 없다. 기존 Gemini 통신이나 로컬 저장 코드에 동기화를 끼워 넣기보다 **별도 sync 계층**을 만드는 편이 안전하다.
+현재 저장소에는 local Worker·D1·R2, 양 플랫폼 E2EE·비밀 보관·durable outbox·Worker
+client·기본 비활성 연결 상태·remote shadow replica가 별도 sync 계층으로 구현돼 있다.
+기존 Gemini 통신과 실제 대화 저장에는 아직 연결하지 않았으며, 이 분리를 유지한다.
 
 가장 중요한 경계는 다음과 같다.
 
@@ -63,7 +65,8 @@ flowchart LR
 
 ### Mac에 새로 둘 후보 모듈
 
-다음 이름은 **구현안**이지 아직 생성된 파일이 아니다.
+초기 조사 당시의 후보 구조다. 실제 구현은 현재 `Services/Sync*.swift`에 있으며,
+기능이 안정된 뒤에만 디렉터리 재구성을 검토한다.
 
 ```text
 Sources/KakaoSapiens/Sync/
@@ -111,7 +114,8 @@ android/app/src/main/java/com/sapiens/gagaodok/sync/
 └── SyncCoordinator.kt
 ```
 
-Android의 AES-GCM은 JCA로 사용할 수 있지만 HKDF는 작은 RFC 5869 순수 구현과 고정 test vector가 필요하다. master key는 Android Keystore의 non-exportable wrapping key로 감싸며, 기존 `SecureStore`의 자동 삭제 동작과 분리한다.
+Android AES-GCM·HKDF fixed vector와 non-exportable Keystore wrapping은 별도
+`sync/` 계층에 구현됐다. 기존 `SecureStore`의 자동 삭제 동작과 계속 분리한다.
 
 ## ☁️ Cloudflare 구현 접점
 
