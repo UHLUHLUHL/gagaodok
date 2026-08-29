@@ -455,9 +455,15 @@ D1 `state` CHECK는 `allocated`, `uploaded`, `ready`, `abandoned`, `tombstoned`,
 
 ### 6.3 endpoints
 
+Attachment metadata allocation의 write 경로는 `POST /v1/sync/operations`의
+`create_attachment` 하나뿐이다. 이 atomic operation이 `allocated` D1 행과
+operation/change ledger를 함께 만들고 난수 `r2_object_key`를 내부에서 생성한다.
+후속 content handler는 이 key를 D1에서 조회하며 client에는 반환하지 않는다.
+별도 `POST /v1/attachments` allocation route는 idempotency와 sequence 발급을 두
+생성 경로로 갈라놓으므로 제공하지 않는다.
+
 | Method | Path | 역할 |
 | --- | --- | --- |
-| POST | `/v1/attachments` | D1 metadata를 `allocated`로 생성하고 난수 R2 key 반환 |
 | PUT | `/v1/attachments/{attachment_id}/content` | 인증 후 ciphertext stream을 R2에 저장 |
 | POST | `/v1/attachments/{attachment_id}/complete` | R2 `head()`의 size 존재 확인 후 D1을 `ready`로 변경 |
 | GET | `/v1/attachments/{attachment_id}/content` | ready·account·device 확인 후 R2 body stream 반환 |

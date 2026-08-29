@@ -501,7 +501,7 @@ Phase 0에서 발견한 digest는 Mac 1개, phone 3개이며 **모두 policy 식
 - sync operation의 `create_attachment` target에는 `space_id`와 `attachment_id`만 온다. **`room_id`와 `worldline_id`는 금지**한다(Worker API 초안 §4.1.1).
 - 다운로드 권한은 같은 account의 유효한 device token으로 판정한다. 한 첨부가 여러 방에서 참조될 수 있으므로 room UUID를 identity에 억지로 넣지 않는다.
 
-M05 D1은 6개 state enum 자체를 저장하지만 상태 전이 순서는 handler가 강제한다. `create_attachment`는 `allocated`만 만들고, upload 성공 뒤 `uploaded`, R2 `head()`의 byte size 확인 뒤 `ready`가 된다. `abandoned`·`tombstoned`·`garbage_collected`도 같은 행에 남겨 audit와 dangling reference 검사를 유지하며 physical row delete를 lifecycle 의미로 사용하지 않는다.
+M05 D1은 6개 state enum 자체를 저장하지만 상태 전이 순서는 handler가 강제한다. `POST /v1/sync/operations`의 `create_attachment`가 유일한 allocation 경로이며, `allocated` 행과 operation/change ledger를 같은 atomic batch에서 만든다. 이때 생성한 난수 `r2_object_key`는 후속 content handler가 D1에서 조회하는 내부 값이고 client에 반환하지 않는다. 별도 attachment allocation endpoint는 두지 않는다. upload 성공 뒤 `uploaded`, R2 `head()`의 byte size 확인 뒤 `ready`가 된다. `abandoned`·`tombstoned`·`garbage_collected`도 같은 행에 남겨 audit와 dangling reference 검사를 유지하며 physical row delete를 lifecycle 의미로 사용하지 않는다.
 
 M05에서 기존 `bubble.attachment_ref_attachment_id`에 `(account_id, attachment_id)` FK를 소급한다. attachment가 없는 null reference는 유지하지만 dangling 또는 cross-account non-null reference는 migration 전체를 rollback한다. Tombstoned bubble도 reference identity를 보존하므로 garbage-collected attachment metadata row는 삭제하지 않는다.
 

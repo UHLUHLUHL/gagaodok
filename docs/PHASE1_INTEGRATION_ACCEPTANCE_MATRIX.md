@@ -127,7 +127,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 | Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M05, device token 인증, M06 ledger DDL과 room·group_state·worldline·versioned AI state·turn·bubble slice는 승인됐다. 남은 runtime operation은 `create_attachment` 하나이며, 이를 local R2 state flow 및 §2.2 route envelope와 어떤 순서로 연결할지 다음 gate에서 확정한다.
+M03~M05, device token 인증, M06 ledger DDL과 room·group_state·worldline·versioned AI state·turn·bubble slice는 승인됐다. 남은 runtime operation은 `create_attachment` 하나다. 이 operation을 유일한 metadata allocation 경로로 구현한 뒤 공용 §2.2 route envelope를 연결하고, 별도 allocation route 없이 local R2 upload·complete·download state flow를 연다.
 
 ## 🔗 관련 문서
 
