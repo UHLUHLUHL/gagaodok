@@ -141,6 +141,8 @@ Importer는 canonical 세 값은 그대로 허용하고, 관측된 legacy alias 
 4. 삭제·정렬·재동기화 뒤에도 기존 bubble을 재번호 매기지 않는다.
 5. 새 bubble은 해당 conversation scope에서 **tombstone을 포함해 지금까지 배정된 모든 `bubble_order`의 최대값에 1을 더한 값**을 받는다. 살아 있는 bubble만 세지 않는다. 계획적으로 간격을 두지 않으며 기존 순서를 바꾸지 않는다. 한 번도 배정된 적 없는 scope의 첫 값은 0이다.
 
+Client는 암호화와 AAD 구성 전에 이 값을 계산해 operation에 싣고, Worker는 같은 scope의 현재 max+1과 정확히 일치하는지 원자적으로 검사한다. Worker가 암호화 뒤 값을 바꾸거나 독자 발급하지 않는다. 동시 write로 예상값이 바뀌면 client는 서버가 돌려준 새 expected order로 재암호화하고 새 operation identity를 사용한다.
+
 `bubble_order`는 E2EE 제안서 §7.2의 AAD field 10에 포함되므로, **확정 후 값을 바꾸면 기존 암호문을 복호화할 수 없다.** 이 문서의 불변 규칙은 표시 순서 문제가 아니라 복호화 가능성 문제다.
 
 중간 삽입이 필요한 기능(메시지 편집 등)은 별도 stable ordering 규격을 먼저 정한 뒤에 연다.
@@ -254,6 +256,8 @@ Mac 모델에는 `baseAffection`·`groupChat`·`suppressedExpressions`·`sampleE
 | bubble | `timestamp`, `revision`, `server_seq` | ⬜ metadata·CAS |
 
 `canonical_text`와 `heart_changes`를 bubble에 중복 저장하지 않는다. 기존 local JSON으로 내릴 때만 §9.3의 anchor 규칙으로 투영한다. `speaker_ref`·reaction·heart target의 암호화 경계는 §13.2를 따른다. message edit가 비활성인 초기 Phase 5에서도 `revision`은 tombstone CAS와 future compatibility를 위해 유지한다.
+
+Turn create의 `created_by_device_id`·`created_at`과 bubble create의 `timestamp`는 plaintext operation metadata로 명시한다. Bubble attachment reference도 create metadata의 `(attachment_ref_attachment_id, attachment_ref_byte_size)` pair로만 받으며 byte size는 참조 attachment의 binary R2 envelope 크기인 `ciphertext_byte_size`와 같아야 한다. 이 provenance·timestamp·attachment pair와 identity·order·tombstone field는 patch로 바꿀 수 없다. Turn/bubble patch는 encrypted canonical field와 owner extension 갱신에만 사용하며, 초기 앱 UI의 사용자 편집 기능은 계속 비활성이다.
 
 ---
 

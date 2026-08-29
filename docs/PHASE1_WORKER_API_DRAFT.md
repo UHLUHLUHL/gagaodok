@@ -100,6 +100,7 @@ D1은 envelope byte를 있는 그대로 저장한다. 평문으로 decode하거�
 | 403 | `DEVICE_REVOKED` | 폐기된 기기 |
 | 404 | `ENTITY_NOT_FOUND` | account 안에 target 없음 |
 | 409 | `REVISION_CONFLICT` | `base_revision` 불일치 |
+| 409 | `BUBBLE_ORDER_CONFLICT` | 새 bubble의 scope-wide 예상 순서 불일치 |
 | 409 | `OPERATION_REPLAY_MISMATCH` | 같은 ID에 다른 request fingerprint |
 | 409 | `ATTACHMENT_STATE_CONFLICT` | 잘못된 attachment 상태 전이 |
 | 413 | `REQUEST_TOO_LARGE` | endpoint 상한 초과 |
@@ -206,6 +207,10 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 | `create_persona_snapshot` | `owner_space_id`, `created_by_device_id`, `created_at`, `persona_schema_version` | 없음 | 없음 (`[]`만 허용) |
 | `create_checkpoint` | `checkpoint_schema_version`, `owner_space_id`, `created_by_device_id`, `created_at` | `first_turn_id` + `last_turn_id`; `through_server_seq`; `compaction_compat_tag` | 없음 (`[]`만 허용) |
 | `patch_checkpoint` | 없음 | `first_turn_id` + `last_turn_id`; `through_server_seq`; `checkpoint_schema_version`; `compaction_compat_tag` | `first_turn_id` + `last_turn_id`; `through_server_seq`; `compaction_compat_tag`. range는 pair 단위이며 `checkpoint_schema_version` clear는 금지 |
+| `create_turn` | `created_by_device_id`, `created_at` | 없음 | 없음 (`[]`만 허용) |
+| `patch_turn` | 없음 | 없음 | 없음 (`[]`만 허용) |
+| `create_bubble` | `timestamp` | `attachment_ref_attachment_id` + `attachment_ref_byte_size` | 없음 (`[]`만 허용) |
+| `patch_bubble` | 없음 | 없음 | 없음 (`[]`만 허용) |
 | `create_attachment` | `origin_space_id`, `kind`, `source_byte_size`, `ciphertext_byte_size`, `ciphertext_hash`, `key_generation`, `created_at` | 없음 | 없음 (`[]`만 허용) |
 
 `owner_space_id`·`created_by_device_id`·`created_at`은 생성 provenance이므로 `patch_checkpoint`가 바꾸거나 지우지 못한다. encrypted segments·summary·profile/fingerprint는 계속 `set`·`clear`를 사용한다. `create_persona_snapshot`은 위 필수 metadata와 `base_revision`을 받고, 최초 `(base=0,target=1)` 또는 연속 `(target=base+1)`만 허용한다.
@@ -214,9 +219,13 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 
 Create provenance는 인증 경계와 일치해야 한다. `owner_space_id`는 `target.space_id`와 같고, `created_by_device_id`는 token으로 인증되어 request의 `device_id`와 일치한 device여야 한다. Validator가 이 cross-field equality를 D1 write 전에 거부하며, 다른 같은-account device를 provenance로 대신 적을 수 없다.
 
+`create_turn.created_by_device_id`도 request의 인증된 `device_id`와 같아야 한다. Turn의 `created_at`과 bubble의 `timestamp`는 operation top-level `created_at`에서 암묵적으로 복사하지 않고 위 metadata에 명시한다. Bubble attachment reference는 create-only pair이며, byte size는 참조한 attachment의 `ciphertext_byte_size`와 같아야 한다. ID·size 중 하나만 보내거나 다른 account/없는 attachment/size mismatch를 보내면 거부한다.
+
 Checkpoint의 `through_server_seq`는 null이거나 이 operation 직전에 이미 발급된 sequence여야 한다. Handler guard 기준으로 `through_server_seq < account.next_server_seq`를 강제한다. 새 checkpoint operation 자신에게 배정될 sequence나 미래 sequence를 coverage로 선언할 수 없으며, legacy unversioned checkpoint는 null을 유지할 수 있다.
 
 `compaction_compat_tag`는 문법을 해석하지 않는 opaque plaintext equality tag이며 UTF-16 code unit 기준 1~256자의 문자열만 받는다. 이 길이 제한은 transport/validator 경계일 뿐 hash·encoding 형식을 뜻하지 않는다.
+
+Turn·bubble patch는 protocol operation으로 활성 상태를 유지하지만 초기 앱 UI에서 사용자 편집 기능을 연다는 뜻은 아니다. Patch는 해당 owner의 encrypted canonical field와 `extensions.*`만 set/clear할 수 있다. Identity, `bubble_order`, create provenance, timestamp, attachment reference와 tombstone columns는 patch로 변경할 수 없다. Delete/tombstone operation은 기존 feature gate를 유지한다.
 
 ### 4.1.1 operation별 identity shape (2026-08-28, Claude Code 보정)
 
@@ -371,6 +380,10 @@ GET /v1/sync/bootstrap?cursor=<opaque-non-secret-cursor>&limit=200
 - 호감도 되돌림은 Worker 계산이 아니라 client가 함께 보낸 encrypted group/worldline state patch이며, tombstone과 같은 CAS batch에서 적용한다.
 - 새 bubble의 번호는 살아 있는 행만 대상으로 계산하지 않는다.
 - v1에는 tombstone retention·물리 삭제 endpoint와 cleanup job을 두지 않는다.
+
+새 bubble의 `bubble_order`는 client가 암호화/AAD 구성 전에 계산해 top-level field로 보낸다. Worker는 이를 그대로 신뢰하거나 독자 발급하지 않고, 같은 `(account_id, space_id, room_id, worldline_key)`에서 tombstone을 포함한 기존 최대값 + 1(행이 없으면 0)과 정확히 같은지 transaction guard에서 검사한다. 서로 다른 turn도 같은 scope order를 공유한다.
+
+불일치나 동시 create 경합은 HTTP 409 `BUBBLE_ORDER_CONFLICT`이며 content 없는 `expected_bubble_order`만 반환한다. 기존 raw bytes는 AAD의 order가 이미 고정됐으므로 그대로 retry할 수 없다. Client는 새 expected order로 다시 암호화하고 새 `operation_id`를 만들어야 한다. 같은 message identity가 이미 존재하면 order보다 identity collision을 먼저 분류해 `REVISION_CONFLICT`와 그 row의 current revision을 반환한다. 기존 max가 `2^53-1`이면 다음 order를 발급할 수 없으므로 `STORAGE_UNAVAILABLE`, `retryable=false`로 fail-closed한다.
 - 향후 물리 삭제를 도입하려면 scope별 최고 발급 번호 watermark를 먼저 영구 entity로 만들고 CAS 발급을 검증한다.
 
 ### 5.3 sequence 규칙
