@@ -335,11 +335,15 @@ function assertNoRequestBody(request: Request): void {
   if (declared !== null && declared !== "0") {
     throw validationFailed();
   }
-  if (request.body !== null) {
-    // A body with no declared length — chunked, or a directly constructed
-    // request — is refused on sight rather than drained and ignored.
-    throw validationFailed();
-  }
+  // The declared length is the whole check, and `request.body` deliberately is
+  // not consulted. Over a real connection a bodyless POST does not arrive with
+  // a null body: the runtime hands the handler an empty stream, so treating a
+  // non-null body as "a body was sent" refuses every legitimate call. Only a
+  // locally constructed Request has a null body, which is what hid this.
+  //
+  // A chunked request that declares no length can therefore still carry bytes.
+  // They are never read or interpreted, so it changes nothing about what this
+  // endpoint does — it takes all of its meaning from the path and the token.
 }
 
 async function sequenceExhausted(db: D1Database, accountId: string): Promise<boolean> {

@@ -353,8 +353,15 @@ describe("POST /v1/attachments/{id}/complete — routing", () => {
   });
 
   it("refuses a request that carries a body", async () => {
-    const request = requestFor({ attachmentId: UPLOADED, body: "{}" });
-    expect(request.headers.get("Content-Length")).not.toBe("0");
+    // A real client that sends a body declares its length, and that is the
+    // signal the handler refuses on. A body with no declared length cannot be
+    // told apart from the empty stream a bodyless POST arrives as.
+    const headers = new Headers({ Authorization: `Device ${MAC_TOKEN}`, "Content-Length": "2" });
+    const request = new Request(`https://example.test/v1/attachments/${UPLOADED}/complete`, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
     const response = await handleAttachmentComplete(request, env as unknown as Env, UPLOADED);
     expect(response.status).toBe(400);
     expect((await errorOf(response))["code"]).toBe("VALIDATION_FAILED");
@@ -500,5 +507,32 @@ describe("POST /v1/attachments/{id}/complete — states and storage", () => {
     expect(serialised).not.toContain(SENTINEL);
     expectContentFree(serialised);
     expect(await ledgerSnapshot()).toEqual(before);
+  });
+});
+
+describe("POST /v1/attachments/{id}/complete — a real bodyless request", () => {
+  it("accepts the shape a real HTTP client sends", async () => {
+    // Over the wire a bodyless POST does not arrive with `body === null`: the
+    // runtime hands the handler an empty stream and, when the client declared
+    // one, a `Content-Length: 0`. A locally constructed Request has a null
+    // body, which is why this shape has to be built explicitly.
+    const empty = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+    const request = new Request(`https://example.test/v1/attachments/${UPLOADED}/complete`, {
+      method: "POST",
+      headers: new Headers({ Authorization: `Device ${MAC_TOKEN}`, "Content-Length": "0" }),
+      body: empty,
+      // @ts-expect-error duplex is required for a streaming request body
+      duplex: "half",
+    });
+    expect(request.body, "the fixture must not have a null body").not.toBeNull();
+
+    const response = await handleAttachmentComplete(request, env as unknown as Env, UPLOADED);
+
+    expect(response.status).toBe(204);
+    expect((await rowOf(UPLOADED))?.state).toBe("ready");
   });
 });
