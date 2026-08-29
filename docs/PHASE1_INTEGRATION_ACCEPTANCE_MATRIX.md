@@ -74,7 +74,9 @@ flowchart TB
 | R2 attachment state machine | `5299b27`, `849d399`, `6d054af`, `8a6117c`, `45e0824` local lifecycle | ✅ | Phase 2 연결 E2E |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
 | pull·bootstrap·cursor | `5a05efa`, `f289df5`, `84acc8c`; Codex focused 76 tests | ✅ | Phase 2 연결 E2E |
-| 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | Worker·D1 synthetic test 통과 뒤 |
+| Phase 2 local synthetic E2E | `7cdeabe`, `5c54400`, `9c2827d`; Worker·D1·R2 recovery·비노출 | ✅ | pairing·recovery와 client outbox |
+| Swift·Kotlin field E2EE fixed vector | `d9a2ac0`, `a0dd551`, `cd0999d`; 공용 artifact exact bytes | ✅ | 키 보관·pairing·recovery |
+| 앱 durable outbox·remote UI | canonical schema의 계약만 존재 | ⏳ | local client 저장·networking 구현 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
 ## 🔍 Phase 1 통합 gate
@@ -110,10 +112,10 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 ### Integration evidence
 
-- [ ] Swift·Kotlin E2EE fixed vector 교차 복호화
-- [ ] local Worker + local D1 + local R2 synthetic end-to-end test
-- [ ] request·error·metric에서 content/token/ciphertext가 새지 않는 test
-- [ ] 실데이터 없이 fixture만 사용했다는 commit-level 확인
+- [x] Swift·Kotlin E2EE fixed vector 교차 복호화 (`d9a2ac0`, `a0dd551`, `cd0999d`)
+- [x] local Worker + local D1 + local R2 synthetic end-to-end test (`7cdeabe`)
+- [x] request·error·metric에서 content/token/ciphertext가 새지 않는 test (`5c54400`)
+- [x] 실데이터 없이 fixture만 사용했다는 commit-level 확인 (`7cdeabe`, `5c54400`)
 
 ## ⚠️ 지금 하면 안 되는 일
 
@@ -126,11 +128,14 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 | 담당 | 현재 소유 범위 | 완료 산출물 |
 | --- | --- | --- |
-| Claude Code | `cloudflare/sync-worker/`의 runtime operation transaction service | entity family별 atomic handler와 focused tests |
-| Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
+| Claude Code | 완료된 `cloudflare/sync-worker/` runtime과 Phase 2 local E2E | operation·R2·changes/bootstrap·synthetic recovery tests |
+| Codex | canonical docs, 공용 crypto artifact, Swift·Kotlin client crypto와 후속 local integration | fixed-vector 통합 판정과 pairing·outbox·remote UI gate |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M06, operation·attachment HTTP route, local R2 lifecycle, shared projection 기반 changes pagination과 MAC bootstrap cursor까지 local 통합 승인됐다. 다음 gate는 이 경계를 한 흐름으로 묶는 Phase 2 local synthetic E2E이며, remote Cloudflare resource와 실제 data는 계속 금지한다.
+M03~M06, operation·attachment HTTP route, local R2 lifecycle, changes/bootstrap,
+Phase 2 local synthetic E2E와 Swift·Kotlin field E2EE fixed vector까지 local 통합
+승인됐다. 다음 gate는 pairing·recovery, client durable outbox·remote UI와 운영 안전
+경계이며, remote Cloudflare resource와 실제 data는 계속 금지한다.
 
 ## 🔗 관련 문서
 

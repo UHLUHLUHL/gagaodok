@@ -36,7 +36,8 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M06 operation route | `d71d5eb`, `981490b` §2.2 envelope·validated request ID·content-free 500 | local route 완료 |
 | local R2 attachment flow | `849d399`, `6d054af`, `8a6117c`, `45e0824` checksum upload·ready event·download | local lifecycle 완료 |
 | pull·bootstrap read path | `5a05efa`, `f289df5`, `84acc8c` shared projection·changes·MAC cursor | local route 완료 |
-| Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
+| Swift·Kotlin fixed-vector 교차 검증 | `d9a2ac0`, `a0dd551`, `cd0999d` | 완료 |
+| local Worker·D1·R2 연결 E2E와 recovery·비노출 | `7cdeabe`, `5c54400`, `9c2827d` | 완료 |
 
 물리 migration 파일 `0002_device_account_fk.sql`은 논리 M02가 아니라 **M01 account boundary의 FK 보완**이다. 논리 M02는 `room`·`group_state`·`worldline`이다.
 
@@ -70,8 +71,8 @@ fixture는 미래 D1 row의 완성형 schema가 아니다. 아직 고정되지 �
 | P2-05 | M05 + local R2 | attachment identity, size 상한, lifecycle, orphan 보고 | DDL 완료; M06 뒤 local R2 구현 |
 | P2-06 | M06 handler | atomic row·sequence·operation/change log, replay, CAS rollback | M06 migration·handler 구현 |
 | P2-07 | pull/bootstrap | stable pagination, tombstone projection, crash 뒤 재적용 | pull handler 구현 |
-| P2-08 | crypto clients | Swift↔Kotlin fixed-vector 교차 복호화와 AAD 일치 | 두 client crypto 구현 |
-| P2-09 | 연결 E2E | local Worker→D1→R2 왕복과 비노출 검사 | P2-00~08의 관련 gate 통과 |
+| P2-08 | crypto clients | Swift↔Kotlin fixed-vector 교차 복호화와 AAD 일치 | 완료 (`a0dd551`, `cd0999d`) |
+| P2-09 | 연결 E2E | local Worker→D1→R2 왕복과 비노출 검사 | 완료 (`7cdeabe`, `5c54400`, `9c2827d`) |
 
 뒤 단계는 앞 단계의 schema나 handler를 흉내 낸 mock으로 통과시키지 않는다. 아직 구현되지 않은 단계는 `대기`로 남긴다.
 
@@ -145,9 +146,12 @@ git diff --check
 - [x] local Worker handler의 CAS·idempotency·account sequence 원자성
 - [x] local R2 attachment lifecycle과 확정된 ciphertext 상한
 - [x] pull/bootstrap pagination·crash recovery (`5a05efa`, `f289df5`, `84acc8c`)
-- [ ] Swift·Kotlin E2EE fixed-vector 교차 검증
-- [ ] local Worker + D1 + R2 synthetic E2E
-- [ ] request·error·metric 민감정보 비노출 검증
+- [x] Swift·Kotlin E2EE fixed-vector 교차 검증 (`d9a2ac0`, `a0dd551`, `cd0999d`)
+- [x] local Worker + D1 + R2 synthetic E2E (`7cdeabe`)
+- [x] request·error·metric 민감정보 비노출 검증 (`5c54400`)
 - [x] 모든 fixture가 합성 자료뿐이라는 commit-level 확인
 
-이 gate를 통과해도 Phase 3 실제 data shadow upload는 자동 승인되지 않는다. 실제 data 접근, Cloudflare resource 생성, remote migration과 upload는 사용자의 별도 명시 승인이 필요하다.
+이 gate는 2026-08-29 local synthetic 범위에서 통과했다. 다중 isolate 경합,
+rate limiting과 orphan cleanup은 후속 local gate로 남는다. Phase 3 실제 data
+shadow upload는 자동 승인되지 않으며, 실제 data 접근, Cloudflare resource 생성,
+remote migration과 upload는 사용자의 별도 명시 승인이 필요하다.

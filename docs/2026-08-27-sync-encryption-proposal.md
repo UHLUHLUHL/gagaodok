@@ -7,10 +7,13 @@
 - 2차 개정: 2026-08-27 (Codex)
 - 3차 보정: 2026-08-27 (Claude Code) — R1·R2·`alg` AAD·Phase 0 실측값 반영
 - 4차 통합: 2026-08-27 (Codex) — 고정 vector 독립 재현, redeem verifier 등록·결속 보완, Tablet 실측 통합
-- 상태: **E2EE 기술 계약 통합 검토 완료 / 구현·contract test 미완료 / Cloudflare 리소스 생성·앱 코드 구현·실데이터 업로드 승인 아님**
+- 5차 구현 증거: 2026-08-29 (Codex) — 공용 AES-GCM artifact와 Swift·Kotlin fixed-vector 구현
+- 상태: **field E2EE fixed-vector 구현·교차 검증 완료 / pairing·recovery·앱 동기화 연결 미완료 / Cloudflare 리소스 생성·실데이터 업로드 승인 아님**
 - 재검토 이력: [`618d370`/`377b717` Claude Code 독립 재검토](2026-08-27-e2ee-2nd-revision-claude-review.md)(당시 이력, 본문 보존), [3차 보정 설명](2026-08-27-e2ee-3rd-revision-notes.md), [Codex 통합 검토](2026-08-27-e2ee-codex-integration-review.md)
 - 선행: [합의문](CROSS_DEVICE_SYNC_AGREEMENT.md), [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md), [Codex 교차검토](2026-08-27-sync-encryption-codex-review.md)
-- 이 문서를 쓰며 앱 코드·실제 대화 데이터·Cloudflare 리소스는 변경하지 않았다.
+- 4차 문서 통합까지는 앱 코드를 변경하지 않았다. 5차에는 동기화에 아직
+  연결되지 않은 local contract crypto module만 추가했으며, 실제 대화 데이터와
+  Cloudflare 리소스는 계속 사용하지 않았다.
 
 ## 개정 요약
 
@@ -217,7 +220,14 @@ Swift `CryptoKit`은 `HKDF.deriveKey(inputKeyMaterial:salt:info:outputByteCount:
 
 ### 3.3 고정 key derivation vector
 
-아래 값은 표준 라이브러리만으로 구현한 독립 스크립트로 계산했다. 계산 전에 **RFC 5869 A.1 test vector로 HKDF 구현 자체를 먼저 검증**했고 null·empty·field ordering도 별도 시험했다. Swift·Kotlin contract test는 이 값을 그대로 기대값으로 사용한다. 저장소의 [`tools/e2ee_contract_vectors.py`](../tools/e2ee_contract_vectors.py)와 [고정 테스트](../tools/tests/test_e2ee_contract_vectors.py)로 재현할 수 있다.
+아래 값은 표준 라이브러리만으로 구현한 독립 스크립트로 계산했다. 계산 전에 **RFC 5869 A.1 test vector로 HKDF 구현 자체를 먼저 검증**했고 null·empty·field ordering도 별도 시험했다. Swift·Kotlin contract test는 이 값을 그대로 기대값으로 사용한다. 저장소의 [`tools/e2ee_contract_vectors.py`](../tools/e2ee_contract_vectors.py), [고정 테스트](../tools/tests/test_e2ee_contract_vectors.py), [공용 artifact](../tools/fixtures/e2ee_contract_vectors.json)로 재현할 수 있다.
+
+2026-08-29 기준 공용 artifact의 SHA-256은
+`dc189c17d8ddf456d8f00e78d5bac8e8459deb16c075546e582c34e5bb3e21cd`다.
+Swift `CryptoKit` 구현(`a0dd551`)과 Android shared `src/main`의 JCA 구현
+(`cd0999d`)은 같은 key·AAD·nonce·한글 plaintext에서 동일 envelope byte를
+만들고 이를 각각 복호화한다. identity·field·`bubble_order`·algorithm·generation
+변조와 non-canonical Base64는 양쪽 모두 fail-closed한다.
 
 **시험 전용 입력이며 실제 배포 키가 아니다.**
 

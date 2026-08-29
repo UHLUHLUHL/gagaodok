@@ -136,10 +136,10 @@ assertArrayEquals(vector.envelope, envelope)
 - Consumes: the three verified commits and their exact commands/results.
 - Produces: a checked P2-08 gate with the artifact hash and platform evidence.
 
-- [ ] **Step 1: Run Python vector tests and regenerate to a temporary file; compare it byte-for-byte with the committed artifact**
+- [x] **Step 1: Run Python vector tests and regenerate to a temporary file; compare it byte-for-byte with the committed artifact**
 
-- [ ] **Step 2: Run focused Swift, phone, and tablet tests plus `swift build` and the affected Android unit variants**
+- [x] **Step 2: Run focused Swift, phone, and tablet tests plus `swift build` and the affected Android unit variants**
 
-- [ ] **Step 3: Record only actual evidence and remaining pairing/recovery or device-key-storage gaps in canonical docs**
+- [x] **Step 3: Record only actual evidence and remaining pairing/recovery or device-key-storage gaps in canonical docs**
 
-- [ ] **Step 4: Run `git diff --check`, review the scoped diff, and commit the documentation gate**
+- [x] **Step 4: Run `git diff --check`, review the scoped diff, and commit the documentation gate**
