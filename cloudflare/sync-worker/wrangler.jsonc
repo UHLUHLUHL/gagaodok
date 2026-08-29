@@ -31,6 +31,7 @@
     }
   ],
   "vars": {
-    "CURSOR_MAC_KEY": "local-development-placeholder-not-a-secret"
+    "CURSOR_MAC_KEY": "local-development-placeholder-not-a-secret",
+    "RATE_LIMIT_MAC_KEY": "local-rate-limit-placeholder-not-a-secret"
   }
 }

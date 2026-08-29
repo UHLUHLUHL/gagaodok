@@ -298,6 +298,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0007_device_token.sql",
       "0008_atomic_write_ledger.sql",
       "0009_pairing_recovery.sql",
+      "0010_rate_limit.sql",
     ]);
   });
 
@@ -340,6 +341,7 @@ describe("0002 starts enforcing the account reference", () => {
       "persona_snapshot",
       "persona_snapshot_extension_field",
       "persona_snapshot_head",
+      "rate_limit_bucket",
       "recovery_record",
       "room",
       "room_ai_state_ref",

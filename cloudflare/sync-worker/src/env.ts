@@ -27,4 +27,5 @@ export interface Env {
   DB: D1Database;
   ATTACHMENTS: R2Bucket;
   CURSOR_MAC_KEY: string;
+  RATE_LIMIT_MAC_KEY: string;
 }

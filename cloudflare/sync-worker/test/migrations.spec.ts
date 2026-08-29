@@ -150,6 +150,7 @@ describe("M00 — local migration harness", () => {
       "persona_snapshot",
       "persona_snapshot_extension_field",
       "persona_snapshot_head",
+      "rate_limit_bucket",
       "recovery_record",
       "room",
       "room_ai_state_ref",

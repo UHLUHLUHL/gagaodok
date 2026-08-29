@@ -30,6 +30,7 @@ const redeemBody = () => ({ protocol_version:1, claim_lookup:b64(pairing.claim_l
 
 beforeAll(async()=>{ await applyD1Migrations(env.DB, env.TEST_MIGRATIONS); });
 beforeEach(async()=>{
+  await env.DB.prepare("DELETE FROM rate_limit_bucket").run();
   for(const table of ["pairing_claim","pairing_session","device","recovery_record","enrollment_log","account"]) await env.DB.prepare(`DELETE FROM ${table}`).run();
   await env.DB.prepare("INSERT INTO account (account_id, created_at) VALUES (?,?)").bind(ACCOUNT,NOW).run();
   await env.DB.prepare(`INSERT INTO device (account_id,device_id,space_id,platform,linked_at,key_generation,token_hash) VALUES (?,?, 'MAC_SPACE','macos',?,1,?)`).bind(ACCOUNT,OLD_DEVICE,NOW,await tokenHash()).run();

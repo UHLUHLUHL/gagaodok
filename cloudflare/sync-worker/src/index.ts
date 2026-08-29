@@ -11,6 +11,22 @@ import { handleChangesRequest } from "./routes/changes";
 import { handleOperationRequest } from "./routes/operations";
 import { handleEnrollmentInitialize, handleRecoveryRedeem } from "./routes/onboarding";
 import { handlePairingMatch, handlePairingSession, matchPairingPath } from "./routes/pairing";
+import { assertRateLimit, type RateLimitScope } from "./security/rateLimit";
+
+async function limited(
+  request: Request,
+  env: Env,
+  scope: RateLimitScope,
+  run: () => Promise<Response>,
+): Promise<Response> {
+  try {
+    await assertRateLimit(request, env.DB, env.RATE_LIMIT_MAC_KEY, scope);
+    return await run();
+  } catch (error) {
+    if (error instanceof ApiError) return error.toResponse(null);
+    return new ApiError("INTERNAL_ERROR").toResponse(null);
+  }
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -21,42 +37,47 @@ export default {
     }
 
     if (request.method === "POST" && url.pathname === "/v1/sync/operations") {
-      return await handleOperationRequest(request, env);
+      return await limited(request, env, "sync_write", () => handleOperationRequest(request, env));
     }
 
     if (request.method === "POST" && url.pathname === "/v1/enrollment/initialize") {
-      return await handleEnrollmentInitialize(request, env);
+      return await limited(request, env, "enrollment", () => handleEnrollmentInitialize(request, env));
     }
 
     if (request.method === "POST" && url.pathname === "/v1/recovery/redeem") {
-      return await handleRecoveryRedeem(request, env);
+      return await limited(request, env, "recovery", () => handleRecoveryRedeem(request, env));
     }
 
     if (request.method === "POST" && url.pathname === "/v1/pairing/sessions") {
-      return await handlePairingSession(request, env);
+      return await limited(request, env, "pairing_session", () => handlePairingSession(request, env));
     }
 
     const pairing = matchPairingPath(url.pathname);
-    if (pairing !== null) return await handlePairingMatch(request, env, pairing);
+    if (pairing !== null) {
+      const scope: RateLimitScope = pairing.action === "claims"
+        ? "pairing_claim"
+        : pairing.action === "approve" ? "pairing_approve" : "pairing_redeem";
+      return await limited(request, env, scope, () => handlePairingMatch(request, env, pairing));
+    }
 
     if (request.method === "GET" && url.pathname === "/v1/sync/changes") {
-      return await handleChangesRequest(request, env);
+      return await limited(request, env, "sync_read", () => handleChangesRequest(request, env));
     }
 
     if (request.method === "GET" && url.pathname === "/v1/sync/bootstrap") {
-      return await handleBootstrapRequest(request, env);
+      return await limited(request, env, "sync_read", () => handleBootstrapRequest(request, env));
     }
 
     const attachment = matchAttachmentPath(url.pathname);
     if (attachment !== null) {
       if (request.method === "PUT" && attachment.action === "content") {
-        return await handleAttachmentUpload(request, env, attachment.attachmentId);
+        return await limited(request, env, "attachment", () => handleAttachmentUpload(request, env, attachment.attachmentId));
       }
       if (request.method === "POST" && attachment.action === "complete") {
-        return await handleAttachmentComplete(request, env, attachment.attachmentId);
+        return await limited(request, env, "attachment", () => handleAttachmentComplete(request, env, attachment.attachmentId));
       }
       if (request.method === "GET" && attachment.action === "content") {
-        return await handleAttachmentDownload(request, env, attachment.attachmentId);
+        return await limited(request, env, "attachment", () => handleAttachmentDownload(request, env, attachment.attachmentId));
       }
     }
 

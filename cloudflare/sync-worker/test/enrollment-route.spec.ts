@@ -88,6 +88,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  await env.DB.prepare("DELETE FROM rate_limit_bucket").run();
   for (const table of [
     "pairing_claim",
     "pairing_session",

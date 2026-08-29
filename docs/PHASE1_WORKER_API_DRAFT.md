@@ -542,6 +542,27 @@ Worker가 받아 저장하는 exact wire와 권한을 고정한다.
 - pairing/recovery body, lookup, verifier, envelope와 token hash는 sync operation
   log·일반 request log·metric label에 넣지 않는다.
 
+### 7.1.1 remote 활성화 전 rate limit
+
+모든 HTTP route는 `CF-Connecting-IP` 원문 대신 production secret
+`RATE_LIMIT_MAC_KEY`의 HMAC-SHA256만 D1 fixed-window bucket에 저장한다. 원문 IP,
+device token, UUID, body는 rate-limit key나 응답 detail에 넣지 않는다.
+
+| scope | window | 최대 요청 |
+| --- | ---: | ---: |
+| 최초 enrollment | 1시간 | 5 |
+| recovery redeem | 1시간 | 5 |
+| pairing session·claim·approve | 5분 | 각각 30 |
+| pairing redeem | 5분 | 10 |
+| sync operation | 1분 | 600 |
+| changes·bootstrap 합계 | 1분 | 300 |
+| attachment upload·complete·download 합계 | 1시간 | 120 |
+
+초과는 content-free `RATE_LIMITED`이고 D1 오류는 retryable
+`STORAGE_UNAVAILABLE`이다. 24시간보다 오래된 window는 요청 처리 중 같이
+정리한다. local placeholder key는 시험용일 뿐이며 remote 연결 때 같은 값을
+사용하면 안 된다.
+
 ### 7.2 최초 device enrollment
 
 `POST /v1/enrollment/initialize`는 인증 전 create-only endpoint다. body는 다음

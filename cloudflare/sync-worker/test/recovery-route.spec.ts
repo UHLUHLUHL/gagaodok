@@ -49,6 +49,7 @@ async function call(value: unknown): Promise<Response> {
 
 beforeAll(async () => { await applyD1Migrations(env.DB, env.TEST_MIGRATIONS); });
 beforeEach(async () => {
+  await env.DB.prepare("DELETE FROM rate_limit_bucket").run();
   await env.DB.prepare("DELETE FROM device").run();
   await env.DB.prepare("DELETE FROM recovery_record").run();
   await env.DB.prepare("DELETE FROM enrollment_log").run();
