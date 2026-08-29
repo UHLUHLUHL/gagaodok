@@ -1,0 +1,12 @@
+import { authenticateDevice } from "../auth/deviceToken";
+import { ApiError,PROTOCOL_VERSION } from "../contracts/error";
+import { parsePairingApprove,parsePairingClaim,parsePairingRedeem,parsePairingSession } from "../contracts/pairing";
+import { isCanonicalUuid } from "../contracts/identity";
+import type { Env } from "../env";
+import { approvePairingClaim,createPairingSession,listPairingClaims,redeemPairingClaim,submitPairingClaim } from "../storage/pairing";
+type Match={action:"claims"|"approve"|"redeem";sessionId:string;claimId?:string};
+export function matchPairingPath(path:string):Match|null{let m=/^\/v1\/pairing\/sessions\/([^/]+)\/claims$/.exec(path);if(m&&isCanonicalUuid(m[1]))return{action:"claims",sessionId:m[1]};m=/^\/v1\/pairing\/sessions\/([^/]+)\/claims\/([^/]+)\/(approve|redeem)$/.exec(path);if(m&&isCanonicalUuid(m[1])&&isCanonicalUuid(m[2]))return{action:m[3] as "approve"|"redeem",sessionId:m[1],claimId:m[2]};return null;}
+function response(result:unknown,status=200){return Response.json({protocol_version:PROTOCOL_VERSION,result},{status});}
+async function wrap(run:()=>Promise<Response>):Promise<Response>{try{return await run();}catch(e){if(e instanceof ApiError)return e.toResponse(null);return new ApiError("INTERNAL_ERROR").toResponse(null);}}
+export async function handlePairingSession(request:Request,env:Env){return wrap(async()=>{const auth=await authenticateDevice(request,env.DB);const parsed=await parsePairingSession(request);const result=await createPairingSession(env.DB,auth,parsed);return response(result,result.status==="created"?201:200);});}
+export async function handlePairingMatch(request:Request,env:Env,match:Match){return wrap(async()=>{if(match.action==="claims"&&request.method==="POST"){const parsed=await parsePairingClaim(request);return response(await submitPairingClaim(env.DB,match.sessionId,parsed),201);}if(match.action==="claims"&&request.method==="GET"){const auth=await authenticateDevice(request,env.DB);return response(await listPairingClaims(env.DB,auth,match.sessionId));}if(match.action==="approve"&&request.method==="POST"){const auth=await authenticateDevice(request,env.DB);const parsed=await parsePairingApprove(request);return response(await approvePairingClaim(env.DB,auth,match.sessionId,match.claimId!,parsed));}if(match.action==="redeem"&&request.method==="POST"){const parsed=await parsePairingRedeem(request);return response(await redeemPairingClaim(env.DB,match.sessionId,match.claimId!,parsed));}throw new ApiError("NOT_FOUND");});}

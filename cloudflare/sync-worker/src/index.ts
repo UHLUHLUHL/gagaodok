@@ -10,6 +10,7 @@ import { handleBootstrapRequest } from "./routes/bootstrap";
 import { handleChangesRequest } from "./routes/changes";
 import { handleOperationRequest } from "./routes/operations";
 import { handleEnrollmentInitialize, handleRecoveryRedeem } from "./routes/onboarding";
+import { handlePairingMatch, handlePairingSession, matchPairingPath } from "./routes/pairing";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -30,6 +31,13 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/recovery/redeem") {
       return await handleRecoveryRedeem(request, env);
     }
+
+    if (request.method === "POST" && url.pathname === "/v1/pairing/sessions") {
+      return await handlePairingSession(request, env);
+    }
+
+    const pairing = matchPairingPath(url.pathname);
+    if (pairing !== null) return await handlePairingMatch(request, env, pairing);
 
     if (request.method === "GET" && url.pathname === "/v1/sync/changes") {
       return await handleChangesRequest(request, env);
