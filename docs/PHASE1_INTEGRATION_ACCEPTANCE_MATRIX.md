@@ -64,6 +64,7 @@ flowchart TB
 | M06 ledger DDL | `d33ee67`, `4a8bf26`; Codex focused 45 tests | ✅ | operation handler atomic batch |
 | patch_room atomic handler | `8d7a8fd`, `f712c8e`, `62a83f4`; Codex focused 212 tests | ✅ | create_room과 나머지 operation family 확장 |
 | create_room atomic handler | `2b456a3`; Codex focused room-family 228 tests | ✅ | group_state/worldline family 확장 |
+| group_state/worldline atomic handlers | `37e408c`, `f8e766b`, `06d401e`; Codex focused 41 tests | ✅ | versioned AI state family preflight |
 | D1 transaction·CAS·idempotency | [Worker API 초안](PHASE1_WORKER_API_DRAFT.md), `0008` ledger, patch_room first slice | 🟡 | 모든 runtime-enabled operation dispatch |
 | R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약, `5299b27` persistence | 🟡 | M06 ledger 뒤 local R2 state transition test |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
@@ -124,7 +125,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 | Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M05, device token 인증, M06 ledger DDL과 room create/patch slice는 승인됐다. 다음은 `group_state`·`worldline`부터 entity family별 transaction service를 확장하고, 공용 dispatch가 계약과 일치한 뒤 §2.2 response envelope를 연결한다.
+M03~M05, device token 인증, M06 ledger DDL과 room·group_state·worldline create/patch slice는 승인됐다. 다음은 versioned AI state부터 남은 entity family별 transaction service를 확장하고, 공용 dispatch가 계약과 일치한 뒤 §2.2 response envelope를 연결한다.
 
 ## 🔗 관련 문서
 
