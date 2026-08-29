@@ -1065,6 +1065,184 @@ async function classifyEngineProfileFailure(
   throw storageUnavailable();
 }
 
+const PERSONA_SNAPSHOT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  description: "description_enc",
+  samples: "samples_enc",
+  style_guide: "style_guide_enc",
+  is_enabled: "is_enabled_enc",
+  content_fingerprint: "content_fingerprint_enc",
+});
+
+/**
+ * Apply one validated `create_persona_snapshot`.
+ *
+ * This is the only operation that writes an immutable row and moves a mutable
+ * pointer at once. Both, plus the persona extensions, live in one batch: a
+ * snapshot whose head never advanced would be invisible, and a head pointing
+ * at a row that failed to insert would violate its own foreign key.
+ *
+ * The head CAS reads a missing head as 0, which is exactly the value the API
+ * contract gives `base_revision` before the first snapshot exists — so the
+ * first create and every later one are the same predicate, not two cases.
+ * The snapshot table has a BEFORE UPDATE trigger, so this INSERT never
+ * carries an ON CONFLICT clause; only the head table is upserted.
+ */
+export async function applyCreatePersonaSnapshot(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const personaId = request.target.persona_snapshot_id as string;
+  const snapshotRevision = request.target.snapshot_revision as number;
+  const baseRevision = request.base_revision as number;
+
+  const setFields = partitionFieldNames(Object.keys(request.set), PERSONA_SNAPSHOT_FIELD_COLUMNS);
+  partitionFieldNames(request.clear, PERSONA_SNAPSHOT_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const columns = Object.values(PERSONA_SNAPSHOT_FIELD_COLUMNS);
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           (COALESCE((SELECT current_snapshot_revision FROM persona_snapshot_head
+                       WHERE account_id = ? AND space_id = ? AND persona_snapshot_id = ?), 0) = ?
+            AND (SELECT COUNT(*) FROM persona_snapshot
+                  WHERE account_id = ? AND space_id = ? AND persona_snapshot_id = ?
+                    AND snapshot_revision = ?) = 0
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        personaId,
+        baseRevision,
+        accountId,
+        spaceId,
+        personaId,
+        snapshotRevision,
+        accountId,
+      ),
+    db
+      .prepare(
+        `INSERT INTO persona_snapshot
+           (account_id, space_id, persona_snapshot_id, snapshot_revision,
+            owner_space_id, created_by_device_id, created_at, persona_schema_version,
+            ${columns.join(", ")}, server_seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${columns.map(() => "?").join(", ")}, ${CURRENT_SEQ})`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        personaId,
+        snapshotRevision,
+        request.metadata_set["owner_space_id"],
+        request.metadata_set["created_by_device_id"],
+        request.metadata_set["created_at"],
+        request.metadata_set["persona_schema_version"],
+        ...encryptedValues(request, PERSONA_SNAPSHOT_FIELD_COLUMNS),
+        accountId,
+      ),
+  ];
+
+  for (const key of setFields.extensionKeys) {
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO persona_snapshot_extension_field
+             (account_id, space_id, persona_snapshot_id, snapshot_revision,
+              extension_key, envelope_enc)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          accountId,
+          spaceId,
+          personaId,
+          snapshotRevision,
+          key,
+          request.set[`${EXTENSION_PREFIX}${key}`],
+        ),
+    );
+  }
+
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO persona_snapshot_head
+           (account_id, space_id, persona_snapshot_id, current_snapshot_revision)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (account_id, space_id, persona_snapshot_id)
+         DO UPDATE SET current_snapshot_revision = excluded.current_snapshot_revision`,
+      )
+      .bind(accountId, spaceId, personaId, snapshotRevision),
+    ...ledgerStatements(db, accountId, request, fingerprint, snapshotRevision, {
+      space_id: spaceId,
+      persona_snapshot_id: personaId,
+      snapshot_revision: snapshotRevision,
+    }),
+  );
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyPersonaSnapshotFailure(db, accountId, request, fingerprint, baseRevision),
+  );
+}
+
+async function classifyPersonaSnapshotFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  baseRevision: number,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const spaceId = request.target.space_id;
+  const personaId = request.target.persona_snapshot_id as string;
+  const snapshotRevision = request.target.snapshot_revision as number;
+
+  const duplicate = await db
+    .prepare(
+      `SELECT 1 AS present FROM persona_snapshot
+        WHERE account_id = ? AND space_id = ? AND persona_snapshot_id = ?
+          AND snapshot_revision = ?`,
+    )
+    .bind(accountId, spaceId, personaId, snapshotRevision)
+    .first();
+  if (duplicate !== null) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: snapshotRevision } });
+  }
+
+  const headRow = await db
+    .prepare(
+      `SELECT current_snapshot_revision FROM persona_snapshot_head
+        WHERE account_id = ? AND space_id = ? AND persona_snapshot_id = ?`,
+    )
+    .bind(accountId, spaceId, personaId)
+    .first<{ current_snapshot_revision: number }>();
+  const currentHead = headRow?.current_snapshot_revision ?? 0;
+  if (currentHead !== baseRevision) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: currentHead } });
+  }
+
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
 const CHECKPOINT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
   segments: "segments_enc",
   summary_text: "summary_text_enc",

@@ -9,6 +9,7 @@ import {
   applyCreateCheckpoint,
   applyCreateEngineProfile,
   applyCreateGroupState,
+  applyCreatePersonaSnapshot,
   applyCreateRoom,
   applyCreateWorldline,
   applyPatchCheckpoint,
@@ -117,6 +118,8 @@ export async function applyOperationRequest(
       return await applyCreateGroupState(db, auth, operation, fingerprint);
     case "patch_group_state":
       return await applyPatchGroupState(db, auth, operation, fingerprint);
+    case "create_persona_snapshot":
+      return await applyCreatePersonaSnapshot(db, auth, operation, fingerprint);
     case "create_engine_profile":
       return await applyCreateEngineProfile(db, auth, operation, fingerprint);
     case "create_checkpoint":
