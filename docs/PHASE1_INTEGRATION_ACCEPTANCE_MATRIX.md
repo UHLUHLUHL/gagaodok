@@ -81,10 +81,16 @@ flowchart TB
 | 앱 durable outbox | `325a2cf`; 양 플랫폼 exact raw-body atomic journal·restart test | ✅ | 기존 local mutation 연결·HTTP drain |
 | 앱 Worker client·연결 상태 | `9365258`, `4a824cd`; HTTPS·device auth·기본 비활성·enrollment exact-byte journal | ✅ | onboarding UI와 사용자 활성화 |
 | 앱 remote shadow replica | `eb348e8`; 양 플랫폼 opaque projection atomic store·원본 불변 회귀 | ✅ | 합성 page coordinator 연결 |
-| HTTP rate limiting | `0010_rate_limit.sql`; keyed subject·atomic budget local test | ✅ | remote `RATE_LIMIT_MAC_KEY` secret 주입 |
-| orphan·expiry maintenance | 24시간 유예, referenced object 보존, allocated→abandoned·pairing child-first cleanup | ✅ | remote cron 활성 상태 확인 |
-| 앱 remote UI | client 기반은 완료, 화면·기존 mutation 연결은 미착수 | ⏳ | Cloudflare endpoint 확정 뒤 합성 계정 UI |
+| HTTP rate limiting | `0010_rate_limit.sql`; local test와 원격 `pairing_redeem` 경계 실측(10 통과·11번째 `429`·타 scope 무영향) | ✅ | 앱 client의 backoff 정책 |
+| orphan·expiry maintenance | local test와 원격 cron 실측; 보존·`allocated→abandoned`·pairing child-first 확인. 유예 초과 orphan 삭제는 R2 업로드 시각을 조작할 수 없어 원격 근거 없음 | ⚠️ | 24시간 뒤 orphan 삭제 원격 확인 |
+| 원격 합성 Cloudflare 환경 | `184bd2b`, `624b556`, `803a0a8`; 합성 전용 D1·private R2·Worker, migration 0001~0010, 원격 smoke 46 검사 | ✅ | 합성 계정 onboarding coordinator |
+| 원격 독립 요청 경합 | 별도 프로세스 2개의 CAS·`bubble_order`·replay 경합. 다중 isolate 여부는 관측 불가라 주장하지 않음 | ✅ | 부하 조건에서의 재확인 |
+| 앱 remote UI | client 기반은 완료, 화면·기존 mutation 연결은 미착수 | ⏳ | 합성 계정 UI (endpoint 확정됨) |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
+
+원격 smoke 결과와 남은 한계는 [Cloudflare 합성 smoke 결과](CLOUDFLARE_SYNTHETIC_SMOKE_RESULT.md)에 있다.
+**배포 상태와 앱 활성화 상태는 서로 다르다.** 서버 계약이 원격에서 성립한다는 것이
+앱을 실제 데이터에 연결해도 좋다는 뜻은 아니며, 이 표에서도 계속 구분해 적는다.
 
 ## 🔍 Phase 1 통합 gate
 

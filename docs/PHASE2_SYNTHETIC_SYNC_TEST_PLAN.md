@@ -153,6 +153,30 @@ git diff --check
 
 이 gate는 2026-08-29 local synthetic 범위에서 통과했다. rate limiting과 24시간
 유예 orphan·expiry cleanup도 후속 local gate에서 닫혔다(`080c41d` 이후 scheduled
-maintenance). 다중 isolate 경합은 원격 직전 마지막 검증으로 남는다. Phase 3 실제 data
-shadow upload는 자동 승인되지 않으며, 실제 data 접근, Cloudflare resource 생성,
-remote migration과 upload는 사용자의 별도 명시 승인이 필요하다.
+maintenance).
+
+## 원격 합성 검증 (2026-08-29)
+
+같은 날 합성 전용 Cloudflare 환경으로 옮겨 원격에서 다시 확인했다. 전체 결과는
+[Cloudflare 합성 smoke 결과](CLOUDFLARE_SYNTHETIC_SMOKE_RESULT.md)에 있다.
+
+- [x] 합성 전용 D1·private R2·Worker와 migration 0001~0010
+- [x] 원격 smoke 46 검사 (health·enrollment replay·CAS·attachment lifecycle·
+      changes/bootstrap 일치·revoked·tenant 격리·비노출)
+- [x] rate limit 경계 실측과 scope 격리
+- [x] cleanup의 보존 규칙·`allocated→abandoned`·pairing child-first
+- [x] 별도 프로세스 두 개의 독립 원격 요청 경합
+
+남은 두 가지는 원격 근거가 없다.
+
+- **다중 isolate 경합**: 별도 프로세스로 보냈지만 Cloudflare가 서로 다른 isolate로
+  처리했는지는 관측할 수 없다. "독립 원격 요청 경합"까지만 주장한다.
+- **유예 초과 orphan object 삭제**: R2 업로드 시각을 뒤로 조작할 수 없어 24시간이
+  지나야 원격에서 확인할 수 있다. 현재 근거는 local test뿐이다.
+
+원격 연결로 local suite가 잡지 못한 결함이 하나 드러났다. `complete` route가
+실제 연결의 body 없는 POST를 거부했다(`803a0a8`). 앞으로도 local 통과를 원격
+근거로 대신하지 않는다.
+
+Phase 3 실제 data shadow upload는 자동 승인되지 않으며, 실제 data 접근과 upload는
+사용자의 별도 명시 승인이 필요하다.
