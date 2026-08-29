@@ -1,4 +1,8 @@
+import json
+from pathlib import Path
 import unittest
+
+import tools.e2ee_contract_vectors as vectors
 
 from tools.e2ee_contract_vectors import (
     PROTOCOL_SALT,
@@ -14,6 +18,56 @@ from tools.e2ee_contract_vectors import (
 
 
 class E2EEContractVectorTests(unittest.TestCase):
+    def test_aes256_gcm_reference_matches_nist_vector(self):
+        sealed = vectors.aes256_gcm_seal(
+            key=bytes(32),
+            nonce=bytes(12),
+            plaintext=bytes(16),
+            aad=b"",
+        )
+
+        self.assertEqual(
+            sealed.hex(),
+            "cea7403d4d606b6e074ec5d3baf39d18"
+            "d0d1c8a799996bf0265b98b5d48ab919",
+        )
+
+    def test_documented_aead_vector_matches_independent_literal(self):
+        vector = vectors.documented_aead_vector()
+
+        self.assertEqual(
+            vector["aad_hex"],
+            "47444b31000c0001010000000200010002010000000400000001"
+            "0003010000002431313131313131312d313131312d343131312d383131312d313131313131313131313131"
+            "000401000000094d41435f5350414345"
+            "0005010000002432323232323232322d323232322d343232322d383232322d323232323232323232323232"
+            "00060000000000"
+            "00070100000004726f6f6d"
+            "0008010000002432323232323232322d323232322d343232322d383232322d323232323232323232323232"
+            "000901000000057469746c65"
+            "000a0000000000000b0000000000000c010000000101",
+        )
+        self.assertEqual(
+            vector["ciphertext_and_tag_hex"],
+            "35919c70fd448ea18c5019e226f27d8c2b3cc8d162bc3dc189575ee7c4f0b158821504b3a5acaf770d389b7160",
+        )
+        self.assertEqual(
+            vector["envelope_base64"],
+            "AQEAAAABAAECAwQFBgcICQoLNZGccP1EjqGMUBniJvJ9jCs8yNFivD3BiVde58TwsViCFQSzpayvdw04m3Fg",
+        )
+
+    def test_committed_artifact_is_the_canonical_generator_output(self):
+        artifact = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures"
+            / "e2ee_contract_vectors.json"
+        )
+
+        self.assertEqual(
+            json.loads(artifact.read_text(encoding="utf-8")),
+            vectors.contract_vectors(),
+        )
+
     def test_lp_v1_distinguishes_null_from_present_empty(self):
         encoded = encode_lp([
             (1, b"\x00\x01"),
