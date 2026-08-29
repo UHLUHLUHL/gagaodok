@@ -16,3 +16,13 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensE2EEContractTests/RecoveryMnemonicTests.swift" \
   -o "$mnemonic_binary_path"
 "$mnemonic_binary_path" "$repo_root/Sources/KakaoSapiens/Resources/sync/english-bip39.txt"
+
+enrollment_binary_path="${TMPDIR:-/tmp}/gagaodok-enrollment-builder-tests"
+swiftc \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncE2EE.swift" \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncSecretStore.swift" \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncRecoveryMnemonic.swift" \
+  "$repo_root/Sources/KakaoSapiens/Services/SyncEnrollmentBuilder.swift" \
+  "$repo_root/Tests/KakaoSapiensE2EEContractTests/SyncEnrollmentBuilderTests.swift" \
+  -o "$enrollment_binary_path"
+"$enrollment_binary_path" "$repo_root/Sources/KakaoSapiens/Resources/sync/english-bip39.txt"
