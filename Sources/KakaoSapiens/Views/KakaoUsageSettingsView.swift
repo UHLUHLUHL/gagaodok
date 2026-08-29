@@ -17,6 +17,7 @@ public struct KakaoUsageSettingsView: View {
         case model = "AI 모델"
         case display = "화면"
         case obsidian = "Obsidian"
+        case sync = "동기화"
     }
 
     public init(onClose: @escaping () -> Void) { self.onClose = onClose }
@@ -37,6 +38,8 @@ public struct KakaoUsageSettingsView: View {
                     case .model: modelSection
                     case .display: displaySection
                     case .obsidian: obsidianSection
+                    // 합성 시험 전용입니다. 실제 대화는 읽지도 올리지도 않습니다.
+                    case .sync: KakaoSyncSettingsSection()
                     }
                 }
             }

@@ -31,3 +31,20 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncPullCoordinatorTests.swift" \
   -o "$pull_binary"
 "$pull_binary"
+
+model_binary="${TMPDIR:-/tmp}/gagaodok-sync-onboarding-model-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncRecoveryMnemonic.swift" \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncEnrollmentBuilder.swift" \
+  "$services/SyncConnectionState.swift" \
+  "$services/SyncReplicaStore.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncWorkerClient.swift" \
+  "$services/SyncOnboardingCoordinator.swift" \
+  "$services/SyncPullCoordinator.swift" \
+  "$services/SyncOnboardingModel.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncOnboardingModelTests.swift" \
+  -o "$model_binary"
+"$model_binary"
