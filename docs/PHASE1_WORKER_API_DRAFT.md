@@ -462,6 +462,13 @@ operation/change ledger를 함께 만들고 난수 `r2_object_key`를 내부에�
 별도 `POST /v1/attachments` allocation route는 idempotency와 sequence 발급을 두
 생성 경로로 갈라놓으므로 제공하지 않는다.
 
+같은 `attachment_id`를 다른 `operation_id`로 다시 만들면 revision이 없는
+projection에 가짜 `current_revision`을 붙이지 않고 `ATTACHMENT_STATE_CONFLICT`로
+거부한다. 같은 operation replay는 다른 entity와 동일하게 fingerprint로 판정한다.
+난수 object key가 기존 다른 attachment와 충돌하면 request content를 노출하지 않는
+retryable `STORAGE_UNAVAILABLE`이며, 실패한 batch는 row·ledger·sequence를 남기지
+않는다.
+
 | Method | Path | 역할 |
 | --- | --- | --- |
 | PUT | `/v1/attachments/{attachment_id}/content` | 인증 후 ciphertext stream을 R2에 저장 |

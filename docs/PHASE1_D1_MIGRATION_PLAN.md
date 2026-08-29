@@ -140,6 +140,7 @@ Worker와 D1은 content를 해석하지 않는다. migration은 다음만 저장
 - [x] M06 versioned AI slice: checkpoint CAS·issued-sequence, immutable engine revision, persona head CAS와 schema-version clear 선거부 승인 (`f7195f3`, `da5b201`, `b69d8ee`, `04c9197`)
 - [x] M06 turn/bubble preflight: create metadata·patch 불변 field·client AAD order와 atomic max+1 검증·attachment ciphertext size pair 확정
 - [x] M06 turn/bubble slice: owner extension, scope-wide bubble order, ready attachment guard와 exact patch identity 승인 (`2875ef4`, `7328825`, `60594d8`)
+- [x] M06 attachment handler 계약: `create_attachment`만 allocation하며 내부 난수 R2 key·null ledger revision·duplicate state conflict 사용
 - [ ] M06: runtime-enabled operation family 확장과 공용 dispatch 완성
 
 M03 preflight blocker에 대한 Codex 결정은 owner별 물리 table이다. table 자체가 owner type이므로 별도 discriminator가 없고, 각 primary key는 실제 owner identity와 `extension_key`로 구성하며 실제 composite FK를 둔다. M04의 persona extension은 `persona_snapshot` owner가 생길 때 별도 table로 추가한다. serialized owner key·identity blob·sentinel UUID·polymorphic FK는 사용하지 않는다.
