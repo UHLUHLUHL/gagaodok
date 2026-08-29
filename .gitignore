@@ -48,3 +48,9 @@ android/*.iml
 
 # Node.js (cloudflare/sync-worker 등 모든 하위 프로젝트 공통)
 node_modules/
+
+# Cloudflare 합성 시험 환경의 작업용 설정과 secret.
+# 커밋되는 것은 wrangler.synthetic.template.jsonc 하나뿐이다.
+cloudflare/sync-worker/wrangler.synthetic.jsonc
+cloudflare/sync-worker/.dev.vars
+cloudflare/sync-worker/.dev.vars.*

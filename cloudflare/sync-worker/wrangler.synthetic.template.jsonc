@@ -1,0 +1,52 @@
+{
+  // Synthetic-only remote environment — the template.
+  //
+  // This file is committed; the working copy `wrangler.synthetic.jsonc` is
+  // not. Copy this file, fill in `database_id` from
+  // `wrangler d1 create gagaodok-sync-synthetic`, and use it with
+  // `--config wrangler.synthetic.jsonc`.
+  //
+  // `wrangler.jsonc` is the LOCAL safety scaffold and is never edited to point
+  // at a remote resource. Its zero UUID, its do-not-create bucket and its
+  // placeholder vars are what stop an accidental `wrangler deploy` from
+  // reaching a real account, so the remote settings live here instead of
+  // overwriting them.
+  //
+  // Nothing in this environment is production. It holds synthetic accounts,
+  // synthetic devices and fixed-shape sentinel envelopes only; no real
+  // conversation, attachment or recovery phrase is ever uploaded to it.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gagaodok-sync-synthetic",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // A workers.dev endpoint, which is what the remote smoke test calls. No
+  // custom domain and no route is attached: this environment is reachable
+  // only at the address Cloudflare generates for it.
+  "workers_dev": true,
+  "triggers": {
+    // The scheduled cleanup handler. Attached to this synthetic Worker only.
+    "crons": ["17 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gagaodok-sync-synthetic",
+      // Filled in from the create command. Not a secret, but it names one
+      // specific account's database, so the working copy stays out of git.
+      "database_id": "REPLACE_WITH_SYNTHETIC_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      // Private bucket. Public access and custom domains are never enabled.
+      "bucket_name": "gagaodok-sync-synthetic-attachments"
+    }
+  ]
+  // CURSOR_MAC_KEY and RATE_LIMIT_MAC_KEY are deliberately absent from
+  // `vars` here. They are injected as Cloudflare secrets with
+  // `wrangler secret put`, so their values never enter this repository. The
+  // local placeholders in `wrangler.jsonc` are never reused remotely.
+}
