@@ -9,6 +9,9 @@ rate limit·scheduled cleanup과 양 플랫폼 crypto·key custody·outbox·clie
 replica가 local 합성 시험을 통과했다. 아직 Cloudflare 로그인, 원격 resource 생성,
 deploy, remote migration, 실제 대화 업로드는 한 번도 수행하지 않았다.
 
+`wrangler deploy --dry-run`은 2026-08-29에 local placeholder binding만으로 통과했다
+(upload 181.83 KiB, gzip 30.86 KiB). 이 검사는 bundle 생성만 했으며 배포하지 않았다.
+
 ## 사용자 승인이 있어야 실행할 항목
 
 1. Cloudflare 계정에 로그인한다.
