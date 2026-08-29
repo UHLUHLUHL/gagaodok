@@ -1539,6 +1539,431 @@ async function classifyTurnPatchFailure(
   throw storageUnavailable();
 }
 
+const BUBBLE_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
+  sender: "sender_enc",
+  kind: "kind_enc",
+  text: "text_enc",
+  speaker_ref: "speaker_ref_enc",
+  reactions: "reactions_enc",
+});
+
+/** The highest bubble_order a scope may ever hand out (canonical §2). */
+const MAX_BUBBLE_ORDER = 9007199254740991;
+
+function bubbleIdentity(request: OperationRequest): ChangeIdentity {
+  return {
+    space_id: request.target.space_id,
+    room_id: request.target.room_id as string,
+    worldline_key: request.worldline_key,
+    turn_id: request.target.turn_id as string,
+    message_id: request.target.message_id as string,
+  };
+}
+
+/** Upsert or delete one bubble extension envelope, binding every owner axis. */
+function bubbleExtensionStatement(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  key: string,
+  envelope: string | null,
+): D1PreparedStatement {
+  const scope = [
+    accountId,
+    request.target.space_id,
+    request.target.room_id,
+    request.worldline_key,
+    request.target.turn_id,
+    request.target.message_id,
+  ];
+  if (envelope === null) {
+    return db
+      .prepare(
+        `DELETE FROM bubble_extension_field
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND turn_id = ? AND message_id = ? AND extension_key = ?`,
+      )
+      .bind(...scope, key);
+  }
+  return db
+    .prepare(
+      `INSERT INTO bubble_extension_field
+         (account_id, space_id, room_id, worldline_key, turn_id, message_id,
+          extension_key, envelope_enc)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (account_id, space_id, room_id, worldline_key, turn_id, message_id, extension_key)
+       DO UPDATE SET envelope_enc = excluded.envelope_enc`,
+    )
+    .bind(...scope, key, envelope);
+}
+
+/**
+ * The order this conversation scope will accept next.
+ *
+ * Tombstoned rows count and turn boundaries do not: a retired number is never
+ * reused (canonical §2, §9.1). `null` means the namespace is exhausted — the
+ * successor would be 2^53, which is not a safe integer and must never reach a
+ * client.
+ */
+async function expectedBubbleOrder(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(MAX(bubble_order), -1) AS highest FROM bubble
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?`,
+    )
+    .bind(accountId, request.target.space_id, request.target.room_id, request.worldline_key)
+    .first<{ highest: number }>();
+  const highest = row?.highest ?? -1;
+  return highest >= MAX_BUBBLE_ORDER ? null : highest + 1;
+}
+
+interface AttachmentReference {
+  attachmentId: string;
+  byteSize: number;
+}
+
+function attachmentReferenceOf(request: OperationRequest): AttachmentReference | null {
+  const attachmentId = request.metadata_set["attachment_ref_attachment_id"];
+  if (attachmentId === undefined) {
+    return null;
+  }
+  return {
+    attachmentId: attachmentId as string,
+    byteSize: request.metadata_set["attachment_ref_byte_size"] as number,
+  };
+}
+
+/** Apply one validated `create_bubble`. */
+export async function applyCreateBubble(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const turnId = request.target.turn_id as string;
+  const messageId = request.target.message_id as string;
+  const order = request.bubble_order as number;
+  const reference = attachmentReferenceOf(request);
+
+  const setFields = partitionFieldNames(Object.keys(request.set), BUBBLE_FIELD_COLUMNS);
+  partitionFieldNames(request.clear, BUBBLE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const columns = Object.values(BUBBLE_FIELD_COLUMNS);
+  // Every precondition is one boolean inside the batch, so the order the
+  // client proposed is checked against the same snapshot the insert uses.
+  const guard = `INSERT INTO transaction_guard (account_id, operation_id, ok)
+     VALUES (?, ?,
+       ((SELECT COUNT(*) FROM turn
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND turn_id = ?) = 1
+        AND (SELECT COUNT(*) FROM bubble
+              WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+                AND message_id = ?) = 0
+        AND (SELECT COALESCE(MAX(bubble_order), -1) FROM bubble
+              WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?) = ?${
+          reference === null
+            ? ""
+            : `
+        AND (SELECT COUNT(*) FROM attachment
+              WHERE account_id = ? AND attachment_id = ? AND state = 'ready'
+                AND ciphertext_byte_size = ?) = 1`
+        }
+        AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`;
+
+  const guardBindings: unknown[] = [
+    accountId,
+    request.operation_id,
+    accountId,
+    spaceId,
+    roomId,
+    key,
+    turnId,
+    accountId,
+    spaceId,
+    roomId,
+    key,
+    messageId,
+    accountId,
+    spaceId,
+    roomId,
+    key,
+    order - 1,
+  ];
+  if (reference !== null) {
+    guardBindings.push(accountId, reference.attachmentId, reference.byteSize);
+  }
+  guardBindings.push(accountId);
+
+  const statements: D1PreparedStatement[] = [
+    db.prepare(guard).bind(...guardBindings),
+    db
+      .prepare(
+        `INSERT INTO bubble
+           (account_id, space_id, room_id, worldline_key, turn_id, message_id, bubble_order,
+            ${columns.join(", ")}, attachment_ref_attachment_id, attachment_ref_byte_size,
+            timestamp, revision, server_seq, is_tombstoned)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ${columns.map(() => "?").join(", ")}, ?, ?, ?, 0, ${CURRENT_SEQ}, 0)`,
+      )
+      .bind(
+        accountId,
+        spaceId,
+        roomId,
+        key,
+        turnId,
+        messageId,
+        order,
+        ...encryptedValues(request, BUBBLE_FIELD_COLUMNS),
+        reference?.attachmentId ?? null,
+        reference?.byteSize ?? null,
+        request.metadata_set["timestamp"],
+        accountId,
+      ),
+  ];
+  for (const extensionKey of setFields.extensionKeys) {
+    statements.push(
+      bubbleExtensionStatement(
+        db,
+        accountId,
+        request,
+        extensionKey,
+        request.set[`${EXTENSION_PREFIX}${extensionKey}`] as string,
+      ),
+    );
+  }
+  statements.push(...ledgerStatements(db, accountId, request, fingerprint, 0, bubbleIdentity(request)));
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyBubbleCreateFailure(db, accountId, request, fingerprint, reference),
+  );
+}
+
+/** Apply one validated `patch_bubble`. */
+export async function applyPatchBubble(
+  db: D1Database,
+  auth: AuthContext,
+  request: OperationRequest,
+  fingerprint: string,
+): Promise<OperationResult> {
+  const accountId = auth.account_id;
+  const spaceId = request.target.space_id;
+  const roomId = request.target.room_id as string;
+  const key = request.worldline_key;
+  const turnId = request.target.turn_id as string;
+  const messageId = request.target.message_id as string;
+  const baseRevision = request.base_revision as number;
+  const nextRevision = baseRevision + 1;
+
+  const setFields = partitionFieldNames(Object.keys(request.set), BUBBLE_FIELD_COLUMNS);
+  const clearFields = partitionFieldNames(request.clear, BUBBLE_FIELD_COLUMNS);
+
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  // bubble_order, timestamp and the attachment reference are absent from the
+  // assignment list by construction: the validator refuses them on the wire and
+  // this loop only ever names the five encrypted columns.
+  const assignments: string[] = [];
+  const bindings: unknown[] = [];
+  for (const [name, column] of Object.entries(BUBBLE_FIELD_COLUMNS)) {
+    if (Object.prototype.hasOwnProperty.call(request.set, name)) {
+      assignments.push(`${column} = ?`);
+      bindings.push(request.set[name]);
+    }
+  }
+  for (const column of clearFields.columns) {
+    assignments.push(`${column} = NULL`);
+  }
+  assignments.push("revision = revision + 1", `server_seq = ${CURRENT_SEQ}`);
+  bindings.push(accountId);
+
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO transaction_guard (account_id, operation_id, ok)
+         VALUES (?, ?,
+           ((SELECT revision FROM bubble
+              WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+                AND turn_id = ? AND message_id = ?) = ?
+            AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
+      )
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        key,
+        turnId,
+        messageId,
+        baseRevision,
+        accountId,
+      ),
+    db
+      .prepare(
+        `UPDATE bubble SET ${assignments.join(", ")}
+          WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+            AND turn_id = ? AND message_id = ? AND revision = ?`,
+      )
+      .bind(...bindings, accountId, spaceId, roomId, key, turnId, messageId, baseRevision),
+  ];
+  for (const extensionKey of setFields.extensionKeys) {
+    statements.push(
+      bubbleExtensionStatement(
+        db,
+        accountId,
+        request,
+        extensionKey,
+        request.set[`${EXTENSION_PREFIX}${extensionKey}`] as string,
+      ),
+    );
+  }
+  for (const extensionKey of clearFields.extensionKeys) {
+    statements.push(bubbleExtensionStatement(db, accountId, request, extensionKey, null));
+  }
+  statements.push(
+    ...ledgerStatements(db, accountId, request, fingerprint, nextRevision, bubbleIdentity(request)),
+  );
+
+  return await runBatch(db, accountId, request, fingerprint, statements, () =>
+    classifyBubblePatchFailure(db, accountId, request, fingerprint, baseRevision),
+  );
+}
+
+async function readBubbleRevisionByMessage(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+): Promise<number | null> {
+  // Scoped by message_id alone: the same message in another turn of this scope
+  // is still the same identity (the scope-wide UNIQUE says so).
+  const row = await db
+    .prepare(
+      `SELECT revision FROM bubble
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ?
+          AND message_id = ?`,
+    )
+    .bind(
+      accountId,
+      request.target.space_id,
+      request.target.room_id,
+      request.worldline_key,
+      request.target.message_id,
+    )
+    .first<RoomRow>();
+  return row === null ? null : row.revision;
+}
+
+async function classifyBubbleCreateFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  reference: AttachmentReference | null,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+
+  const parent = await db
+    .prepare(
+      `SELECT 1 AS present FROM turn
+        WHERE account_id = ? AND space_id = ? AND room_id = ? AND worldline_key = ? AND turn_id = ?`,
+    )
+    .bind(
+      accountId,
+      request.target.space_id,
+      request.target.room_id,
+      request.worldline_key,
+      request.target.turn_id,
+    )
+    .first();
+  if (parent === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+
+  const duplicate = await readBubbleRevisionByMessage(db, accountId, request);
+  if (duplicate !== null) {
+    // Identity beats order: renumbering would not help a message that already
+    // exists, so the client must stop rather than retry with a new order.
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: duplicate } });
+  }
+
+  if (reference !== null) {
+    const attachment = await db
+      .prepare(
+        "SELECT state, ciphertext_byte_size FROM attachment WHERE account_id = ? AND attachment_id = ?",
+      )
+      .bind(accountId, reference.attachmentId)
+      .first<{ state: string; ciphertext_byte_size: number }>();
+    if (attachment === null) {
+      // Another account's attachment lands here too: the lookup is scoped to
+      // this account, so it is simply absent.
+      throw new ApiError("ENTITY_NOT_FOUND");
+    }
+    if (attachment.state !== "ready") {
+      throw new ApiError("ATTACHMENT_STATE_CONFLICT");
+    }
+    if (attachment.ciphertext_byte_size !== reference.byteSize) {
+      throw validationFailed();
+    }
+  }
+
+  const expected = await expectedBubbleOrder(db, accountId, request);
+  if (expected === null) {
+    // The next order would be 2^53, which is not a safe integer. Nothing about
+    // it is put in the response.
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  if (expected !== request.bubble_order) {
+    throw new ApiError("BUBBLE_ORDER_CONFLICT", { detail: { expected_bubble_order: expected } });
+  }
+
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
+async function classifyBubblePatchFailure(
+  db: D1Database,
+  accountId: string,
+  request: OperationRequest,
+  fingerprint: string,
+  baseRevision: number,
+): Promise<OperationResult> {
+  const existing = await readOperationLog(db, accountId, request.operation_id);
+  if (existing !== null) {
+    return replayResult(request.operation_id, existing, fingerprint);
+  }
+  const revision = await readBubbleRevisionByMessage(db, accountId, request);
+  if (revision === null) {
+    throw new ApiError("ENTITY_NOT_FOUND");
+  }
+  if (revision !== baseRevision) {
+    throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  if (await sequenceExhausted(db, accountId)) {
+    throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });
+  }
+  throw storageUnavailable();
+}
+
 const CHECKPOINT_FIELD_COLUMNS: Readonly<Record<string, string>> = Object.freeze({
   segments: "segments_enc",
   summary_text: "summary_text_enc",

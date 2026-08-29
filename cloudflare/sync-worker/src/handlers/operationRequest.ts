@@ -6,6 +6,7 @@ import {
 import { ApiError, validationFailed } from "../contracts/error";
 import { MAX_OPERATION_BODY_BYTES, assertOperationBodySize, parseOperationRequest } from "../contracts/operation";
 import {
+  applyCreateBubble,
   applyCreateCheckpoint,
   applyCreateEngineProfile,
   applyCreateGroupState,
@@ -13,6 +14,7 @@ import {
   applyCreateRoom,
   applyCreateTurn,
   applyCreateWorldline,
+  applyPatchBubble,
   applyPatchCheckpoint,
   applyPatchGroupState,
   applyPatchRoom,
@@ -128,6 +130,10 @@ export async function applyOperationRequest(
       return await applyCreateCheckpoint(db, auth, operation, fingerprint);
     case "patch_checkpoint":
       return await applyPatchCheckpoint(db, auth, operation, fingerprint);
+    case "create_bubble":
+      return await applyCreateBubble(db, auth, operation, fingerprint);
+    case "patch_bubble":
+      return await applyPatchBubble(db, auth, operation, fingerprint);
     case "create_turn":
       return await applyCreateTurn(db, auth, operation, fingerprint);
     case "patch_turn":

@@ -634,7 +634,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * Canonical wire field paths use the plain name; `_enc` is a D1 column
  * suffix only (draft §0.2). Extension paths are `extensions.<owner>.<entity>.<field>`.
  */
-function assertCanonicalFieldPath(path: string, allowsExtensions: boolean): void {
+function assertCanonicalFieldPath(
+  path: string,
+  allowsExtensions: boolean,
+  plaintextNames: ReadonlySet<string>,
+): void {
   if (path.length === 0 || path.endsWith("_enc")) {
     throw validationFailed();
   }
@@ -652,10 +656,13 @@ function assertCanonicalFieldPath(path: string, allowsExtensions: boolean): void
   if (!/^[a-z][a-z0-9_]*$/.test(path)) {
     throw validationFailed();
   }
-  if (Object.prototype.hasOwnProperty.call(METADATA_PARSERS, path)) {
-    // A plaintext metadata field never travels as ciphertext. Accepting it
-    // here would give one canonical fact two wire paths, one of which D1
-    // could not read.
+  if (plaintextNames.has(path)) {
+    // A plaintext metadata field never travels as ciphertext for the same
+    // operation: that would give one canonical fact two wire paths, one of
+    // which D1 could not read. The set is per-operation, because the same
+    // word can name plaintext metadata on one entity and an encrypted field
+    // on another — `kind` is attachment metadata and a bubble's own
+    // encrypted field (canonical §3.4, §7.1).
     throw validationFailed();
   }
 }
@@ -832,7 +839,11 @@ function parseMetadata(
   return { set, clear };
 }
 
-function parseSet(value: unknown, allowsExtensions: boolean): Record<string, string> {
+function parseSet(
+  value: unknown,
+  allowsExtensions: boolean,
+  plaintextNames: ReadonlySet<string>,
+): Record<string, string> {
   if (value === undefined) {
     throw validationFailed();
   }
@@ -841,14 +852,19 @@ function parseSet(value: unknown, allowsExtensions: boolean): Record<string, str
   }
   const result: Record<string, string> = {};
   for (const [path, envelope] of Object.entries(value)) {
-    assertCanonicalFieldPath(path, allowsExtensions);
+    assertCanonicalFieldPath(path, allowsExtensions, plaintextNames);
     assertFieldEnvelope(envelope);
     result[path] = envelope;
   }
   return result;
 }
 
-function parseClear(value: unknown, setPaths: Set<string>, allowsExtensions: boolean): string[] {
+function parseClear(
+  value: unknown,
+  setPaths: Set<string>,
+  allowsExtensions: boolean,
+  plaintextNames: ReadonlySet<string>,
+): string[] {
   if (!Array.isArray(value)) {
     throw validationFailed();
   }
@@ -857,7 +873,7 @@ function parseClear(value: unknown, setPaths: Set<string>, allowsExtensions: boo
     if (typeof path !== "string") {
       throw validationFailed();
     }
-    assertCanonicalFieldPath(path, allowsExtensions);
+    assertCanonicalFieldPath(path, allowsExtensions, plaintextNames);
     if (seen.has(path)) {
       throw validationFailed();
     }
@@ -917,7 +933,13 @@ export function parseOperationRequest(value: unknown): OperationRequest {
 
   const metadata = parseMetadata(value["metadata_set"], value["metadata_clear"], operation);
   const entityShape = ENTITY_SHAPES[spec.entityType];
-  const parsedSet = parseSet(value["set"], entityShape.allowsExtensions);
+  const rule = METADATA_RULES[operation] ?? EMPTY_METADATA_RULE;
+  const plaintextNames: ReadonlySet<string> = new Set<string>([
+    ...rule.required,
+    ...rule.optional,
+    ...rule.clearable,
+  ]);
+  const parsedSet = parseSet(value["set"], entityShape.allowsExtensions, plaintextNames);
 
   const requiredEncrypted = REQUIRED_ENCRYPTED_FIELDS[operation];
   if (requiredEncrypted !== undefined) {
@@ -970,6 +992,7 @@ export function parseOperationRequest(value: unknown): OperationRequest {
     value["clear"],
     new Set(Object.keys(parsedSet)),
     entityShape.allowsExtensions,
+    plaintextNames,
   );
 
   const request: OperationRequest = {

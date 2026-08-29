@@ -7,6 +7,7 @@ export const ERROR_CODES = [
   "NOT_FOUND",
   "REVISION_CONFLICT",
   "OPERATION_REPLAY_MISMATCH",
+  "BUBBLE_ORDER_CONFLICT",
   "ATTACHMENT_STATE_CONFLICT",
   "REQUEST_TOO_LARGE",
   "PROFILE_UNSUPPORTED",
@@ -27,6 +28,10 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
   REVISION_CONFLICT: 409,
   OPERATION_REPLAY_MISMATCH: 409,
+  // The requested bubble_order is not the one this scope will accept next.
+  // Distinct from REVISION_CONFLICT: nothing about a revision is stale, and
+  // the client must re-encrypt because bubble_order is inside the AAD.
+  BUBBLE_ORDER_CONFLICT: 409,
   ATTACHMENT_STATE_CONFLICT: 409,
   REQUEST_TOO_LARGE: 413,
   PROFILE_UNSUPPORTED: 422,
