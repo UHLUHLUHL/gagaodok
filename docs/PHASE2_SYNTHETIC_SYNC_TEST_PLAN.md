@@ -33,7 +33,7 @@ Phase 2는 Phase 1에서 고정한 wire·identity·migration 계약을 **결정�
 | M06 versioned AI family | `f7195f3`, `da5b201`, `b69d8ee`, `04c9197` checkpoint·engine·persona/head | local atomic handler 완료 |
 | M06 turn/bubble family | `2875ef4`, `7328825`, `60594d8` create·patch·order·attachment guard | local atomic handler 완료 |
 | M06 attachment handler | `ea731c7` allocated metadata·null revision·internal R2 key | local atomic handler 완료 |
-| M06 operation route | `POST /v1/sync/operations` §2.2 envelope | 구현 대기 |
+| M06 operation route | `d71d5eb` §2.2 envelope·validated request ID | unexpected 500 직접 회귀 대기 |
 | local R2 attachment flow | source 12,582,912 / binary ciphertext 12,582,946 계약·합성 metadata fixture | M06 ledger·endpoint 대기 |
 | Swift·Kotlin fixed-vector 교차 검증 | 통합 증거 없음 | 대기 |
 

@@ -69,6 +69,7 @@ flowchart TB
 | turn/bubble atomic handlers | `2875ef4`, `7328825`, `60594d8`; Codex focused 64 tests | ✅ | create_attachment handler·route preflight |
 | attachment atomic handler | `ea731c7`; Codex focused 249 tests | ✅ | operation HTTP route envelope |
 | D1 transaction·CAS·idempotency | `0008` ledger와 runtime-enabled operation 15개 atomic handler | ✅ | HTTP route와 Phase 2 다중 isolate 합성 검증 |
+| operation HTTP route | `d71d5eb`; Codex focused 43 tests | 🟡 | unexpected exception의 content-free 500 회귀 1건 보완 |
 | R2 attachment state machine | canonical schema·Worker API의 6-state·12,582,946-byte 계약, `5299b27` persistence | 🟡 | M06 ledger 뒤 local R2 state transition test |
 | Android phone attachment entry | `0b6d318`, `f5a87da` | ✅ | M05 이후 cross-device upload 연결; release 실기기 방향 재확인 |
 | pull·bootstrap·cursor | Worker API 초안 | 🟡 | local pagination/crash fixture |
@@ -128,7 +129,7 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 | Codex | canonical schema, Worker API, 이 matrix, [D1 migration plan](PHASE1_D1_MIGRATION_PLAN.md), [Phase 2 합성 계획](PHASE2_SYNTHETIC_SYNC_TEST_PLAN.md), synthetic fixture와 test | family별 identity·CAS·replay 위험 검토와 통합 판정 |
 | 사용자 | 실제 데이터 접근·원격 resource 생성·업로드 승인 | 별도 명시 지시 |
 
-M03~M05, device token 인증, M06 ledger DDL과 runtime-enabled operation 15개의 route-independent atomic handler는 모두 승인됐다. 다음 gate는 `POST /v1/sync/operations`의 공용 §2.2 HTTP envelope이며, 그 뒤 별도 allocation route 없이 local R2 upload·complete·download state flow를 연다.
+M03~M05, device token 인증, M06 ledger DDL과 runtime-enabled operation 15개의 route-independent atomic handler는 모두 승인됐다. `POST /v1/sync/operations` route 구현도 계약과 일치하지만 unexpected exception을 content-free 500으로 바꾸는 직접 회귀가 보고와 달리 빠져 있어 그 한 건을 보완한 뒤 최종 승인한다. 이어서 별도 allocation route 없이 local R2 upload·complete·download state flow를 연다.
 
 ## 🔗 관련 문서
 
