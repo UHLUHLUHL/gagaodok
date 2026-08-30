@@ -27,7 +27,8 @@ public struct SyncPairingPayload: Equatable {
     public init(baseURL: URL, accountID: String, sessionID: String, pairingSecret: Data) throws {
         guard pairingSecret.count == 32 else { throw PayloadError.malformed }
         guard baseURL.scheme == "https", baseURL.host != nil,
-              baseURL.query == nil, baseURL.fragment == nil else {
+              baseURL.user == nil, baseURL.password == nil,
+              baseURL.path.isEmpty, baseURL.query == nil, baseURL.fragment == nil else {
             throw PayloadError.malformed
         }
         guard Self.isCanonicalUUID(accountID), Self.isCanonicalUUID(sessionID) else {

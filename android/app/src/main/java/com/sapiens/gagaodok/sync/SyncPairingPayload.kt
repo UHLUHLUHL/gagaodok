@@ -71,6 +71,7 @@ class SyncPairingPayload private constructor(
             if (pairingSecret.size != 32) throw malformed()
             val uri = runCatching { URI(baseUrl) }.getOrNull()
             if (uri?.scheme != "https" || uri.host.isNullOrEmpty() ||
+                uri.rawUserInfo != null || !uri.rawPath.isNullOrEmpty() ||
                 uri.query != null || uri.fragment != null
             ) {
                 throw malformed()

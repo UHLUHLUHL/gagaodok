@@ -297,6 +297,22 @@ struct SyncPairingTests {
             )
             runner.check(
                 (try? SyncPairingPayload(
+                    baseURL: URL(string: "https://pairing.invalid/sync")!,
+                    accountID: good.accountID, sessionID: good.sessionID,
+                    pairingSecret: good.pairingSecret
+                )) == nil,
+                "an endpoint path must be refused"
+            )
+            runner.check(
+                (try? SyncPairingPayload(
+                    baseURL: URL(string: "https://user@pairing.invalid")!,
+                    accountID: good.accountID, sessionID: good.sessionID,
+                    pairingSecret: good.pairingSecret
+                )) == nil,
+                "endpoint user info must be refused"
+            )
+            runner.check(
+                (try? SyncPairingPayload(
                     baseURL: good.baseURL, accountID: good.accountID,
                     sessionID: good.sessionID, pairingSecret: Data(count: 31)
                 )) == nil,

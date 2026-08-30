@@ -201,6 +201,12 @@ class SyncPairingTest {
             SyncPairingPayload.create("http://pairing.invalid", ACCOUNT, SESSION, ByteArray(32))
         }
         assertThrows(SyncPairingPayload.PayloadException::class.java) {
+            SyncPairingPayload.create("https://pairing.invalid/sync", ACCOUNT, SESSION, ByteArray(32))
+        }
+        assertThrows(SyncPairingPayload.PayloadException::class.java) {
+            SyncPairingPayload.create("https://user@pairing.invalid", ACCOUNT, SESSION, ByteArray(32))
+        }
+        assertThrows(SyncPairingPayload.PayloadException::class.java) {
             SyncPairingPayload.create(BASE_URL, ACCOUNT, SESSION, ByteArray(31))
         }
     }
