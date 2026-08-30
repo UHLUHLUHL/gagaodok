@@ -248,6 +248,33 @@ class SyncOnboardingModelTest {
         }
     }
 
+    private fun emptyBootstrapBody() =
+        """{"protocol_version":1,"request_id":"AAAAAAAA-0000-4000-8000-00000000000B","result":{
+        "snapshot_high_watermark_seq":0,"has_more":false,"next_cursor":null,"items":[]}}"""
+
+    /**
+     * A finished walk is finished even when it brought nothing back.
+     *
+     * A newly created account owns no rows, so its snapshot is legitimately
+     * empty. Reading emptiness as "still walking" leaves the screen offering a
+     * page that will never exist, which is what a real macOS restart showed.
+     */
+    @Test fun `an empty snapshot still counts as finished`() = harness(
+        enroll = listOf(201),
+        pull = listOf(200 to emptyBootstrapBody()),
+    ) { h ->
+        h.model.beginConnection()
+        h.model.confirmPhraseSaved()
+        h.model.advanceBootstrap()
+        assertEquals(SyncOnboardingUiState.ReplicaReady(0), h.model.state.value)
+        assertTrue(h.replica.snapshot().isEmpty())
+
+        // What the screen does after a restart: read stored progress only.
+        h.model.refresh()
+        assertEquals(SyncOnboardingUiState.ReplicaReady(0), h.model.state.value)
+        assertFalse(h.model.actions.canAdvanceBootstrap)
+        h.assertConversationUntouched("empty bootstrap")
+    }
     private companion object {
         const val ACCOUNT = "A0000000-0000-4000-8000-000000000001"
         const val DEVICE = "80000000-0000-4000-8000-000000000002"

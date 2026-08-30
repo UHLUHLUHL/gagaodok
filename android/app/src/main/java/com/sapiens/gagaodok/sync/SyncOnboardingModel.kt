@@ -148,7 +148,11 @@ class SyncOnboardingModel(
                 val progress = pull.progress()
                 val entries = runCatching { replica.snapshot().size }.getOrDefault(0)
                 when {
-                    progress.bootstrapComplete && entries > 0 -> SyncOnboardingUiState.ReplicaReady(entries)
+                    // Emptiness is not incompleteness. A newly created account
+                    // owns no rows, so its snapshot is legitimately empty;
+                    // counting entries here reported a finished walk as still
+                    // running and kept offering a page that will never exist.
+                    progress.bootstrapComplete -> SyncOnboardingUiState.ReplicaReady(entries)
                     progress.snapshotWatermark != null -> SyncOnboardingUiState.Bootstrapping(entries)
                     else -> SyncOnboardingUiState.ConnectedSyncOff
                 }
