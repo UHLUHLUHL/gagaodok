@@ -69,6 +69,10 @@ public final class SyncConnectionStateStore: @unchecked Sendable {
             .write(to: fileURL, options: [.atomic, .completeFileProtectionUnlessOpen])
     } }
 
+    public func encoded(_ configuration: SyncConnectionConfiguration) throws -> Data {
+        try JSONEncoder().encode(Stored(version: 1, configuration: configuration))
+    }
+
     private func locked<T>(_ work: () throws -> T) rethrows -> T {
         lock.lock(); defer { lock.unlock() }; return try work()
     }

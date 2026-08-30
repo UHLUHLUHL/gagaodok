@@ -95,3 +95,14 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionStoreTests.swift" \
   -o "$transition_store_binary"
 "$transition_store_binary"
+
+transition_coordinator_binary="${TMPDIR:-/tmp}/gagaodok-sync-transition-coordinator-tests"
+swiftc \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncConnectionState.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncAccountTransitionStore.swift" \
+  "$services/SyncAccountTransitionCoordinator.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionCoordinatorTests.swift" \
+  -o "$transition_coordinator_binary"
+"$transition_coordinator_binary"

@@ -20,14 +20,21 @@ public enum SyncTransitionStage: String, Codable {
     case committing
 }
 
+public enum SyncTransitionOperation: String, Codable {
+    case switchAccount = "switch_account"
+    case unlink
+}
+
 public struct SyncAccountTransitionRecord: Codable, Equatable {
     public let stage: SyncTransitionStage
+    public let operation: SyncTransitionOperation
     public let oldAccountID: String
-    public let newAccountID: String
+    public let newAccountID: String?
     public let createdAtMilliseconds: Int64
 
     enum CodingKeys: String, CodingKey {
         case stage
+        case operation
         case oldAccountID = "old_account_id"
         case newAccountID = "new_account_id"
         case createdAtMilliseconds = "created_at_ms"
@@ -35,11 +42,13 @@ public struct SyncAccountTransitionRecord: Codable, Equatable {
 
     public init(
         stage: SyncTransitionStage,
+        operation: SyncTransitionOperation = .switchAccount,
         oldAccountID: String,
-        newAccountID: String,
+        newAccountID: String?,
         createdAtMilliseconds: Int64
     ) {
         self.stage = stage
+        self.operation = operation
         self.oldAccountID = oldAccountID
         self.newAccountID = newAccountID
         self.createdAtMilliseconds = createdAtMilliseconds
@@ -57,7 +66,7 @@ public final class SyncAccountTransitionJournal: @unchecked Sendable {
     private let fileURL: URL
     private let lock = NSLock()
     private static let allowedKeys: Set<String> = [
-        "version", "stage", "old_account_id", "new_account_id", "created_at_ms",
+        "version", "stage", "operation", "old_account_id", "new_account_id", "created_at_ms",
     ]
     private static let identifier = try! NSRegularExpression(
         pattern: "^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$"
@@ -81,7 +90,8 @@ public final class SyncAccountTransitionJournal: @unchecked Sendable {
         do {
             let data = try Data(contentsOf: fileURL)
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  Set(object.keys) == Self.allowedKeys,
+                  Set(object.keys).isSubset(of: Self.allowedKeys),
+                  ["version", "stage", "operation", "old_account_id", "created_at_ms"].allSatisfy(object.keys.contains),
                   object["version"] as? Int == 1 else {
                 throw SyncAccountTransitionStoreError.corruptJournal
             }
@@ -116,8 +126,16 @@ public final class SyncAccountTransitionJournal: @unchecked Sendable {
             let range = NSRange(value.startIndex..<value.endIndex, in: value)
             return identifier.firstMatch(in: value, range: range) != nil
         }
-        return isIdentifier(record.oldAccountID) && isIdentifier(record.newAccountID)
-            && record.oldAccountID != record.newAccountID && record.createdAtMilliseconds > 0
+        let identityIsValid: Bool
+        switch record.operation {
+        case .switchAccount:
+            identityIsValid = record.newAccountID.map(isIdentifier) == true
+                && record.oldAccountID != record.newAccountID
+        case .unlink:
+            identityIsValid = record.newAccountID == nil
+        }
+        return isIdentifier(record.oldAccountID) && identityIsValid
+            && record.createdAtMilliseconds > 0
     }
 
     private func locked<T>(_ work: () throws -> T) rethrows -> T {
@@ -197,6 +215,22 @@ public final class SyncTransitionFiles: @unchecked Sendable {
                 if FileManager.default.fileExists(atPath: target.path) {
                     try FileManager.default.removeItem(at: target)
                 }
+            }
+        }
+    } }
+
+    public func removeActive(role: SyncTransitionFileRole) throws { try locked {
+        let target = url(role, suffix: "")
+        if FileManager.default.fileExists(atPath: target.path) {
+            try FileManager.default.removeItem(at: target)
+        }
+    } }
+
+    public func removeAllActive() throws { try locked {
+        for role in SyncTransitionFileRole.allCases {
+            let target = url(role, suffix: "")
+            if FileManager.default.fileExists(atPath: target.path) {
+                try FileManager.default.removeItem(at: target)
             }
         }
     } }
