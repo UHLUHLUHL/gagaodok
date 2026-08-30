@@ -96,7 +96,12 @@ public final class SyncOnboardingModel: ObservableObject {
 
     public var actions: SyncOnboardingActions {
         switch state {
-        case .disconnected, .retryableError(.enrollmentRefused):
+        // A failure that never reached the server leaves nothing staged, so
+        // building a fresh enrollment is the only way forward — and without it
+        // the screen has no button at all and the user is stranded.
+        case .disconnected, .retryableError(.enrollmentRefused),
+             .retryableError(.storageFailed), .retryableError(.phraseNotConfirmed),
+             .retryableError(.notConnected):
             return SyncOnboardingActions(
                 canBeginConnection: true, canConfirmPhrase: false, canRetryEnrollment: false,
                 canAdvanceBootstrap: false, canRequestDisconnect: false

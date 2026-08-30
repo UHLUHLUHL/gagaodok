@@ -96,7 +96,7 @@ private struct Harness {
 }
 
 @MainActor
-private func makeHarness() throws -> Harness {
+private func makeHarness(words: [String] = syntheticWords()) throws -> Harness {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("gagaodok-sync-ui-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -116,7 +116,7 @@ private func makeHarness() throws -> Harness {
         journal: SyncEnrollmentJournal(fileURL: directory.appendingPathComponent("enrollment.json")),
         transport: enrollTransport,
         random: CountingRandom(),
-        words: syntheticWords()
+        words: words
     )
     let replica = SyncReplicaStore(fileURL: directory.appendingPathComponent("replica.plist"))
     let pull = SyncPullCoordinator(
@@ -348,6 +348,25 @@ private func testNothingSensitiveIsDescribable() async throws {
     }
 }
 
+/// A local failure must still leave a way forward.
+///
+/// The screen has no other entry point, so an error state with no button
+/// strands the user on it until the app restarts. A real install produced
+/// exactly that when the bundled word list could not be found.
+@MainActor
+private func testALocalFailureStillOffersAWayForward() async throws {
+    // An unusable word list is the cheapest way to make preparation fail
+    // before anything is staged or sent.
+    let harness = try makeHarness(words: [])
+    await harness.model.beginConnection()
+
+    try check(harness.model.state == .retryableError(.storageFailed), "a local failure is reported")
+    try check(harness.model.actions.canBeginConnection, "the user can try again")
+    try check(harness.enrollTransport.sent.isEmpty, "nothing was sent")
+    try check(harness.vault.stored == nil, "nothing was stored")
+    try check(harness.model.recoveryPhrase == nil, "no phrase is left on screen")
+}
+
 @main
 enum SyncOnboardingModelTests {
     @MainActor
@@ -362,6 +381,7 @@ enum SyncOnboardingModelTests {
         try await testHalfLinkedDeviceSaysSoAndGeneratesNothing()
         try await testDisconnectIsAConfirmationOnly()
         try await testNothingSensitiveIsDescribable()
-        print("SyncOnboardingModelTests: 10 passed")
+        try await testALocalFailureStillOffersAWayForward()
+        print("SyncOnboardingModelTests: 11 passed")
     }
 }
