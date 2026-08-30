@@ -28,7 +28,7 @@
 **Files:**
 - Modify: `Sources/KakaoSapiens/Services/SyncSecretStore.swift`
 - Create: `Sources/KakaoSapiens/Services/SyncAccountTransitionStore.swift`
-- Create: `Tests/KakaoSapiensTests/SyncAccountTransitionStoreTests.swift`
+- Create: `Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionStoreTests.swift`
 - Modify: `tools/test_swift_sync_coordinators.sh`
 
 **Interfaces:**
@@ -63,7 +63,7 @@ func testJournalRejectsSecretMaterialAndUnknownStage() throws {
 
 - [ ] **Step 3: Run the focused Swift store tests and confirm RED**
 
-Run: `tools/test_swift_sync_coordinators.sh SyncAccountTransitionStoreTests`
+Run: `tools/test_swift_sync_coordinators.sh transition-store`
 
 Expected: compile failure because the slot and transition-store types do not exist.
 
@@ -91,14 +91,14 @@ Use sibling files ending in `.staging` and `.rollback`. Before replacing an acti
 
 - [ ] **Step 6: Run focused tests and static checks**
 
-Run: `tools/test_swift_sync_coordinators.sh SyncAccountTransitionStoreTests`
+Run: `tools/test_swift_sync_coordinators.sh transition-store`
 
 Expected: all transition-store tests pass.
 
 - [ ] **Step 7: Commit Task 1**
 
 ```bash
-git add Sources/KakaoSapiens/Services/SyncSecretStore.swift Sources/KakaoSapiens/Services/SyncAccountTransitionStore.swift Tests/KakaoSapiensTests/SyncAccountTransitionStoreTests.swift tools/test_swift_sync_coordinators.sh
+git add Sources/KakaoSapiens/Services/SyncSecretStore.swift Sources/KakaoSapiens/Services/SyncAccountTransitionStore.swift Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionStoreTests.swift tools/test_swift_sync_coordinators.sh
 git commit -m "feat: Swift sync 전환 저장 경계를 추가한다"
 ```
 
@@ -108,7 +108,7 @@ git commit -m "feat: Swift sync 전환 저장 경계를 추가한다"
 
 **Files:**
 - Create: `Sources/KakaoSapiens/Services/SyncAccountTransitionCoordinator.swift`
-- Create: `Tests/KakaoSapiensTests/SyncAccountTransitionCoordinatorTests.swift`
+- Create: `Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionCoordinatorTests.swift`
 - Modify: `tools/test_swift_sync_coordinators.sh`
 
 **Interfaces:**
@@ -149,7 +149,7 @@ func testEveryInjectedCommitFailureLeavesOneCompleteAccount() throws {
 
 - [ ] **Step 3: Run the focused coordinator tests and confirm RED**
 
-Run: `tools/test_swift_sync_coordinators.sh SyncAccountTransitionCoordinatorTests`
+Run: `tools/test_swift_sync_coordinators.sh transition-coordinator`
 
 Expected: compile failure because the coordinator is absent.
 
@@ -181,7 +181,7 @@ Verify unlink removes only sync secret/connection/replica/cursor/outbox files, l
 
 - [ ] **Step 6: Run Swift sync tests and build once**
 
-Run: `tools/test_swift_sync_coordinators.sh SyncAccountTransitionStoreTests SyncAccountTransitionCoordinatorTests`
+Run: `tools/test_swift_sync_coordinators.sh transition-store transition-coordinator`
 
 Run: `swift build`
 
@@ -190,7 +190,7 @@ Expected: tests and build pass.
 - [ ] **Step 7: Commit Task 2**
 
 ```bash
-git add Sources/KakaoSapiens/Services/SyncAccountTransitionCoordinator.swift Tests/KakaoSapiensTests/SyncAccountTransitionCoordinatorTests.swift tools/test_swift_sync_coordinators.sh
+git add Sources/KakaoSapiens/Services/SyncAccountTransitionCoordinator.swift Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionCoordinatorTests.swift tools/test_swift_sync_coordinators.sh
 git commit -m "feat: Swift sync 계정 전환을 원자화한다"
 ```
 
@@ -332,7 +332,7 @@ git commit -m "feat: Android sync 계정 전환을 원자화한다"
 **Files:**
 - Modify: `Sources/KakaoSapiens/Views/KakaoSyncSettingsSection.swift`
 - Create: `Sources/KakaoSapiens/Services/SyncAccountTransitionModel.swift`
-- Create: `Tests/KakaoSapiensTests/SyncAccountTransitionModelTests.swift`
+- Create: `Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionModelTests.swift`
 - Modify: `android/app/src/main/java/com/sapiens/gagaodok/ui/screens/SyncSettingsSection.kt`
 - Create: `android/app/src/main/java/com/sapiens/gagaodok/sync/SyncAccountTransitionModel.kt`
 - Create: `android/app/src/test/java/com/sapiens/gagaodok/sync/SyncAccountTransitionModelTest.kt`
@@ -359,7 +359,7 @@ func testLinkedDisabledAccountOffersJoinAndUnlinkButPendingOutboxOffersNeither()
 
 - [ ] **Step 2: Confirm both model tests RED**
 
-Run: `tools/test_swift_sync_coordinators.sh SyncAccountTransitionModelTests`
+Run: `tools/test_swift_sync_coordinators.sh transition-model`
 
 Run: `cd android && ./gradlew :app:testPhoneDebugUnitTest --tests '*SyncAccountTransitionModelTest*'`
 
@@ -379,7 +379,7 @@ For cancel and every reported error, compare active secret fingerprint, connecti
 
 - [ ] **Step 6: Run focused tests and affected builds**
 
-Run: `tools/test_swift_sync_coordinators.sh SyncAccountTransitionStoreTests SyncAccountTransitionCoordinatorTests SyncAccountTransitionModelTests`
+Run: `tools/test_swift_sync_coordinators.sh transition-store transition-coordinator transition-model`
 
 Run: `swift build`
 
@@ -390,7 +390,7 @@ Expected: all tests and both platform builds pass.
 - [ ] **Step 7: Commit Task 5**
 
 ```bash
-git add Sources/KakaoSapiens/Views/KakaoSyncSettingsSection.swift Sources/KakaoSapiens/Services/SyncAccountTransitionModel.swift Tests/KakaoSapiensTests/SyncAccountTransitionModelTests.swift android/app/src/main/java/com/sapiens/gagaodok/ui/screens/SyncSettingsSection.kt android/app/src/main/java/com/sapiens/gagaodok/sync/SyncAccountTransitionModel.kt android/app/src/test/java/com/sapiens/gagaodok/sync/SyncAccountTransitionModelTest.kt
+git add Sources/KakaoSapiens/Views/KakaoSyncSettingsSection.swift Sources/KakaoSapiens/Services/SyncAccountTransitionModel.swift Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionModelTests.swift android/app/src/main/java/com/sapiens/gagaodok/ui/screens/SyncSettingsSection.kt android/app/src/main/java/com/sapiens/gagaodok/sync/SyncAccountTransitionModel.kt android/app/src/test/java/com/sapiens/gagaodok/sync/SyncAccountTransitionModelTest.kt
 git commit -m "feat: 정식 앱에 안전한 sync 계정 전환 UI를 연결한다"
 ```
 
@@ -414,7 +414,7 @@ Run a narrow source/test scan for literal token, master-key, recovery phrase, ci
 
 - [ ] **Step 2: Review changed paths and commit ownership**
 
-Confirm no files outside `Sources/KakaoSapiens/`, `Tests/KakaoSapiensTests/`, `android/`, `tools/test_swift_sync_coordinators.sh`, and the two listed docs changed in these tasks.
+Confirm no files outside `Sources/KakaoSapiens/`, `Tests/KakaoSapiensSyncOutboxTests/`, `android/`, `tools/test_swift_sync_coordinators.sh`, and the two listed docs changed in these tasks.
 
 - [ ] **Step 3: Record the gate accurately**
 
