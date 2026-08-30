@@ -611,11 +611,14 @@ conflict다. 이 endpoint는 remote 활성화 전에 rate limit gate를 반드�
 | `POST /v1/pairing/sessions/{session_id}/claims/{claim_id}/approve` | 그 session account의 기존 device token | SAS 확인 뒤 `claim_lookup`, delivery envelope, 새 device identity·platform·space·display envelope·token hash 제출 |
 | `POST /v1/pairing/sessions/{session_id}/claims/{claim_id}/redeem` | body의 `claim_lookup`·`claim_redeem_auth` | constant-time verifier 일치 + approved + unexpired일 때 device insert와 consumed 전이를 한 batch로 수행하고 delivery envelope를 한 번 반환 |
 
-새 device는 raw token과 `claim_secret`을 먼저 만들고 claim ciphertext 안에 token
-hash와 device metadata를 넣는다. 기존 device는 claim을 복호화하고 SAS를 사용자와
-대조한 뒤 **같은 값**을 approve body에 전달한다. delivery package에는 master key가
-들어가지만 raw device token은 넣을 필요가 없다. 새 device가 이미 자기 token을
-보관하기 때문이다.
+새 device는 `claim_secret`과 device metadata를 claim ciphertext 안에 넣는다.
+기존 device는 claim을 복호화하고 SAS를 사용자와 대조한 뒤 새 raw device token을
+생성한다. approve body에는 그 token의 hash와 claim의 device metadata를 전달하고,
+delivery package에는 master key와 raw device token을 함께 봉인한다. 따라서 Worker는
+raw token을 보지 않고, joiner는 승인된 delivery를 복호화하기 전에는 token을
+보관하지 않는다. 이 발급 주체와 전달 순서는
+[`PAIRING_AND_RECOVERY_REVEAL_CONTRACT.md`](PAIRING_AND_RECOVERY_REVEAL_CONTRACT.md)의
+양 플랫폼 계약을 따른다.
 
 QR bearer는 claim 제출만 할 수 있고 claim list·ciphertext·approval 결과를 읽지
 못한다. 다른 account token, 다른 session의 lookup/verifier, 승인 전·만료 후 redeem,

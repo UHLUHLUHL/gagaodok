@@ -91,6 +91,8 @@ flowchart TB
 | macOS 합성 onboarding 실기기 | `5ec6576`, `4572f75`, `ebb8cfd`, `2c032de`; 설치 앱에서 12단계 실행. 단위 test가 못 잡은 결함 4개(번들 리소스·막다른 오류 상태·token 수명·빈 snapshot 회귀) 발견·수정, 수정본 재설치 후 재검증 | ✅ | 실제 대화 연결 승인 |
 | Android onboarding parity | `5c414b6`, `f1389bd`; macOS 실기기 결함 3·4를 같은 의미로 보정. token을 요청마다 읽고 인증 없는 요청은 로컬 거부, 빈 snapshot도 완료로 유지. 양 flavor test·compile 통과, 설치·실행 없음 | ✅ | 실제 대화 연결 승인 |
 | Android 합성 onboarding 실기기 | `1a67d52`; phone·tablet 두 기기에서 12단계 완주. signer 일치 update, UID 유지, 별도 합성 account, same-session bootstrap 성공, 재실행 복원, release 복귀. APK 빌드를 막던 중복 asset 결함 발견·수정 | ✅ | 실제 대화 연결 승인 |
+| 앱 기기 합류(pairing) 기반 | `4ba3bcd`, `79dd7d4`, `e16d112`; canonical QR·claim/delivery 암호화·SAS 승인·1회 redeem·기본 sync 비활성의 Swift/Android coordinator와 contract test | ✅ | QR 렌더러·스캐너 UI와 실기기 합류 검증 |
+| 복구 문구 7일 재열람 계약 | `4ba3bcd`, `79dd7d4`, `e16d112`; 16-byte entropy만 device-local escrow, 매회 소유자 인증, 확인·만료 시 폐기, entropy 부재 시 재생성 금지 | ⚠️ | 실제 escrow 저장소·소유자 인증 UI·만료 청소 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
@@ -140,10 +142,12 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 - [x] 같은 operation retry가 최초 raw bytes를 재사용하는 durable outbox (`325a2cf`)
 - [x] 최초 enrollment retry가 비밀·복구 문구 없이 동일 raw bytes를 재사용 (`4a824cd`)
 - [x] remote projection이 기존 local conversation file을 바꾸지 않는 shadow replica (`eb348e8`)
+- [x] 양 플랫폼 pairing QR·SAS·claim/delivery·1회 redeem contract test (`79dd7d4`, `e16d112`)
 
 ## ⚠️ 지금 하면 안 되는 일
 
-- Cloudflare account 로그인, D1·R2 생성, deploy 또는 `--remote` migration
+- production Cloudflare resource 생성·deploy·remote migration. 기존 합성 전용
+  resource 변경도 별도 사용자 승인 없이 수행하지 않는다.
 - 실제 대화 archive·첨부·복구 문구를 test fixture로 복사
 - Worker의 opaque ciphertext를 복호화하거나 분석하기
 - Phase 3 shadow upload 또는 Phase 5 양방향 write 활성화
@@ -158,10 +162,11 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 
 M03~M06, operation·attachment·pairing·recovery HTTP route, local R2 lifecycle,
 changes/bootstrap, Phase 2 local synthetic E2E, 양 플랫폼 E2EE·device-local key
-custody·durable outbox·Worker client·기본 비활성 연결 상태·remote shadow replica와
-rate limit·expiry/orphan cleanup까지 local 통합 승인됐다. 다음 gate는 합성 계정용
-onboarding UI와 기존 local mutation의 operation adapter다. remote Cloudflare resource와
-실제 data는 계속 별도 승인 대상이다.
+custody·durable outbox·Worker client·기본 비활성 연결 상태·remote shadow replica,
+pairing 기반과 rate limit·expiry/orphan cleanup까지 local 통합 승인됐다. 다음 gate는
+QR 렌더러·스캐너를 포함한 기기 합류 UI, 복구 entropy escrow 구현, 기존 local
+mutation의 operation adapter다. production Cloudflare resource와 실제 data는 계속
+별도 승인 대상이다.
 
 ## 🔗 관련 문서
 
