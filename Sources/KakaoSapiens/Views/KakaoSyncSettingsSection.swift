@@ -84,10 +84,11 @@ private final class SyncSettingsHost: ObservableObject {
         ),
         let client = try? SyncWorkerClient(
             baseURL: environment.baseURL,
-            // The token this client will authenticate with once enrollment has
-            // stored one. Before that it is unused: the pull buttons are only
-            // offered from the connected state.
-            deviceToken: Self.storedToken() ?? Data(count: 32),
+            // Read per request, not captured here. This screen is built while
+            // nothing is stored yet, so a token taken now would stay empty for
+            // the rest of the session and every read would be refused until
+            // the app restarted.
+            token: { Self.storedToken() },
             transport: URLSessionSyncTransport()
         ) else { return }
 

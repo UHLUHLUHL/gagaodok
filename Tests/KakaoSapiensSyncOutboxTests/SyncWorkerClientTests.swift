@@ -29,7 +29,34 @@ enum SyncWorkerClientTests {
         let requests = await transport.captured()
         try require(requests.count == 2 && requests.allSatisfy { $0.httpBody == raw })
         try require(requests.allSatisfy { $0.value(forHTTPHeaderField:"Authorization")?.hasPrefix("Device gdt1_") == true })
-        print("Swift sync worker client: 1 passed")
+        // A client built before enrollment must still authenticate afterwards.
+        //
+        // The settings screen constructs its client once, while no token is
+        // stored yet. On a real install that client then refused every read
+        // until the app was restarted, because the token it captured at
+        // construction never changed.
+        let lateOutbox = SyncOutbox(fileURL: directory.appendingPathComponent("late.plist"))
+        try lateOutbox.enqueue(operationID: "10000000-0000-4000-8000-000000000002", rawBody: raw)
+        var stored: Data? = nil
+        let lateTransport = Transport([SyncHTTPResponse(statusCode: 200, body: Data("{}".utf8))])
+        let lateClient = try SyncWorkerClient(
+            baseURL: URL(string: "https://sync.invalid")!,
+            token: { stored },
+            transport: lateTransport
+        )
+        // Nothing stored yet: refused here, and never sent unauthenticated.
+        do { _ = try await lateClient.drainOne(from: lateOutbox); throw Failure() }
+        catch SyncWorkerClientError.invalidToken {}
+        let beforeToken = await lateTransport.captured()
+        try require(beforeToken.isEmpty)
+
+        stored = Data((0..<32).map(UInt8.init))
+        _ = try await lateClient.drainOne(from: lateOutbox)
+        let lateRequests = await lateTransport.captured()
+        try require(lateRequests.count == 1)
+        try require(lateRequests[0].value(forHTTPHeaderField: "Authorization")?.hasPrefix("Device gdt1_") == true)
+
+        print("Swift sync worker client: 2 passed")
     }
     private static func require(_ value:@autoclosure() throws->Bool)throws{if try !value(){throw Failure()}}
     private struct Failure:Error{}

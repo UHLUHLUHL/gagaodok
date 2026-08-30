@@ -28,7 +28,12 @@ public enum SyncWorkerClientError: Error {
 
 public final class SyncWorkerClient {
     private let baseURL: URL
-    private let deviceToken: Data
+    /// Read afresh for every request rather than captured once.
+    ///
+    /// The settings screen builds its client before enrollment has stored
+    /// anything, so a token captured at construction stays empty for the rest
+    /// of the app session and every read is refused until a restart.
+    private let token: () -> Data?
     private let transport: SyncHTTPTransport
 
     public init(baseURL: URL, deviceToken: Data, transport: SyncHTTPTransport = URLSessionSyncTransport()) throws {
@@ -37,7 +42,26 @@ public final class SyncWorkerClient {
         }
         guard deviceToken.count == 32 else { throw SyncWorkerClientError.invalidToken }
         self.baseURL = baseURL
-        self.deviceToken = deviceToken
+        self.token = { deviceToken }
+        self.transport = transport
+    }
+
+    /// A client for a token that does not exist yet.
+    ///
+    /// The provider is consulted per request, so a token stored after this
+    /// client was built is used without rebuilding anything. While the
+    /// provider has nothing to give the request is refused locally: an
+    /// unauthenticated request is never sent.
+    public init(
+        baseURL: URL,
+        token: @escaping () -> Data?,
+        transport: SyncHTTPTransport = URLSessionSyncTransport()
+    ) throws {
+        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.query == nil, baseURL.fragment == nil else {
+            throw SyncWorkerClientError.invalidBaseURL
+        }
+        self.baseURL = baseURL
+        self.token = token
         self.transport = transport
     }
 
@@ -45,7 +69,7 @@ public final class SyncWorkerClient {
     /// after a 2xx response; every error leaves the original bytes untouched.
     public func drainOne(from outbox: SyncOutbox) async throws -> SyncHTTPResponse? {
         guard let entry = try outbox.pending().first else { return nil }
-        var request = authorizedRequest(path: "/v1/sync/operations", method: "POST")
+        var request = try authorizedRequest(path: "/v1/sync/operations", method: "POST")
         request.httpBody = entry.rawBody
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let response = try await transport.send(request)
@@ -69,12 +93,15 @@ public final class SyncWorkerClient {
     }
 
     private func get(path: String) async throws -> SyncHTTPResponse {
-        let response = try await transport.send(authorizedRequest(path: path, method: "GET"))
+        let response = try await transport.send(try authorizedRequest(path: path, method: "GET"))
         guard (200..<300).contains(response.statusCode) else { throw SyncWorkerClientError.httpStatus(response.statusCode) }
         return response
     }
 
-    private func authorizedRequest(path: String, method: String) -> URLRequest {
+    private func authorizedRequest(path: String, method: String) throws -> URLRequest {
+        guard let deviceToken = token(), deviceToken.count == 32 else {
+            throw SyncWorkerClientError.invalidToken
+        }
         var request = URLRequest(url: URL(string: path, relativeTo: baseURL)!)
         request.httpMethod = method
         request.cachePolicy = .reloadIgnoringLocalCacheData
