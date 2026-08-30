@@ -66,8 +66,11 @@ commit 시 새 secret·connection·replica·cursor를 하나의 전환 단위로
 
 ## 저장 구조와 전환 저널
 
-플랫폼별 보안 저장소에는 활성 secret 한 세트만 둔다. 전환 중 새 secret은
-플랫폼 보안 저장소의 별도 staging slot에 보관하고 일반 파일에는 쓰지 않는다.
+정상 상태의 플랫폼별 보안 저장소에는 활성 secret 한 세트만 둔다. 전환 중 새
+secret은 별도 staging slot에 보관하고 일반 파일에는 쓰지 않는다. commit 직전
+기존 active secret은 rollback slot에 복제한다. rollback slot은 서로 다른 보안
+저장소와 파일시스템 사이의 crash 복구에만 사용하며 성공·취소·복구 직후 반드시
+제거한다. 따라서 여러 계정의 비밀키를 정상 상태에서 장기 보관하지 않는다.
 
 일반 sync 디렉터리에는 비밀이 없는 전환 저널을 둔다. 저널은 단계, 기존·신규
 account ID, staging 파일 이름과 생성 시각만 기록하며 token이나 key material을
@@ -76,21 +79,24 @@ account ID, staging 파일 이름과 생성 시각만 기록하며 token이나 k
 commit 순서는 다음과 같다.
 
 1. staging secret·connection·replica·cursor의 완전성을 다시 검사한다.
-2. 저널을 `committing`으로 원자 기록한다.
-3. 활성 비밀과 활성 sync 파일을 staging 세트로 교체한다.
-4. 새 connection의 `enabled=false`를 다시 확인한다.
-5. 기존 비밀·기존 shadow 세트와 저널을 제거한다.
+2. active secret을 rollback 보안 slot에 복제하고 다시 읽어 일치 여부를 검사한다.
+3. 저널을 `committing`으로 원자 기록한다.
+4. 활성 비밀과 활성 sync 파일을 staging 세트로 교체한다.
+5. 새 connection의 `enabled=false`를 다시 확인한다.
+6. rollback secret·기존 shadow 세트와 저널을 제거한다.
 
 재실행 시 저널이 있으면 활성 connection과 secret의 account 일치를 검사한다.
 commit 전 단계는 staging을 폐기하고 기존 계정을 유지한다. commit 중 단계에서
-새 세트가 완전하면 commit을 마치고, 그렇지 않으면 기존 세트를 복원한다. 어느
-쪽도 완전하지 않으면 네트워크를 차단하고 복구 필요 상태를 표시한다.
+새 세트가 완전하면 commit을 마치고, 그렇지 않으면 rollback slot과 기존 파일
+세트로 복원한다. 어느 쪽도 완전하지 않으면 네트워크를 차단하고 복구 필요 상태를
+표시한다. 복구가 끝나면 staging·rollback slot과 저널이 남아 있지 않아야 한다.
 
 ## 구성 요소 경계
 
 - `SyncAccountTransitionCoordinator`: 사전 조건, staging, bootstrap, commit, 재실행
   복구를 소유한다.
-- secret vault: active/staging slot의 원자적 승격과 폐기를 제공한다.
+- secret vault: active/staging/일시적 rollback slot의 검증·승격·복원·폐기를
+  제공한다.
 - connection/replica/pull/outbox store: 계정 전환용 snapshot·검증·교체 API를
   제공하되 로컬 대화 저장소를 참조하지 않는다.
 - onboarding·pairing UI model: coordinator가 허용한 action만 노출한다.
