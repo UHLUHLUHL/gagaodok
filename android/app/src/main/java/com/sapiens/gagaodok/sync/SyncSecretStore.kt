@@ -29,6 +29,8 @@ sealed interface SyncSecretLoadResult {
     data object RelinkRequired : SyncSecretLoadResult
 }
 
+enum class SyncSecretSlot { ACTIVE, STAGING, ROLLBACK }
+
 /**
  * Device-local sync-secret custody backed by a non-exportable Android Keystore
  * AES key. The encrypted blob lives in ordinary private preferences; it is not
@@ -40,8 +42,8 @@ sealed interface SyncSecretLoadResult {
 class SyncSecretStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun load(): SyncSecretLoadResult {
-        val encoded = prefs.getString(BLOB, null) ?: return SyncSecretLoadResult.Absent
+    fun load(slot: SyncSecretSlot = SyncSecretSlot.ACTIVE): SyncSecretLoadResult {
+        val encoded = prefs.getString(blobKey(slot), null) ?: return SyncSecretLoadResult.Absent
         val key = existingKey() ?: return SyncSecretLoadResult.RelinkRequired
         return runCatching {
             val blob = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
@@ -57,17 +59,17 @@ class SyncSecretStore(context: Context) {
         }.getOrElse { SyncSecretLoadResult.RelinkRequired }
     }
 
-    fun save(secrets: SyncSecretBundle): Boolean = runCatching {
+    fun save(secrets: SyncSecretBundle, slot: SyncSecretSlot = SyncSecretSlot.ACTIVE): Boolean = runCatching {
         val key = existingKey() ?: createKey()
         val clear = secrets.accountMasterKey + secrets.deviceToken
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val encrypted = cipher.doFinal(clear)
         val blob = byteArrayOf(VERSION.toByte()) + cipher.iv + encrypted
-        prefs.edit().putString(BLOB, android.util.Base64.encodeToString(blob, android.util.Base64.NO_WRAP)).commit()
+        prefs.edit().putString(blobKey(slot), android.util.Base64.encodeToString(blob, android.util.Base64.NO_WRAP)).commit()
     }.getOrDefault(false)
 
-    fun remove(): Boolean = prefs.edit().remove(BLOB).commit()
+    fun remove(slot: SyncSecretSlot = SyncSecretSlot.ACTIVE): Boolean = prefs.edit().remove(blobKey(slot)).commit()
 
     private fun existingKey(): SecretKey? = runCatching {
         val store = KeyStore.getInstance(KEYSTORE).apply { load(null) }
@@ -89,6 +91,11 @@ class SyncSecretStore(context: Context) {
     companion object {
         private const val PREFS = "gagaodok_sync_secret_blob"
         private const val BLOB = "v1"
+        internal fun blobKey(slot: SyncSecretSlot): String = when (slot) {
+            SyncSecretSlot.ACTIVE -> BLOB
+            SyncSecretSlot.STAGING -> "$BLOB.staging"
+            SyncSecretSlot.ROLLBACK -> "$BLOB.rollback"
+        }
         private const val KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "gagaodok.sync.wrap.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
