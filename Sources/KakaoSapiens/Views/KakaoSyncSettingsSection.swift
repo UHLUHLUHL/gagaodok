@@ -76,14 +76,18 @@ private final class SyncSettingsHost: ObservableObject {
                 fileURL: directory.appendingPathComponent("enrollment.json")
             ),
             transport: URLSessionSyncTransport(),
-            words: (try? SyncRecoveryMnemonic.bundledWords(bundle: .main)) ?? []
+            // The word list ships as a package resource, so it lives in this
+            // module's bundle rather than at the top of the app bundle. Asking
+            // `.main` for it finds nothing, and the screen then fails to
+            // prepare on every real install while passing every unit test.
+            words: (try? SyncRecoveryMnemonic.bundledWords(bundle: .module)) ?? []
         ),
         let client = try? SyncWorkerClient(
             baseURL: environment.baseURL,
             // The token this client will authenticate with once enrollment has
             // stored one. Before that it is unused: the pull buttons are only
             // offered from the connected state.
-            deviceToken: storedToken() ?? Data(count: 32),
+            deviceToken: Self.storedToken() ?? Data(count: 32),
             transport: URLSessionSyncTransport()
         ) else { return }
 
@@ -105,7 +109,7 @@ private final class SyncSettingsHost: ObservableObject {
         await built.refresh()
     }
 
-    private func storedToken() -> Data? {
+    private static func storedToken() -> Data? {
         guard case .available(let bundle) = SyncSecretStore.load() else { return nil }
         return bundle.deviceToken
     }
