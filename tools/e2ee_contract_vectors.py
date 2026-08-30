@@ -588,6 +588,65 @@ def documented_pairing_vector() -> dict[str, str]:
     }
 
 
+def encode_pairing_qr(
+    *,
+    base_url: str,
+    account_id: str,
+    session_id: str,
+    pairing_secret: bytes,
+) -> bytes:
+    """Canonical bytes of the pairing QR payload.
+
+    Its own magic, deliberately not the ``GDK1`` used for AAD and hashes: a
+    scanned artifact and an authentication input are different things, and a
+    decoder that accepted either would let one be replayed as the other.
+
+    The field set is fixed and ascending, so the encoding is a function of the
+    values alone. That is what lets a decoder re-encode what it just read and
+    reject anything that does not come back byte for byte.
+    """
+    if len(pairing_secret) != 32:
+        raise ValueError("pairing secret must be 32 bytes")
+    if not base_url.startswith("https://") or "?" in base_url or "#" in base_url:
+        raise ValueError("pairing endpoint must be a bare https origin")
+    fields = [
+        (1, (1).to_bytes(4, "big")),
+        (2, base_url.encode("ascii")),
+        (3, _canonical_uuid_ascii(account_id)),
+        (4, _canonical_uuid_ascii(session_id)),
+        (5, pairing_secret),
+    ]
+    out = bytearray(b"GDP1")
+    out += len(fields).to_bytes(2, "big")
+    for ident, value in fields:
+        out += ident.to_bytes(2, "big")
+        out += b"\x01"
+        out += len(value).to_bytes(4, "big")
+        out += value
+    return bytes(out)
+
+
+def documented_pairing_qr_vector() -> dict[str, str]:
+    base_url = "https://pairing.example.invalid"
+    account_id = "55555555-5555-4555-8555-555555555555".upper()
+    session_id = "33333333-3333-4333-8333-333333333333".upper()
+    pairing_secret = bytes(range(32))
+    payload = encode_pairing_qr(
+        base_url=base_url,
+        account_id=account_id,
+        session_id=session_id,
+        pairing_secret=pairing_secret,
+    )
+    return {
+        "base_url": base_url,
+        "account_id": account_id,
+        "session_id": session_id,
+        "pairing_secret_hex": pairing_secret.hex(),
+        "payload_hex": payload.hex(),
+        "payload_base64url": base64.urlsafe_b64encode(payload).decode("ascii").rstrip("="),
+    }
+
+
 def contract_vectors() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -596,6 +655,7 @@ def contract_vectors() -> dict[str, object]:
         "field_aead": documented_aead_vector(),
         "recovery": documented_recovery_vector(),
         "pairing": documented_pairing_vector(),
+        "pairing_qr": documented_pairing_qr_vector(),
     }
 
 
