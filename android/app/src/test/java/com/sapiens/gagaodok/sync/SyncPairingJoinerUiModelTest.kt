@@ -58,6 +58,19 @@ class SyncPairingJoinerUiModelTest {
         assertTrue(model.actions.canRequestScan)
     }
 
+    @Test fun `cancelling an active scanner returns to a retryable state`() {
+        val model = SyncPairingJoinerUiModel(Service()) { true }
+        model.requestScan()
+        model.cameraPermissionGranted()
+        model.cameraDenied()
+
+        assertEquals(
+            SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.CameraDenied),
+            model.state.value,
+        )
+        assertTrue(model.actions.canRequestScan)
+    }
+
     @Test fun `unavailable local state never opens the camera`() {
         val model = SyncPairingJoinerUiModel(Service()) { false }
         model.requestScan()

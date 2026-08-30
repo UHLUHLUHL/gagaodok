@@ -93,7 +93,9 @@ class SyncPairingJoinerUiModel(
     }
 
     fun cameraDenied() {
-        if (mutableState.value == SyncPairingJoinerUiState.RequestingCamera) {
+        if (mutableState.value == SyncPairingJoinerUiState.RequestingCamera ||
+            mutableState.value == SyncPairingJoinerUiState.Scanning
+        ) {
             mutableState.value = SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.CameraDenied)
         }
     }

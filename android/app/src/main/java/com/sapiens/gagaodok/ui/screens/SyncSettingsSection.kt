@@ -174,6 +174,8 @@ fun SyncSettingsSection() {
             }
         }
 
+        SyncPairingJoinerSection(environment)
+
         // The host only. A full URL could carry a path or query, and this is the
         // one thing about the endpoint the screen ever shows.
         Text(
