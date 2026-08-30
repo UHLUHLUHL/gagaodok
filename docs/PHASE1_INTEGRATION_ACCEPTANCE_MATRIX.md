@@ -93,6 +93,7 @@ flowchart TB
 | Android 합성 onboarding 실기기 | `1a67d52`; phone·tablet 두 기기에서 12단계 완주. signer 일치 update, UID 유지, 별도 합성 account, same-session bootstrap 성공, 재실행 복원, release 복귀. APK 빌드를 막던 중복 asset 결함 발견·수정 | ✅ | 실제 대화 연결 승인 |
 | 앱 기기 합류(pairing) 기반 | `4ba3bcd`, `79dd7d4`, `e16d112`; canonical QR·claim/delivery 암호화·SAS 승인·1회 redeem·기본 sync 비활성의 Swift/Android coordinator와 contract test | ✅ | QR 렌더러·스캐너 UI와 실기기 합류 검증 |
 | Mac host·Android join pairing UI | `6a8f85c`, `7fb592e`, `9ea494d`, `c6a4a53`, `be7b8e8`; 별도 package의 phone·tablet 시험 앱에서 카메라 권한→앱 내부 QR→SAS 일치→Mac 승인→1회 redeem 완주. 같은 Mac 합성 account, secret·connection 재실행 생존, sync 비활성, 정식 앱 UID·data 분리 확인 | ✅ | 기존 연결을 보존하는 정식 앱 account 전환 UX |
+| 정식 앱 account 전환·연결 해제 안전 경계 | `8e52b30`, `20fda69`, `4bea117`, `7734681`, `dafd772`; 양 플랫폼 active/candidate secure slot, durable journal, 원자적 commit·rollback·crash recovery. Android는 candidate shadow bootstrap을 거치는 전환 UI, Mac은 안전한 local 연결 해제 UI를 제공. sync 활성·pending outbox에서는 동작을 막고 원격 계정·다른 기기·local conversation을 삭제하지 않음 | ⚠️ | 동일 signer update 설치 뒤 phone·tablet 합성 전환 실기기 검증 |
 | 복구 문구 7일 재열람 계약 | `4ba3bcd`, `79dd7d4`, `e16d112`; 16-byte entropy만 device-local escrow, 매회 소유자 인증, 확인·만료 시 폐기, entropy 부재 시 재생성 금지 | ⚠️ | 실제 escrow 저장소·소유자 인증 UI·만료 청소 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
@@ -165,9 +166,13 @@ M03~M06, operation·attachment·pairing·recovery HTTP route, local R2 lifecycle
 changes/bootstrap, Phase 2 local synthetic E2E, 양 플랫폼 E2EE·device-local key
 custody·durable outbox·Worker client·기본 비활성 연결 상태·remote shadow replica,
 pairing 기반과 rate limit·expiry/orphan cleanup까지 local 통합 승인됐다. 기기 합류
-UI는 Mac host와 Android 앱 내부 QR scanner의 원격 합성 실기기 pairing까지 끝났으며,
-다음 gate는 기존 연결을 보존하는 정식 앱 account 전환 UX, 복구 entropy escrow 구현, 기존 local
-mutation의 operation adapter다. production Cloudflare resource와 실제 data는 계속
+UI는 Mac host와 Android 앱 내부 QR scanner의 원격 합성 실기기 pairing까지 끝났다.
+기존 연결을 보존하는 account 전환은 양 플랫폼 저장 경계·crash recovery, Android 정식
+전환 UI와 Mac local 연결 해제 UI까지 구현됐지만 아직 정식 Android package의 실기기
+전환을 실행하지 않았으므로 조건부 상태다. Mac이 다른 host account에 합류하는 입력 UI는
+현재 제품 흐름에 포함하지 않았다.
+다음 gate는 동일 signer update 설치 뒤 합성 account 전환 검증, 복구 entropy escrow 구현,
+기존 local mutation의 operation adapter다. production Cloudflare resource와 실제 data는 계속
 별도 승인 대상이다.
 
 ## 🔗 관련 문서

@@ -113,6 +113,28 @@ assemble을 통과했다. 두 정식 Android package와 시험 package는 UID·�
 전송하지 않았고 sync는 양쪽 모두 기본값 `false`다. 다음 제품 gate는 이미 다른
 계정에 연결된 정식 앱이 데이터를 지우지 않고 명시적으로 계정을 전환하는 UX다.
 
+## 정식 앱 account 전환 구현 상태
+
+`8e52b30`~`dafd772`에서 위 gate의 코드 경계를 구현했다. Swift와 Android 모두
+active/candidate secure slot, durable transition journal, 원자적 commit·rollback과
+중단 지점별 crash recovery를 갖는다. Android 정식 설정 화면은 candidate shadow
+bootstrap 뒤 계정을 교체하며, Mac 정식 설정 화면은 안전한 local 연결 해제를 제공한다.
+현재 연결을 바꾸기 전에 명시적 확인을 요구하고, sync가 켜져 있거나 durable outbox가
+남아 있으면 전환과 연결 해제를 제시하지 않는다. Mac이 다른 host account에 합류하는
+입력 UI는 이번 제품 흐름에 포함하지 않았다.
+
+연결 해제는 이 기기의 active sync 자격과 shadow replica만 비활성화하는 local
+동작이다. 원격 account, 다른 기기, 기존 local conversation은 삭제하지 않는다.
+Android의 기존 계정 합류는 candidate token으로 snapshot을 임시 private storage에
+끝까지 받은 뒤에만 active slot을 교체하며, 실패·재실행 시 journal이 old 또는 new
+한 계정으로 수렴시킨다. 완료 뒤에도 sync 기본값은 `false`다.
+
+이 구현은 unit test와 phone·tabletMentor compile까지 통과했지만 정식 Android
+package를 설치하거나 실제 기기에서 account 전환을 실행하지는 않았다. 따라서
+현재 판정은 **코드 경계 완료·실기기 gate 대기**다. 다음 검증에는 동일 signer의
+update 설치와 합성 account만 사용해야 하며, app data 삭제·실제 대화 접근·sync
+활성화·Cloudflare resource 변경은 허용되지 않는다.
+
 ## 경계
 
 Cloudflare resource 구성은 만들거나 지우거나 바꾸지 않았다. 후속 pairing
