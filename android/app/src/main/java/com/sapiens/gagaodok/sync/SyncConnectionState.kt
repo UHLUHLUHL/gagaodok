@@ -45,6 +45,8 @@ class SyncConnectionStateStore(private val file: File) {
     @Synchronized fun save(configuration: SyncConnectionConfiguration): Boolean = runCatching {
         file.parentFile?.mkdirs(); atomicWrite(Json.encodeToString(Stored.serializer(), Stored(1, configuration)).toByteArray()); true
     }.getOrDefault(false)
+    fun encoded(configuration: SyncConnectionConfiguration): ByteArray =
+        Json.encodeToString(Stored.serializer(), Stored(1, configuration)).toByteArray()
     private fun atomicWrite(bytes: ByteArray) {
         val temp = File(file.parentFile, "${file.name}.tmp")
         FileOutputStream(temp).use { it.write(bytes); it.fd.sync() }
