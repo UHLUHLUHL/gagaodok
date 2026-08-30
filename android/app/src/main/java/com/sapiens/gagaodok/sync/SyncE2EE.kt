@@ -256,6 +256,42 @@ internal object SyncE2EE {
         return openEnvelope(envelope, key, encodeAAD(context))
     }
 
+    /**
+     * Seal a pairing payload, bound to the exact claim it belongs to.
+     *
+     * The AAD carries session, claim, claim lookup and purpose, so a delivery
+     * package stolen and replayed against a different claim — or replayed as a
+     * claim envelope — fails to open rather than decrypting into the wrong
+     * device's hands.
+     */
+    fun sealPairing(
+        plaintext: ByteArray,
+        key: ByteArray,
+        nonce: ByteArray,
+        sessionId: String,
+        claimId: String,
+        claimLookup: ByteArray,
+        payloadType: PairingPayloadType,
+    ): ByteArray = sealEnvelope(
+        plaintext,
+        key,
+        nonce,
+        encodePairingAAD(sessionId, claimId, claimLookup, payloadType),
+    )
+
+    fun openPairing(
+        envelope: ByteArray,
+        key: ByteArray,
+        sessionId: String,
+        claimId: String,
+        claimLookup: ByteArray,
+        payloadType: PairingPayloadType,
+    ): ByteArray = openEnvelope(
+        envelope,
+        key,
+        encodePairingAAD(sessionId, claimId, claimLookup, payloadType),
+    )
+
     private fun sealEnvelope(
         plaintext: ByteArray,
         key: ByteArray,
