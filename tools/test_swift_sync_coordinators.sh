@@ -48,3 +48,22 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncOnboardingModelTests.swift" \
   -o "$model_binary"
 "$model_binary"
+
+pairing_binary="${TMPDIR:-/tmp}/gagaodok-sync-pairing-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncConnectionState.swift" \
+  "$services/SyncRecoveryMnemonic.swift" \
+  "$services/SyncEnrollmentBuilder.swift" \
+  "$services/SyncOnboardingCoordinator.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncWorkerClient.swift" \
+  "$services/SyncPairingPayload.swift" \
+  "$services/SyncPairingClient.swift" \
+  "$services/SyncPairingCoordinator.swift" \
+  "$services/SyncPairingModel.swift" \
+  "$services/SyncRecoveryEscrow.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncPairingTests.swift" \
+  -o "$pairing_binary"
+"$pairing_binary"

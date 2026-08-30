@@ -269,6 +269,54 @@ enum SyncE2EE {
         try openEnvelope(envelope: envelope, key: key, aad: encodeAAD(context))
     }
 
+    /// Seal a pairing payload, bound to the exact claim it belongs to.
+    ///
+    /// The AAD carries session, claim, claim lookup and purpose, so a delivery
+    /// package stolen and replayed against a different claim — or replayed as a
+    /// claim envelope — fails to open rather than decrypting into the wrong
+    /// device's hands.
+    static func sealPairing(
+        plaintext: Data,
+        key: Data,
+        nonce: Data,
+        sessionID: String,
+        claimID: String,
+        claimLookup: Data,
+        payloadType: PairingPayloadType
+    ) throws -> Data {
+        try sealEnvelope(
+            plaintext: plaintext,
+            key: key,
+            nonce: nonce,
+            aad: encodePairingAAD(
+                sessionID: sessionID,
+                claimID: claimID,
+                claimLookup: claimLookup,
+                payloadType: payloadType
+            )
+        )
+    }
+
+    static func openPairing(
+        envelope: Data,
+        key: Data,
+        sessionID: String,
+        claimID: String,
+        claimLookup: Data,
+        payloadType: PairingPayloadType
+    ) throws -> Data {
+        try openEnvelope(
+            envelope: envelope,
+            key: key,
+            aad: encodePairingAAD(
+                sessionID: sessionID,
+                claimID: claimID,
+                claimLookup: claimLookup,
+                payloadType: payloadType
+            )
+        )
+    }
+
     private static func sealEnvelope(
         plaintext: Data,
         key: Data,
