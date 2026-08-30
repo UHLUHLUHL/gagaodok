@@ -263,6 +263,22 @@ class SyncPairingTest {
         assertArrayEquals(joined.deviceToken, h.joinerVault.stored!!.deviceToken)
     }
 
+    @Test fun `redeem candidate leaves the active vault and connection untouched`() = harness { h ->
+        val payload = h.host.openSession(ACCOUNT, BASE_URL)
+        h.joiner.accept(payload.encodedText(), JOINER_DEVICE, "PHONE_SPACE", "android_phone")
+        h.joiner.submit(h.joinerClient)
+        val candidate = h.host.pollCandidates().first()
+        h.host.approve(candidate, sasConfirmed = true)
+
+        val redeemed = h.joiner.redeemCandidate(h.joinerClient, sasConfirmed = true)
+
+        assertEquals(ACCOUNT, redeemed.connection.accountId)
+        assertFalse(redeemed.connection.enabled)
+        assertNull(h.joinerVault.stored)
+        assertTrue(h.connectionStore.load() is SyncConnectionLoadResult.Absent)
+        h.assertConversationUntouched("candidate redeem")
+    }
+
     @Test fun `a duplicated QR does not yield another device's package`() = harness { h ->
         val payload = h.host.openSession(ACCOUNT, BASE_URL)
         h.joiner.accept(payload.encodedText(), JOINER_DEVICE, "PHONE_SPACE", "android_phone")

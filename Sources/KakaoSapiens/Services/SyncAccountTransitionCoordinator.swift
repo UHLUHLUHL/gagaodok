@@ -108,6 +108,14 @@ public final class SyncAccountTransitionCoordinator {
         }
     }
 
+    public func availability() -> SyncTransitionAvailability {
+        guard case .available(let connection) = connectionStore.load(),
+              case .available = vault.load(slot: .active) else { return .noActiveAccount }
+        if connection.enabled { return .syncEnabled }
+        do { return try outbox.pending().isEmpty ? .ready : .outboxPending }
+        catch { return .recoveryRequired }
+    }
+
     public func markBootstrapVerified() {
         guard state == .verifying || state == .bootstrapping else { return }
         state = .readyToCommit
@@ -273,3 +281,5 @@ public final class SyncAccountTransitionCoordinator {
         if removeJournal { try journal.remove() }
     }
 }
+
+extension SyncAccountTransitionCoordinator: SyncAccountTransitionServicing {}

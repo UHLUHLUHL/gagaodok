@@ -22,7 +22,8 @@ struct KakaoSyncSettingsSection: View {
                     model: model,
                     host: host.environmentHost,
                     pairing: host.pairingModel,
-                    pairingConnection: host.pairingConnection
+                    pairingConnection: host.pairingConnection,
+                    transition: host.transitionModel
                 )
             } else {
                 unconfigured
@@ -64,6 +65,7 @@ struct KakaoSyncSettingsSection: View {
 private final class SyncSettingsHost: ObservableObject {
     @Published private(set) var model: SyncOnboardingModel?
     @Published private(set) var pairingModel: SyncPairingHostUIModel?
+    @Published private(set) var transitionModel: SyncAccountTransitionModel?
     private(set) var pairingConnection: SyncConnectionConfiguration?
     private(set) var environmentHost = ""
 
@@ -117,6 +119,20 @@ private final class SyncSettingsHost: ObservableObject {
         // Reading stored status is the only thing that happens without a press.
         await built.refresh()
 
+        let transitionCoordinator = SyncAccountTransitionCoordinator(
+            vault: KeychainSyncSlottedSecretVault(),
+            connectionStore: connectionStore,
+            files: SyncTransitionFiles(directoryURL: directory),
+            journal: SyncAccountTransitionJournal(fileURL: directory.appendingPathComponent("transition.json")),
+            outbox: SyncOutbox(fileURL: directory.appendingPathComponent("outbox.plist"))
+        )
+        try? transitionCoordinator.recoverIfNeeded()
+        if transitionCoordinator.availability() != .noActiveAccount {
+            let transition = SyncAccountTransitionModel(service: transitionCoordinator)
+            transition.refresh()
+            transitionModel = transition
+        }
+
         guard case .available(let connection) = connectionStore.load(),
               SyncPairingHostAvailability.canHost(connection: connection) else { return }
         let pairingClient = SyncPairingClient(
@@ -145,13 +161,14 @@ private struct SyncSettingsBody: View {
     let host: String
     let pairing: SyncPairingHostUIModel?
     let pairingConnection: SyncConnectionConfiguration?
+    let transition: SyncAccountTransitionModel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
             statusRow
             if let phrase = model.recoveryPhrase { phraseCard(phrase) }
             buttons
-            if model.disconnectConfirmationVisible { disconnectCard }
+            if let transition { SyncAccountTransitionCard(model: transition, onboarding: model) }
             if let pairing, let pairingConnection {
                 SyncPairingHostCard(model: pairing, connection: pairingConnection)
             }
@@ -215,12 +232,6 @@ private struct SyncSettingsBody: View {
             if model.actions.canAdvanceBootstrap {
                 action("합성 스냅샷 한 페이지 받기") { await model.advanceBootstrap() }
             }
-            if model.actions.canRequestDisconnect {
-                Button("연결 해제") { model.requestDisconnect() }
-                    .font(.custom("Pretendard-Medium", size: 11))
-                    .buttonStyle(.plain)
-                    .foregroundColor(KakaoTheme.textSecondary)
-            }
             Spacer(minLength: 0)
         }
     }
@@ -237,24 +248,6 @@ private struct SyncSettingsBody: View {
                 .foregroundColor(KakaoTheme.bubbleMineText)
         }
         .buttonStyle(.plain)
-    }
-
-    private var disconnectCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("연결을 해제하시겠습니까?")
-                .font(.custom("Pretendard-Medium", size: 12))
-            Text("이 버전에서는 확인만 제공하며 저장된 키나 원격 자료를 지우지 않습니다. 실제 해제는 다음 단계에서 별도로 구현합니다.")
-                .font(.custom("Pretendard-Regular", size: 11))
-                .foregroundColor(KakaoTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("닫기") { model.dismissDisconnect() }
-                .font(.custom("Pretendard-Medium", size: 11))
-                .buttonStyle(.plain)
-                .foregroundColor(KakaoTheme.textSecondary)
-        }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
     }
 
     private var statusColor: Color {
@@ -315,6 +308,62 @@ private struct SyncSettingsBody: View {
         case .bootstrapFailed: return "받은 페이지를 적용하지 못했습니다. 같은 위치부터 다시 받습니다."
         case .notConnected: return "먼저 계정을 연결해야 합니다."
         }
+    }
+}
+
+private struct SyncAccountTransitionCard: View {
+    @ObservedObject var model: SyncAccountTransitionModel
+    @ObservedObject var onboarding: SyncOnboardingModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("동기화 계정 관리")
+                .font(.custom("Pretendard-Bold", size: 12))
+            Text(detail)
+                .font(.custom("Pretendard-Regular", size: 11))
+                .foregroundColor(KakaoTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 7) {
+                if model.actions.canRequestUnlink {
+                    button("이 기기 연결 해제") { model.requestUnlink() }
+                }
+                if model.actions.canConfirmUnlink {
+                    button("연결 해제 확인") {
+                        model.confirmUnlink()
+                        Task { await onboarding.refresh() }
+                    }
+                }
+                if model.actions.canDismiss { button("취소") { model.dismiss() } }
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var detail: String {
+        switch model.state {
+        case .confirmingUnlink:
+            return "로컬 대화는 유지하고 이 Mac의 동기화 키와 shadow 자료만 제거합니다. 원격 계정과 다른 기기는 삭제하지 않습니다."
+        case .blocked:
+            return "동기화가 켜져 있거나 미전송 변경이 남아 있어 지금은 연결을 해제할 수 없습니다."
+        case .unlinked:
+            return "이 Mac의 연결을 해제했습니다. 로컬 대화는 그대로입니다."
+        case .error:
+            return "연결 해제를 완료하지 못했습니다. 기존 연결을 유지했습니다."
+        default:
+            return "로컬 대화를 보존한 채 이 Mac의 동기화 연결만 해제할 수 있습니다."
+        }
+    }
+
+    private func button(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(.custom("Pretendard-Medium", size: 11))
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(KakaoTheme.bubbleMine, in: RoundedRectangle(cornerRadius: 7))
+            .foregroundColor(KakaoTheme.bubbleMineText)
     }
 }
 

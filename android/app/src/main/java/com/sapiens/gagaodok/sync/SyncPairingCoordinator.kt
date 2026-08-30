@@ -190,6 +190,11 @@ class SyncPairingHostCoordinator(
     }
 }
 
+data class SyncPairingRedeemedCandidate(
+    val secrets: SyncSecretBundle,
+    val connection: SyncConnectionConfiguration,
+)
+
 /** The joiner side: a device that belongs to no account yet. */
 class SyncPairingJoinerCoordinator(
     private val random: SyncRandomSource,
@@ -277,7 +282,7 @@ class SyncPairingJoinerCoordinator(
      * half-linked device — secrets without a connection, or the reverse — is a
      * state the user has no way to repair.
      */
-    fun redeem(client: SyncPairingClient, sasConfirmed: Boolean) {
+    fun redeemCandidate(client: SyncPairingClient, sasConfirmed: Boolean): SyncPairingRedeemedCandidate {
         if (!sasConfirmed) throw SyncPairingException(SyncPairingException.Reason.SAS_NOT_CONFIRMED)
         val scanned = payload
         val claim = claimId
@@ -303,20 +308,24 @@ class SyncPairingJoinerCoordinator(
             )
         }.getOrElse { throw SyncPairingException(SyncPairingException.Reason.REJECTED) }
 
-        if (!vault.save(bundle)) throw SyncPairingException(SyncPairingException.Reason.STORAGE_FAILED)
+        return SyncPairingRedeemedCandidate(
+            bundle,
+            SyncConnectionConfiguration(
+                baseUrl = scanned.baseUrl,
+                accountId = scanned.accountId,
+                deviceId = who.first,
+                enabled = false,
+                changesCursor = null,
+            ),
+        )
+    }
+
+    fun redeem(client: SyncPairingClient, sasConfirmed: Boolean) {
+        val candidate = redeemCandidate(client, sasConfirmed)
+        if (!vault.save(candidate.secrets)) throw SyncPairingException(SyncPairingException.Reason.STORAGE_FAILED)
         // The account is the host's, and synchronisation stays off: joining is
         // a connection, not a decision to start syncing.
-        val saved = runCatching {
-            connectionStore.save(
-                SyncConnectionConfiguration(
-                    baseUrl = scanned.baseUrl,
-                    accountId = scanned.accountId,
-                    deviceId = who.first,
-                    enabled = false,
-                    changesCursor = null,
-                ),
-            )
-        }.getOrDefault(false)
+        val saved = runCatching { connectionStore.save(candidate.connection) }.getOrDefault(false)
         if (!saved) throw SyncPairingException(SyncPairingException.Reason.STORAGE_FAILED)
     }
 }

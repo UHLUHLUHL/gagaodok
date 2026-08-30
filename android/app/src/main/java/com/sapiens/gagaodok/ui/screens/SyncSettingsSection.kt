@@ -24,6 +24,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.sync.KeystoreSyncSecretVault
+import com.sapiens.gagaodok.sync.KeystoreSyncSlottedSecretVault
+import com.sapiens.gagaodok.sync.SyncAccountTransitionCoordinator
+import com.sapiens.gagaodok.sync.SyncAccountTransitionJournal
+import com.sapiens.gagaodok.sync.SyncAccountTransitionModel
+import com.sapiens.gagaodok.sync.SyncAccountTransitionUiState
 import com.sapiens.gagaodok.sync.OkHttpSyncTransport
 import com.sapiens.gagaodok.sync.SyncConnectionStateStore
 import com.sapiens.gagaodok.sync.SyncEnrollmentJournal
@@ -38,6 +43,8 @@ import com.sapiens.gagaodok.sync.SyncReplicaStore
 import com.sapiens.gagaodok.sync.SyncSecretLoadResult
 import com.sapiens.gagaodok.sync.SyncSecretStore
 import com.sapiens.gagaodok.sync.SyncSyntheticEnvironment
+import com.sapiens.gagaodok.sync.SyncTransitionFiles
+import com.sapiens.gagaodok.sync.SyncTransitionAvailability
 import com.sapiens.gagaodok.sync.SyncWorkerClient
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -71,6 +78,7 @@ fun SyncSettingsSection() {
     val context = LocalContext.current
     val environment = remember { SyncSyntheticEnvironment.load(SyncSyntheticEnvironment.file(context)) }
     val model = remember(environment) { environment?.let { buildModel(context, it) } }
+    val transition = remember(environment) { environment?.let { buildTransition(context) } }
 
     Column(Modifier.fillMaxWidth().padding(14.dp)) {
         Text(
@@ -185,7 +193,13 @@ fun SyncSettingsSection() {
             }
         }
 
-        SyncPairingJoinerSection(environment)
+        transition?.let {
+            if (it.availability == SyncTransitionAvailability.NO_ACTIVE_ACCOUNT) {
+                SyncPairingJoinerSection(environment)
+            } else {
+                SyncAccountTransitionSection(environment, it) { model.refresh() }
+            }
+        }
 
         // The host only. A full URL could carry a path or query, and this is the
         // one thing about the endpoint the screen ever shows.
@@ -197,6 +211,81 @@ fun SyncSettingsSection() {
         )
     }
 }
+
+private data class SyncTransitionUI(
+    val model: SyncAccountTransitionModel,
+    val coordinator: SyncAccountTransitionCoordinator,
+    val availability: SyncTransitionAvailability,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SyncAccountTransitionSection(
+    environment: SyncSyntheticEnvironment,
+    transition: SyncTransitionUI,
+    onChanged: () -> Unit,
+) {
+    val state by transition.model.state.collectAsState()
+    val colors = KakaoTheme.colors
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(transition) { withContext(Dispatchers.IO) { transition.model.refresh() } }
+
+    Column(
+        Modifier.fillMaxWidth().padding(top = 12.dp)
+            .background(colors.surface, RoundedCornerShape(10.dp)).padding(12.dp),
+    ) {
+        Text("동기화 계정 관리", style = KakaoText.listName, color = colors.textPrimary)
+        Text(
+            when (state) {
+                SyncAccountTransitionUiState.CONFIRMING_JOIN ->
+                    "새 계정 확인이 끝날 때까지 현재 연결을 유지합니다. 완료 뒤에도 동기화는 꺼져 있습니다."
+                SyncAccountTransitionUiState.CONFIRMING_UNLINK ->
+                    "로컬 대화는 유지하고 이 기기의 동기화 키와 shadow 자료만 제거합니다. 다른 기기와 원격 계정은 삭제하지 않습니다."
+                SyncAccountTransitionUiState.BLOCKED ->
+                    "동기화가 켜져 있거나 미전송 변경이 남아 있어 지금은 계정을 바꿀 수 없습니다."
+                SyncAccountTransitionUiState.UNLINKED -> "이 기기의 연결을 해제했습니다. 로컬 대화는 그대로입니다."
+                SyncAccountTransitionUiState.ERROR -> "변경을 완료하지 못했습니다. 기존 연결을 유지했습니다."
+                else -> "로컬 대화를 보존한 채 다른 계정에 합류하거나 이 기기의 연결만 해제할 수 있습니다."
+            },
+            style = KakaoText.caption, color = colors.textSecondary, modifier = Modifier.padding(top = 4.dp),
+        )
+
+        FlowRow(
+            Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            val actions = transition.model.actions
+            if (actions.canRequestJoin) SyncActionButton("다른 계정에 이 기기 합류") { transition.model.requestJoin() }
+            if (actions.canConfirmJoin) SyncActionButton("계속") { transition.model.confirmJoin() }
+            if (actions.canRequestUnlink) SyncActionButton("이 기기 연결 해제") { transition.model.requestUnlink() }
+            if (actions.canConfirmUnlink) SyncActionButton("연결 해제 확인") {
+                scope.launch {
+                    withContext(Dispatchers.IO) { transition.model.confirmUnlink() }
+                    onChanged()
+                }
+            }
+            if (actions.canDismiss) SyncActionButton("취소") { transition.model.dismiss() }
+        }
+
+        if (transition.model.actions.canStartScanner) {
+            SyncPairingJoinerSection(environment, transition.coordinator)
+        }
+    }
+}
+
+private fun buildTransition(context: Context): SyncTransitionUI? = runCatching {
+    val directory = File(context.filesDir, "sync")
+    val coordinator = SyncAccountTransitionCoordinator(
+        vault = KeystoreSyncSlottedSecretVault(SyncSecretStore(context)),
+        connectionStore = SyncConnectionStateStore(File(directory, "connection.json")),
+        files = SyncTransitionFiles(directory),
+        journal = SyncAccountTransitionJournal(File(directory, "transition.json")),
+        outbox = com.sapiens.gagaodok.sync.SyncOutbox(File(directory, "outbox.bin")),
+    )
+    coordinator.recoverIfNeeded()
+    val availability = coordinator.availability()
+    SyncTransitionUI(SyncAccountTransitionModel(coordinator), coordinator, availability)
+}.getOrNull()
 
 /** Runs the blocking coordinators off the main thread. */
 @Composable

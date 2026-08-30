@@ -63,10 +63,20 @@ class SyncAccountTransitionCoordinatorTest {
             AndroidTransitionHarness(enabled = true) to SyncAccountTransitionError.SYNC_ENABLED,
             AndroidTransitionHarness(pending = true) to SyncAccountTransitionError.OUTBOX_PENDING,
         ).forEach { (h, expected) ->
+            val expectedAvailability = if (expected == SyncAccountTransitionError.SYNC_ENABLED) {
+                SyncTransitionAvailability.SYNC_ENABLED
+            } else SyncTransitionAvailability.OUTBOX_PENDING
+            assertEquals(expectedAvailability, h.coordinator().availability())
             try { h.coordinator().prepare(h.candidate); fail("expected $expected") }
             catch (e: SyncAccountTransitionException) { assertEquals(expected, e.reason) }
             finally { h.root.deleteRecursively() }
         }
+    }
+
+    @Test fun `disabled account with empty outbox is transition ready`() {
+        val h = AndroidTransitionHarness()
+        try { assertEquals(SyncTransitionAvailability.READY, h.coordinator().availability()) }
+        finally { h.root.deleteRecursively() }
     }
 
     @Test fun `every commit boundary recovers exactly one complete disabled account`() {

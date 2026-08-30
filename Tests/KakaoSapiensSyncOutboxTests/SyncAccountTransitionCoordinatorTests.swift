@@ -93,13 +93,20 @@ struct SyncAccountTransitionCoordinatorTests {
 
         do {
             let h = try TransitionHarness(enabled: true)
+            check(h.coordinator().availability() == .syncEnabled, "enabled sync is unavailable")
             do { try h.coordinator().prepare(candidate: h.candidate); check(false, "enabled sync blocks transition") }
             catch { check(error as? SyncAccountTransitionError == .syncEnabled, "enabled sync blocks transition") }
         }
         do {
             let h = try TransitionHarness(pending: true)
+            check(h.coordinator().availability() == .outboxPending, "pending outbox is unavailable")
             do { try h.coordinator().prepare(candidate: h.candidate); check(false, "pending outbox blocks transition") }
             catch { check(error as? SyncAccountTransitionError == .outboxPending, "pending outbox blocks transition") }
+        }
+
+        do {
+            let h = try TransitionHarness()
+            check(h.coordinator().availability() == .ready, "disabled empty account is transition ready")
         }
 
         for boundary in SyncCommitBoundary.allCases {

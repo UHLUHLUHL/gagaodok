@@ -39,6 +39,11 @@ import com.sapiens.gagaodok.sync.SyncPairingJoinerService
 import com.sapiens.gagaodok.sync.SyncPairingJoinerUiError
 import com.sapiens.gagaodok.sync.SyncPairingJoinerUiModel
 import com.sapiens.gagaodok.sync.SyncPairingJoinerUiState
+import com.sapiens.gagaodok.sync.SyncAccountTransitionCoordinator
+import com.sapiens.gagaodok.sync.SyncTransitionAvailability
+import com.sapiens.gagaodok.sync.SyncTransitionPairingJoinerService
+import com.sapiens.gagaodok.sync.SyncCandidateBootstrapper
+import com.sapiens.gagaodok.sync.DefaultSyncPairingCandidateFlow
 import com.sapiens.gagaodok.sync.SyncSecretLoadResult
 import com.sapiens.gagaodok.sync.SyncSecretStore
 import com.sapiens.gagaodok.sync.SyncSyntheticEnvironment
@@ -52,9 +57,12 @@ import kotlinx.coroutines.withContext
 
 /** Join an account already shown on a Mac. Existing local sync state is never overwritten. */
 @Composable
-internal fun SyncPairingJoinerSection(environment: SyncSyntheticEnvironment) {
+internal fun SyncPairingJoinerSection(
+    environment: SyncSyntheticEnvironment,
+    transition: SyncAccountTransitionCoordinator? = null,
+) {
     val context = LocalContext.current
-    val model = remember(environment) { buildPairingJoinerModel(context, environment) } ?: return
+    val model = remember(environment, transition) { buildPairingJoinerModel(context, environment, transition) } ?: return
     val state by model.state.collectAsState()
     val colors = KakaoTheme.colors
     val scope = rememberCoroutineScope()
@@ -163,19 +171,32 @@ private fun PairingAction(title: String, action: () -> Unit) {
 private fun buildPairingJoinerModel(
     context: Context,
     environment: SyncSyntheticEnvironment,
+    transition: SyncAccountTransitionCoordinator?,
 ): SyncPairingJoinerUiModel? = runCatching {
-    val vault = KeystoreSyncSecretVault(SyncSecretStore(context))
+    val secretStore = SyncSecretStore(context)
+    val vault = KeystoreSyncSecretVault(secretStore)
     val connection = SyncConnectionStateStore(File(context.filesDir, "sync/connection.json"))
     val available = {
-        vault.load() is SyncSecretLoadResult.Absent &&
-            connection.load() is SyncConnectionLoadResult.Absent
+        if (transition == null) {
+            vault.load() is SyncSecretLoadResult.Absent && connection.load() is SyncConnectionLoadResult.Absent
+        } else {
+            transition.availability() == SyncTransitionAvailability.READY
+        }
     }
     if (!available()) return@runCatching null
+    val pairingClient = SyncPairingClient(environment.base_url, { null }, OkHttpSyncTransport())
+    val pairingCoordinator = SyncPairingJoinerCoordinator(SystemSyncRandomSource(), vault, connection)
+    val service = if (transition == null) {
+        SyncPairingJoinerService(pairingCoordinator, pairingClient)
+    } else {
+        SyncTransitionPairingJoinerService(
+            DefaultSyncPairingCandidateFlow(pairingCoordinator, pairingClient),
+            SyncCandidateBootstrapper(context.filesDir, OkHttpSyncTransport()),
+            transition,
+        )
+    }
     SyncPairingJoinerUiModel(
-        service = SyncPairingJoinerService(
-            SyncPairingJoinerCoordinator(SystemSyncRandomSource(), vault, connection),
-            SyncPairingClient(environment.base_url, { null }, OkHttpSyncTransport()),
-        ),
+        service = service,
         available = available,
     )
 }.getOrNull()

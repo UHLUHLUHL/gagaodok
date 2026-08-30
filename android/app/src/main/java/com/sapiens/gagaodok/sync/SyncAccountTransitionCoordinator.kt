@@ -27,6 +27,12 @@ enum class SyncAccountTransitionError {
 
 class SyncAccountTransitionException(val reason: SyncAccountTransitionError) : Exception(reason.name)
 
+interface SyncTransitionCommitting {
+    fun prepare(candidate: SyncTransitionCandidate)
+    fun markBootstrapVerified()
+    fun commit()
+}
+
 class SyncAccountTransitionCoordinator(
     private val vault: SyncSlottedSecretVault,
     private val connectionStore: SyncConnectionStateStore,
@@ -35,12 +41,24 @@ class SyncAccountTransitionCoordinator(
     private val outbox: SyncOutbox,
     private val nowMilliseconds: () -> Long = { System.currentTimeMillis() },
     private val afterBoundary: (SyncCommitBoundary) -> Unit = {},
-) {
+) : SyncAccountTransitionServicing, SyncTransitionCommitting {
     var state: SyncAccountTransitionState = SyncAccountTransitionState.IDLE
         private set
     private var candidate: SyncTransitionCandidate? = null
 
-    fun prepare(candidate: SyncTransitionCandidate) {
+    override fun availability(): SyncTransitionAvailability {
+        val connection = (connectionStore.load() as? SyncConnectionLoadResult.Available)?.configuration
+            ?: return SyncTransitionAvailability.NO_ACTIVE_ACCOUNT
+        if (vault.load(SyncSecretSlot.ACTIVE) !is SyncSecretLoadResult.Available) {
+            return SyncTransitionAvailability.RECOVERY_REQUIRED
+        }
+        if (connection.enabled) return SyncTransitionAvailability.SYNC_ENABLED
+        return runCatching {
+            if (outbox.pending().isEmpty()) SyncTransitionAvailability.READY else SyncTransitionAvailability.OUTBOX_PENDING
+        }.getOrDefault(SyncTransitionAvailability.RECOVERY_REQUIRED)
+    }
+
+    override fun prepare(candidate: SyncTransitionCandidate) {
         val old = activeDisabledConnection()
         if (old.accountId == candidate.connection.accountId) fail(SyncAccountTransitionError.ALREADY_SAME_ACCOUNT)
         if (candidate.connection.enabled) fail(SyncAccountTransitionError.SYNC_ENABLED)
@@ -71,13 +89,13 @@ class SyncAccountTransitionCoordinator(
         }
     }
 
-    fun markBootstrapVerified() {
+    override fun markBootstrapVerified() {
         if (state == SyncAccountTransitionState.VERIFYING || state == SyncAccountTransitionState.BOOTSTRAPPING) {
             state = SyncAccountTransitionState.READY_TO_COMMIT
         }
     }
 
-    fun commit() {
+    override fun commit() {
         val selected = candidate ?: fail(SyncAccountTransitionError.CANDIDATE_UNVERIFIED)
         if (state != SyncAccountTransitionState.READY_TO_COMMIT) fail(SyncAccountTransitionError.CANDIDATE_UNVERIFIED)
         val old = activeDisabledConnection()
@@ -147,7 +165,7 @@ class SyncAccountTransitionCoordinator(
         }
     }
 
-    fun unlink() {
+    override fun unlink() {
         val old = activeDisabledConnection()
         val activeSecrets = (vault.load(SyncSecretSlot.ACTIVE) as? SyncSecretLoadResult.Available)?.secrets
             ?: fail(SyncAccountTransitionError.NO_ACTIVE_ACCOUNT)
