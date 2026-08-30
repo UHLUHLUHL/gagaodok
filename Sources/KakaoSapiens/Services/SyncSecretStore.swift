@@ -26,6 +26,12 @@ public enum SyncSecretStoreError: Error {
     case keychain(OSStatus)
 }
 
+public enum SyncSecretSlot: String, CaseIterable {
+    case active
+    case staging
+    case rollback
+}
+
 /// Device-local custody for the two raw sync secrets.
 ///
 /// Each value is a separate generic-password item with
@@ -37,9 +43,10 @@ public enum SyncSecretStore {
     private static let masterKeyAccount = "account-master-key"
     private static let deviceTokenAccount = "device-token"
 
-    public static func load() -> SyncSecretLoadResult {
-        let master = read(account: masterKeyAccount)
-        let token = read(account: deviceTokenAccount)
+    public static func load(slot: SyncSecretSlot = .active) -> SyncSecretLoadResult {
+        let accounts = keychainAccounts(for: slot)
+        let master = read(account: accounts.master)
+        let token = read(account: accounts.token)
         switch (master, token) {
         case (.success(nil), .success(nil)):
             return .absent
@@ -55,26 +62,33 @@ public enum SyncSecretStore {
         }
     }
 
-    public static func save(_ bundle: SyncSecretBundle) throws {
-        let previousMaster = try readValue(account: masterKeyAccount)
-        try upsert(bundle.accountMasterKey, account: masterKeyAccount)
+    public static func save(_ bundle: SyncSecretBundle, slot: SyncSecretSlot = .active) throws {
+        let accounts = keychainAccounts(for: slot)
+        let previousMaster = try readValue(account: accounts.master)
+        try upsert(bundle.accountMasterKey, account: accounts.master)
         do {
-            try upsert(bundle.deviceToken, account: deviceTokenAccount)
+            try upsert(bundle.deviceToken, account: accounts.token)
         } catch {
             // Restore the former complete pair rather than destroying a valid
             // master key when only the second write failed.
             if let previousMaster {
-                try? upsert(previousMaster, account: masterKeyAccount)
+                try? upsert(previousMaster, account: accounts.master)
             } else {
-                delete(account: masterKeyAccount)
+                delete(account: accounts.master)
             }
             throw error
         }
     }
 
-    public static func remove() {
-        delete(account: masterKeyAccount)
-        delete(account: deviceTokenAccount)
+    public static func remove(slot: SyncSecretSlot = .active) {
+        let accounts = keychainAccounts(for: slot)
+        delete(account: accounts.master)
+        delete(account: accounts.token)
+    }
+
+    static func keychainAccounts(for slot: SyncSecretSlot) -> (master: String, token: String) {
+        let suffix = slot == .active ? "" : "-\(slot.rawValue)"
+        return (masterKeyAccount + suffix, deviceTokenAccount + suffix)
     }
 
     private static func query(account: String) -> [String: Any] {

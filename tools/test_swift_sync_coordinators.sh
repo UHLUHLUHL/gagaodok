@@ -87,3 +87,11 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncPairingHostUIModelTests.swift" \
   -o "$pairing_ui_binary"
 "$pairing_ui_binary"
+
+transition_store_binary="${TMPDIR:-/tmp}/gagaodok-sync-transition-store-tests"
+swiftc \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncAccountTransitionStore.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionStoreTests.swift" \
+  -o "$transition_store_binary"
+"$transition_store_binary"
