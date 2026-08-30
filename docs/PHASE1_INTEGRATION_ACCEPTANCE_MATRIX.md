@@ -88,7 +88,7 @@ flowchart TB
 | 앱 onboarding coordinator | `95587b2`, `45b8935`; 양 플랫폼 enrollment 순서 계약. phrase 확인 전 미전송, 수락 전 secret/config 미활성, 성공 후에만 journal acknowledge, 연결 뒤에도 sync 비활성 | ✅ | 합성 계정 onboarding 화면 |
 | 앱 bootstrap/changes coordinator | `8c0a462`, `612073b`; 양 플랫폼 strict envelope·watermark 인계·page 재적용 무해·실패 시 cursor 미전진. 기록 대상은 opaque replica뿐 | ✅ | 실제 대화 연결은 별도 승인 |
 | 앱 합성 onboarding UI | `21fd62b`, `e4fb618`; macOS 설정 "동기화" 탭과 Android 양 flavor section. 화면 진입은 저장된 상태만 읽고, 전송·저장·replica 기록은 모두 버튼 뒤 | ✅ | 실제 대화 연결은 별도 승인 |
-| macOS 합성 onboarding 실기기 | `5ec6576`, `4572f75`, `ebb8cfd`; 설치 앱에서 12단계 실행. 단위 test가 못 잡은 결함 3개(번들 리소스·막다른 오류 상태·token 수명) 발견·수정 | ✅ | 결함 3 수정의 실기기 재확인 |
+| macOS 합성 onboarding 실기기 | `5ec6576`, `4572f75`, `ebb8cfd`, `2c032de`; 설치 앱에서 12단계 실행. 단위 test가 못 잡은 결함 4개(번들 리소스·막다른 오류 상태·token 수명·빈 snapshot 회귀) 발견·수정, 수정본 재설치 후 재검증 | ✅ | 실제 대화 연결 승인 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
