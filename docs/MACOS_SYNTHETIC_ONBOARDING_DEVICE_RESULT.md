@@ -55,6 +55,8 @@ Android는 설치·실행 없이 test와 compile까지만 확인했다.
   확인했지만, 원래 조건은 enrollment 전 상태가 필요하고 그러려면 두 번째 합성
   계정을 만들거나 앱 데이터를 지워야 해서 이번 범위를 벗어난다. 회귀 test로
   고정해 두었다. 설치된 앱은 결함 1~4를 모두 포함한 HEAD 빌드다.
+  **이 조건은 나중에 Android 실기기에서 재현해 확인했다**
+  ([Android 결과](ANDROID_SYNTHETIC_ONBOARDING_DEVICE_RESULT.md)).
 - Keychain 항목은 login keychain에 들어갔다. 코드가 지정한
   `WhenUnlockedThisDeviceOnly`는 data protection keychain의 속성이라, 지금
   서명·entitlement 구성에서는 항목 속성으로 확인되지 않는다. 항목이 이 Mac의

@@ -90,6 +90,7 @@ flowchart TB
 | 앱 합성 onboarding UI | `21fd62b`, `e4fb618`; macOS 설정 "동기화" 탭과 Android 양 flavor section. 화면 진입은 저장된 상태만 읽고, 전송·저장·replica 기록은 모두 버튼 뒤 | ✅ | 실제 대화 연결은 별도 승인 |
 | macOS 합성 onboarding 실기기 | `5ec6576`, `4572f75`, `ebb8cfd`, `2c032de`; 설치 앱에서 12단계 실행. 단위 test가 못 잡은 결함 4개(번들 리소스·막다른 오류 상태·token 수명·빈 snapshot 회귀) 발견·수정, 수정본 재설치 후 재검증 | ✅ | 실제 대화 연결 승인 |
 | Android onboarding parity | `5c414b6`, `f1389bd`; macOS 실기기 결함 3·4를 같은 의미로 보정. token을 요청마다 읽고 인증 없는 요청은 로컬 거부, 빈 snapshot도 완료로 유지. 양 flavor test·compile 통과, 설치·실행 없음 | ✅ | 실제 대화 연결 승인 |
+| Android 합성 onboarding 실기기 | `1a67d52`; phone·tablet 두 기기에서 12단계 완주. signer 일치 update, UID 유지, 별도 합성 account, same-session bootstrap 성공, 재실행 복원, release 복귀. APK 빌드를 막던 중복 asset 결함 발견·수정 | ✅ | 실제 대화 연결 승인 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
@@ -165,6 +166,7 @@ onboarding UI와 기존 local mutation의 operation adapter다. remote Cloudflar
 ## 🔗 관련 문서
 
 - [macOS 합성 onboarding 실기기 결과](MACOS_SYNTHETIC_ONBOARDING_DEVICE_RESULT.md)
+- [Android 합성 onboarding 실기기 결과](ANDROID_SYNTHETIC_ONBOARDING_DEVICE_RESULT.md)
 - [사용자 결정 기록](CROSS_DEVICE_SYNC_USER_DECISIONS.md)
 - [기술 합의문](CROSS_DEVICE_SYNC_AGREEMENT.md)
 - [canonical schema 통합 초안](PHASE1_CANONICAL_SCHEMA_DRAFT.md)

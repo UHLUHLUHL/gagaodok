@@ -1,0 +1,80 @@
+# Android 합성 onboarding 실기기 검증 결과
+
+_2026-08-30 — phone과 tabletMentor 두 기기에서 합성 계정 연결 흐름을 눌러 본 기록_
+
+## 요약
+
+무선 디버깅으로 연결한 실제 phone(SM-S938N)과 tablet(SM-X910)에서, 합성 전용
+Cloudflare Worker를 상대로 연결 준비 → 복구 문구 → enrollment → 합성 snapshot →
+재실행 복원 → 연결 해제 확인까지 두 기기 각각 완주했다.
+
+**실제 대화·첨부·복구 문구는 0건이다.** 앱 내부 대화 파일은 본문을 열지 않고
+경로·크기·수정시각·SHA-256만 전후 비교했다. 동기화는 끝까지 꺼진 상태다.
+
+**두 기기는 서로 다른 합성 account를 쓴다.** Mac이 쓰는 account와도 다르다.
+
+## 설치와 신원
+
+| | phone | tablet |
+| --- | --- | --- |
+| package | `com.sapiens.gagaodok` | `com.sapiens.gagaodok.tabletmentor` |
+| version | 13 / `1.9-phone` | 1 / `2.0-tablet-mentor` |
+| signer | 기존·debug·release 전부 동일 | 기존·debug·release 전부 동일 |
+| UID | 10634 → 끝까지 10634 | 10057 → 끝까지 10057 |
+| 최종 설치본 | HEAD release APK | HEAD release APK |
+
+`run-as`로 설정을 넣기 위해 같은 signer의 debug를 데이터 보존 업데이트로
+설치했고, 시험 뒤 uninstall 없이 release로 되돌렸다. 앱 데이터 삭제는 0건이다.
+
+## 단계별 결과 (두 기기 동일)
+
+| 단계 | 결과 |
+| --- | --- |
+| 탭 진입 | "연결 안 됨", 버튼 1개, host만 표시. `files/sync` 없음 = 저장·전송 0건 |
+| 연결 준비 | 복구 문구 1회 표시. **이 시점에도 `files/sync` 없음** |
+| 문구 확인 | enrollment 성공. `connection.json`과 Keystore 보관물 생성 |
+| 연결 상태 | `enabled`는 기본값 `false`이며 파일에 기록되지 않는다 = 꺼짐 |
+| **같은 세션 snapshot** | **성공.** `bootstrapComplete=true`, watermark 0, 항목 0개 |
+| 다음 페이지 | 제공되지 않음 |
+| 재실행 | "합성 자료 준비됨" 유지 |
+| 연결 해제 | 확인 카드만. 키·연결·replica 그대로 |
+| release 복귀 | 상태 그대로 복원 |
+
+새로 만든 account에는 row가 없으므로 항목 0개는 정상이다. 합성 row를 만들려고
+token을 꺼내거나 원격 harness로 account를 건드리지 않았다.
+
+## macOS가 확인하지 못한 것을 여기서 확인했다
+
+macOS에서는 bootstrap이 이미 끝나 있어, "token이 저장되기 전에 만들어진 화면이
+나중에 저장된 token을 쓰는가"를 실기기에서 재현하지 못했다. Android에서는 앱을
+켠 채로 연결하고 곧바로 snapshot을 받아 **두 기기 모두 성공**했다. `5c414b6`의
+provider 경로가 실제 기기에서 동작한다는 증거다.
+
+`f1389bd`(빈 snapshot 완료 유지)도 두 기기의 재실행에서 확인했다.
+
+## 발견하고 고친 결함
+
+`1a67d52` — **APK가 네 variant 모두 빌드되지 않았다.** `build.gradle.kts:92`가
+이미 Swift 리소스 폴더를 assets로 잡고 있는데 `e4fb618`에서 같은 단어 목록을
+`app/src/main/assets/`에도 넣어 "Duplicate resources"로 병합이 멈췄다. 사본을
+지워 해결했다.
+
+놓친 이유는 분명하다. 그때 compile과 unit test만 돌리고 APK를 만들어 보지
+않았다. assets 병합은 `assemble`에서만 일어난다. **Android를 고치면 최소 한 번은
+assemble까지 해야 한다.**
+
+## 남은 위험
+
+- 복구 문구는 두 기기 모두 아무도 받아 적지 않았다. 합성 계정이라 잃을 것이
+  없지만, 실제 계정 흐름에서는 사용자가 반드시 적어야 한다.
+- phone에서 `ink_documents.json` 하나가 수정시각만 바뀌었다. 내용(SHA-256)은
+  같고 앱 시작 시 빈 파일을 다시 쓴 것으로, 동기화와 무관하다.
+- Android Keystore 보관물은 존재만 확인했다. 값은 읽지 않았고 wrapping 강도는
+  이번 범위에서 검증하지 않았다.
+
+## 경계
+
+Cloudflare resource는 만들지도 지우지도 바꾸지도 않았다. Worker 코드 변경이
+없어 원격 smoke는 반복하지 않았다. Mac 앱과 Keychain은 건드리지 않았다. 앱
+uninstall·데이터 삭제는 0건이다. 실제 대화 연결과 동기화 활성화는 여전히 별도
+승인 대상이다.
