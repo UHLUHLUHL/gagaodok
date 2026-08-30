@@ -86,7 +86,25 @@ struct SyncPairingHostUIModelTests {
         let image = SyncPairingQRCodeRenderer.cgImage(from: "R0RQMQ")
         check(image != nil && image!.width > 0 && image!.height > 0, "fixture text renders a bitmap")
 
+        let disabled = try! SyncConnectionConfiguration(
+            baseURL: URL(string: "https://pairing.invalid")!,
+            accountID: "AAAAAAAA-0000-4000-8000-00000000000A",
+            deviceID: "BBBBBBBB-0000-4000-8000-00000000000B",
+            enabled: false,
+            changesCursor: nil
+        )
+        let enabled = try! SyncConnectionConfiguration(
+            baseURL: disabled.baseURL,
+            accountID: disabled.accountID,
+            deviceID: disabled.deviceID,
+            enabled: true,
+            changesCursor: nil
+        )
+        check(!SyncPairingHostAvailability.canHost(connection: nil), "absent connection cannot host")
+        check(SyncPairingHostAvailability.canHost(connection: disabled), "sync-off connection can host")
+        check(!SyncPairingHostAvailability.canHost(connection: enabled), "enabled connection cannot host in synthetic UI")
+
         if failures > 0 { exit(1) }
-        print("SyncPairingHostUIModelTests: 18 passed")
+        print("SyncPairingHostUIModelTests: 21 passed")
     }
 }

@@ -9,6 +9,12 @@ protocol SyncPairingHostServicing: Sendable {
 
 extension SyncPairingHostCoordinator: SyncPairingHostServicing {}
 
+enum SyncPairingHostAvailability {
+    static func canHost(connection: SyncConnectionConfiguration?) -> Bool {
+        connection?.enabled == false
+    }
+}
+
 /// State owner for the host half of the pairing settings card.
 ///
 /// The view never calls the pairing service directly. In particular, it cannot
