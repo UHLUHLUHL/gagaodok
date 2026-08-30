@@ -88,26 +88,34 @@ assemble까지 해야 한다.**
 - Android Keystore 보관물은 존재만 확인했다. 값은 읽지 않았고 wrapping 강도는
   이번 범위에서 검증하지 않았다.
 
-## 기기 합류(pairing) 화면이 없다
+## 기기 합류(pairing) 화면 후속 검증
 
-복구 문구는 기기가 아니라 **계정**에 딸린 것이다. 문구는 계정 master key를
-감싸며(`SyncEnrollmentBuilder`), 결정 16번도 "최초 설정 때 1회"라고 못박는다.
-따라서 실제 사용에서는 계정 하나에 문구 하나이고, 둘째·셋째 기기는 계정을 새로
-만드는 것이 아니라 이미 있는 계정에 합류해야 한다.
+위에서 확인한 화면 부재는 `6a8f85c`~`c6a4a53`에서 Mac host QR·SAS UI와
+Android 앱 내부 CameraX·ML Kit scanner를 추가해 닫았다. 기존 정식 앱 데이터를
+건드리지 않기 위해 phone과 tablet에는 각각 별도 package의 `pairingTest` APK를
+나란히 설치했고, Mac은 현재 HEAD 앱으로 교체했다.
 
-이번 검증에서 기기마다 문구가 따로 나온 것은 **계정을 셋 만들었기 때문**이다.
-지시가 기기별 격리를 요구하기도 했지만, 사실 다른 방법이 없기도 했다.
+두 기기 모두 다음 흐름을 실기기에서 통과했다.
 
-Worker에는 pairing 경로가 이미 구현돼 있고 원격 smoke에서 통과했다. 그러나
-**앱 화면에는 합류하는 길이 없다.** 동기화 화면이 제공하는 버튼은 "합성 계정
-연결 준비" 하나뿐이며 그것은 언제나 새 계정을 만든다.
+1. Android의 명시적 스캔 동작 뒤에만 카메라 권한 요청
+2. 앱 내부 카메라로 Mac의 메모리 QR 인식
+3. Mac과 Android의 6자리 SAS 일치 확인
+4. Mac 명시 승인 뒤 Android가 1회 redeem
+5. Mac·Android 모두 "합류 완료·동기화 꺼짐" 표시
+6. 저장된 account가 Mac과 일치하고, secret blob과 connection이 재실행 뒤에도 생존
 
-실제 대화 연결 전에 "이 기기를 기존 계정에 합류시키기" 화면이 필요하다. 순서와
-범위는 Codex가 정한다.
+실기기 과정에서 승인 대기 상태가 SAS 숫자를 잃는 결함을 발견했다. `be7b8e8`이
+최초 숫자를 계속 표시하도록 고쳤고 phone·tablet focused test와 두 시험 APK
+assemble을 통과했다. 두 정식 Android package와 시험 package는 UID·저장소가
+서로 다르며, 정식 앱 데이터는 수정하거나 삭제하지 않았다.
+
+이 검증은 합성 account에 device 두 개를 추가했을 뿐이다. 실제 대화는 읽거나
+전송하지 않았고 sync는 양쪽 모두 기본값 `false`다. 다음 제품 gate는 이미 다른
+계정에 연결된 정식 앱이 데이터를 지우지 않고 명시적으로 계정을 전환하는 UX다.
 
 ## 경계
 
-Cloudflare resource는 만들지도 지우지도 바꾸지도 않았다. Worker 코드 변경이
-없어 원격 smoke는 반복하지 않았다. Mac 앱과 Keychain은 건드리지 않았다. 앱
-uninstall·데이터 삭제는 0건이다. 실제 대화 연결과 동기화 활성화는 여전히 별도
-승인 대상이다.
+Cloudflare resource 구성은 만들거나 지우거나 바꾸지 않았다. 후속 pairing
+검증에서는 기존 원격 합성 account에 phone·tablet 시험 device를 등록했다. Worker
+코드 변경이 없어 원격 smoke는 반복하지 않았다. Android 정식 앱 uninstall·데이터
+삭제는 0건이다. 실제 대화 연결과 동기화 활성화는 여전히 별도 승인 대상이다.
