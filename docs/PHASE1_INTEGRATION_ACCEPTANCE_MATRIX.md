@@ -89,6 +89,7 @@ flowchart TB
 | 앱 bootstrap/changes coordinator | `8c0a462`, `612073b`; 양 플랫폼 strict envelope·watermark 인계·page 재적용 무해·실패 시 cursor 미전진. 기록 대상은 opaque replica뿐 | ✅ | 실제 대화 연결은 별도 승인 |
 | 앱 합성 onboarding UI | `21fd62b`, `e4fb618`; macOS 설정 "동기화" 탭과 Android 양 flavor section. 화면 진입은 저장된 상태만 읽고, 전송·저장·replica 기록은 모두 버튼 뒤 | ✅ | 실제 대화 연결은 별도 승인 |
 | macOS 합성 onboarding 실기기 | `5ec6576`, `4572f75`, `ebb8cfd`, `2c032de`; 설치 앱에서 12단계 실행. 단위 test가 못 잡은 결함 4개(번들 리소스·막다른 오류 상태·token 수명·빈 snapshot 회귀) 발견·수정, 수정본 재설치 후 재검증 | ✅ | 실제 대화 연결 승인 |
+| Android onboarding parity | `5c414b6`, `f1389bd`; macOS 실기기 결함 3·4를 같은 의미로 보정. token을 요청마다 읽고 인증 없는 요청은 로컬 거부, 빈 snapshot도 완료로 유지. 양 flavor test·compile 통과, 설치·실행 없음 | ✅ | 실제 대화 연결 승인 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
