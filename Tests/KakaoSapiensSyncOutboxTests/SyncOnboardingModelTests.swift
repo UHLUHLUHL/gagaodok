@@ -63,6 +63,13 @@ private func bootstrapBody(watermark: Int, hasMore: Bool, cursor: String?) -> St
     """
 }
 
+private func emptyBootstrapBody() -> String {
+    """
+    {"protocol_version":1,"request_id":"AAAAAAAA-0000-4000-8000-00000000000B","result":{
+    "snapshot_high_watermark_seq":0,"has_more":false,"next_cursor":null,"items":[]}}
+    """
+}
+
 private func syntheticWords() -> [String] {
     (0..<2_048).map { index in
         var unique = "w"
@@ -367,6 +374,28 @@ private func testALocalFailureStillOffersAWayForward() async throws {
     try check(harness.model.recoveryPhrase == nil, "no phrase is left on screen")
 }
 
+/// A finished walk is finished even when it brought nothing back.
+///
+/// A newly created account owns no rows, so its snapshot is legitimately
+/// empty. Reading emptiness as "still walking" leaves the screen offering a
+/// page that will never exist, which is what a real restart showed.
+@MainActor
+private func testAnEmptySnapshotStillCountsAsFinished() async throws {
+    let harness = try makeHarness()
+    harness.enrollTransport.responses = [(201, "{}")]
+    await harness.model.beginConnection()
+    await harness.model.confirmPhraseSaved()
+    harness.pullTransport.responses = [(200, emptyBootstrapBody())]
+    await harness.model.advanceBootstrap()
+    try check(harness.model.state == .replicaReady(entryCount: 0), "an empty walk finishes")
+
+    // What the screen does after a restart: read stored progress only.
+    await harness.model.refresh()
+    try check(harness.model.state == .replicaReady(entryCount: 0), "and stays finished")
+    try check(!harness.model.actions.canAdvanceBootstrap, "no page is offered")
+    try assertConversationUntouched(harness, "empty bootstrap")
+}
+
 @main
 enum SyncOnboardingModelTests {
     @MainActor
@@ -382,6 +411,7 @@ enum SyncOnboardingModelTests {
         try await testDisconnectIsAConfirmationOnly()
         try await testNothingSensitiveIsDescribable()
         try await testALocalFailureStillOffersAWayForward()
-        print("SyncOnboardingModelTests: 11 passed")
+        try await testAnEmptySnapshotStillCountsAsFinished()
+        print("SyncOnboardingModelTests: 12 passed")
     }
 }

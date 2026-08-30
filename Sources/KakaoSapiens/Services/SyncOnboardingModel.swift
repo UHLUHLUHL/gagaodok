@@ -152,7 +152,11 @@ public final class SyncOnboardingModel: ObservableObject {
         case .connected:
             let progress = await pull.progress()
             let entries = (try? replica.snapshot().count) ?? 0
-            if progress.bootstrapComplete && entries > 0 {
+            // Emptiness is not incompleteness. A newly created account owns no
+            // rows, so its snapshot is legitimately empty; counting entries
+            // here reported a finished walk as still running and kept offering
+            // a page that will never exist.
+            if progress.bootstrapComplete {
                 state = .replicaReady(entryCount: entries)
             } else if progress.snapshotWatermark != nil {
                 state = .bootstrapping(appliedItems: entries)
