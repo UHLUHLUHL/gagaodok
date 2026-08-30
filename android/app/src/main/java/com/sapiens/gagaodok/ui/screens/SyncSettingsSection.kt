@@ -215,10 +215,11 @@ private fun buildModel(context: Context, environment: SyncSyntheticEnvironment):
         )
         val client = SyncWorkerClient(
             environment.base_url,
-            // The token this client authenticates with once enrollment has
-            // stored one. Before that it is unused: the pull buttons are only
-            // offered from the connected state.
-            (secrets.load() as? SyncSecretLoadResult.Available)?.secrets?.deviceToken ?: ByteArray(32),
+            // Read per request, not captured here. This screen is built while
+            // nothing is stored yet, so a token taken now would stay empty for
+            // the rest of the session and every read would be refused until
+            // the app restarted.
+            { (secrets.load() as? SyncSecretLoadResult.Available)?.secrets?.deviceToken },
             OkHttpSyncTransport(),
         )
         SyncOnboardingModel(
