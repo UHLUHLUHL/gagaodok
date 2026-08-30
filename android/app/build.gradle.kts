@@ -28,6 +28,7 @@ android {
     }
 
     defaultConfig {
+        buildConfigField("boolean", "PAIRING_TEST", "false")
         // 적응형 아이콘이 26부터입니다. 실사용 기기 대부분을 덮습니다.
         minSdk = 26
         targetSdk = 35
@@ -52,6 +53,16 @@ android {
     }
 
     buildTypes {
+        create("pairingTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".pairingtest"
+            versionNameSuffix = "-pairing-test"
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+            resValue("string", "app_name", "가가오독 합류 시험")
+            buildConfigField("boolean", "PAIRING_TEST", "true")
+        }
         release {
             // 리소스 축소는 코드 축소를 함께 켜야 합니다. KaTeX 자산은 assets라 축소 대상이 아닙니다.
             isMinifyEnabled = true

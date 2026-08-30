@@ -41,7 +41,7 @@ sealed interface SyncPairingJoinerUiState {
     data object RequestingCamera : SyncPairingJoinerUiState
     data object Scanning : SyncPairingJoinerUiState
     data class VerifySas(val digits: String) : SyncPairingJoinerUiState
-    data object WaitingApproval : SyncPairingJoinerUiState
+    data class WaitingApproval(val digits: String) : SyncPairingJoinerUiState
     data object Redeeming : SyncPairingJoinerUiState
     data object LinkedSyncOff : SyncPairingJoinerUiState
     data class Error(val reason: SyncPairingJoinerUiError) : SyncPairingJoinerUiState
@@ -69,7 +69,7 @@ class SyncPairingJoinerUiModel(
             SyncPairingJoinerUiState.RequestingCamera ->
                 SyncPairingJoinerUiActions(canLaunchCamera = true)
             is SyncPairingJoinerUiState.VerifySas,
-            SyncPairingJoinerUiState.WaitingApproval,
+            is SyncPairingJoinerUiState.WaitingApproval,
             -> SyncPairingJoinerUiActions(canConfirmSas = true)
             SyncPairingJoinerUiState.Scanning,
             SyncPairingJoinerUiState.Redeeming,
@@ -115,13 +115,18 @@ class SyncPairingJoinerUiModel(
 
     fun confirmSasAndRedeem() {
         if (!actions.canConfirmSas) return
+        val digits = when (val current = mutableState.value) {
+            is SyncPairingJoinerUiState.VerifySas -> current.digits
+            is SyncPairingJoinerUiState.WaitingApproval -> current.digits
+            else -> return
+        }
         mutableState.value = SyncPairingJoinerUiState.Redeeming
         mutableState.value = try {
             service.redeem(sasConfirmed = true)
             SyncPairingJoinerUiState.LinkedSyncOff
         } catch (error: SyncPairingException) {
             if (error.reason == SyncPairingException.Reason.REJECTED) {
-                SyncPairingJoinerUiState.WaitingApproval
+                SyncPairingJoinerUiState.WaitingApproval(digits)
             } else {
                 SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.PairingFailed)
             }

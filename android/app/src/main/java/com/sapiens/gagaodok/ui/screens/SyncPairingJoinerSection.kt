@@ -185,7 +185,8 @@ private fun pairingDetail(state: SyncPairingJoinerUiState): String = when (state
     SyncPairingJoinerUiState.RequestingCamera -> "카메라 사용을 허용해야 QR을 읽을 수 있습니다."
     SyncPairingJoinerUiState.Scanning -> "QR을 찾는 중입니다. QR 값은 화면이나 로그에 표시하지 않습니다."
     is SyncPairingJoinerUiState.VerifySas -> "맥 화면과 이 번호가 같은지 확인하세요: ${state.digits}"
-    SyncPairingJoinerUiState.WaitingApproval -> "맥에서 이 기기를 승인한 뒤 다시 확인하세요."
+    is SyncPairingJoinerUiState.WaitingApproval ->
+        "맥 화면과 이 번호가 같은지 확인한 뒤 승인 결과를 다시 확인하세요: ${state.digits}"
     SyncPairingJoinerUiState.Redeeming -> "승인 결과를 확인하고 있습니다."
     SyncPairingJoinerUiState.LinkedSyncOff -> "계정에 합류했습니다. 실제 대화 동기화는 꺼져 있습니다."
     is SyncPairingJoinerUiState.Error -> when (state.reason) {

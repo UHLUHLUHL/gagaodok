@@ -89,6 +89,17 @@ fun SyncSettingsSection() {
             return@Column
         }
 
+        if (BuildConfig.PAIRING_TEST) {
+            SyncPairingJoinerSection(environment)
+            Text(
+                "연결 대상: ${environment.displayHost}",
+                style = KakaoText.listTime,
+                color = colors.textTertiary,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+            return@Column
+        }
+
         val state by model.state.collectAsState()
         val phrase by model.recoveryPhrase.collectAsState()
         val confirmingDisconnect by model.disconnectConfirmationVisible.collectAsState()

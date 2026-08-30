@@ -115,6 +115,20 @@ class SyncPairingJoinerUiModelTest {
         assertFalse(model.actions.canRequestScan)
     }
 
+    @Test fun `waiting for host approval keeps the same SAS digits visible`() {
+        val service = Service().apply {
+            failRedeem = SyncPairingException(SyncPairingException.Reason.REJECTED)
+        }
+        val model = SyncPairingJoinerUiModel(service) { true }
+        model.requestScan()
+        model.cameraPermissionGranted()
+        model.acceptScannedPayload("R0RQMQ", DEVICE, "PHONE_SPACE", "android_phone")
+        model.confirmSasAndRedeem()
+
+        assertEquals(SyncPairingJoinerUiState.WaitingApproval("842588"), model.state.value)
+        assertTrue(model.actions.canConfirmSas)
+    }
+
     @Test fun `duplicate actions while busy are ignored`() {
         val service = Service()
         val model = SyncPairingJoinerUiModel(service) { true }
