@@ -92,6 +92,7 @@ flowchart TB
 | Android onboarding parity | `5c414b6`, `f1389bd`; macOS 실기기 결함 3·4를 같은 의미로 보정. token을 요청마다 읽고 인증 없는 요청은 로컬 거부, 빈 snapshot도 완료로 유지. 양 flavor test·compile 통과, 설치·실행 없음 | ✅ | 실제 대화 연결 승인 |
 | Android 합성 onboarding 실기기 | `1a67d52`; phone·tablet 두 기기에서 12단계 완주. signer 일치 update, UID 유지, 별도 합성 account, same-session bootstrap 성공, 재실행 복원, release 복귀. APK 빌드를 막던 중복 asset 결함 발견·수정 | ✅ | 실제 대화 연결 승인 |
 | 앱 기기 합류(pairing) 기반 | `4ba3bcd`, `79dd7d4`, `e16d112`; canonical QR·claim/delivery 암호화·SAS 승인·1회 redeem·기본 sync 비활성의 Swift/Android coordinator와 contract test | ✅ | QR 렌더러·스캐너 UI와 실기기 합류 검증 |
+| Mac host·Android join pairing UI | `6a8f85c`, `7fb592e`, `9ea494d`, `c6a4a53`; Mac 메모리 QR·SAS 승인 card와 Android phone/tablet 앱 내부 CameraX·ML Kit QR scanner. 기존 local secret/connection이 있으면 join을 열지 않고 성공 후에도 sync 비활성 | ⚠️ | 새 빌드 설치, 카메라 권한·QR·SAS·원격 합성 pairing을 실기기에서 검증 |
 | 복구 문구 7일 재열람 계약 | `4ba3bcd`, `79dd7d4`, `e16d112`; 16-byte entropy만 device-local escrow, 매회 소유자 인증, 확인·만료 시 폐기, entropy 부재 시 재생성 금지 | ⚠️ | 실제 escrow 저장소·소유자 인증 UI·만료 청소 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
@@ -163,8 +164,9 @@ Phase 1을 “계약·local boundary가 구현 가능한 상태”라고 판정�
 M03~M06, operation·attachment·pairing·recovery HTTP route, local R2 lifecycle,
 changes/bootstrap, Phase 2 local synthetic E2E, 양 플랫폼 E2EE·device-local key
 custody·durable outbox·Worker client·기본 비활성 연결 상태·remote shadow replica,
-pairing 기반과 rate limit·expiry/orphan cleanup까지 local 통합 승인됐다. 다음 gate는
-QR 렌더러·스캐너를 포함한 기기 합류 UI, 복구 entropy escrow 구현, 기존 local
+pairing 기반과 rate limit·expiry/orphan cleanup까지 local 통합 승인됐다. 기기 합류
+UI는 Mac host와 Android 앱 내부 QR scanner까지 local build가 끝났으며, 다음 gate는
+새 빌드의 카메라·QR·SAS·원격 합성 pairing 실기기 검증, 복구 entropy escrow 구현, 기존 local
 mutation의 operation adapter다. production Cloudflare resource와 실제 data는 계속
 별도 승인 대상이다.
 
