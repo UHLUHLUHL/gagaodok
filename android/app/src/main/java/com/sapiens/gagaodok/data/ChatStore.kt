@@ -26,6 +26,8 @@ import kotlinx.serialization.encodeToString
 import java.io.File
 import java.util.UUID
 
+internal fun initialRooms(saved: List<ChatRoom>): List<ChatRoom> = saved
+
 /// 대화방과 대화 내용을 파일에 둡니다.
 ///
 /// **파일 이름과 JSON 형식을 맥 판과 똑같이 맞췄습니다.** 맥에서 쓰던 기록을
@@ -59,18 +61,7 @@ class ChatStore private constructor(context: Context) {
 
     init {
         val saved = loadRoomsFromDisk()
-        if (saved.isNotEmpty()) {
-            _rooms.value = saved
-        } else {
-            val defaultRoom = ChatRoom(
-                title = "사피엔스",
-                profile = RoomProfile(name = "사피엔스", statusMessage = "수학 학습 파트너 · 냉철한 피드백"),
-                lastMessageText = "대화를 시작해보세요."
-            )
-            _rooms.value = listOf(defaultRoom)
-            writeMessages(messagesFile(defaultRoom.id), emptyList())
-            persistRooms()
-        }
+        _rooms.value = initialRooms(saved)
         refreshConversationIndex()
     }
 
@@ -102,11 +93,13 @@ class ChatStore private constructor(context: Context) {
     fun conversationRooms(all: List<ChatRoom>, withConversation: Set<UUID>): List<ChatRoom> =
         conversationRoomsForDisplay(all, withConversation)
 
-    fun createRoom(name: String, status: String = "수학 학습 코치"): ChatRoom {
+    fun createRoom(name: String, status: String = "AI 챗봇"): ChatRoom {
         val room = ChatRoom(
             title = name,
             profile = RoomProfile(name = name, statusMessage = status),
-            lastMessageText = "대화를 시작해보세요."
+            lastMessageText = "대화를 시작해보세요.",
+            modelIdentifier = AIModel.GEMINI_37_FLASH.rawValue,
+            modeIdentifier = ChatMode.COMPANION.rawValue
         )
         // 인삿말 없이 빈 대화로 시작합니다.
         writeMessages(messagesFile(room.id), emptyList())

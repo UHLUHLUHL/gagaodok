@@ -405,7 +405,7 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         val suppressedExpressions = protocol?.persona?.suppressedExpressions
             ?: room.profile.persona.suppressedExpressions
         val personalAffectionEnabled = protocol == null && requestMode == ChatMode.COMPANION &&
-            requestModel == AIModel.GEMINI_37_FLASH && !BuildConfig.TABLET_MENTOR
+            requestModel.isGeminiConversationModel && !BuildConfig.TABLET_MENTOR
         val systemPromptOverride = protocol?.systemPrompt(room.title) ?: if (personalAffectionEnabled) {
             PersonalAffectionProtocol.systemPrompt(ai.systemPrompt(requestBotName, requestPersona, requestMode))
         } else null

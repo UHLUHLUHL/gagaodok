@@ -28,6 +28,16 @@ internal data class StreamOutcome(
     var usage: JSONObject? = null
 )
 
+private class MissingCachedContentException : Exception()
+
+internal fun isMissingCachedContentResponse(code: Int, raw: String, cacheName: String): Boolean {
+    if (code != 400 && code != 404) return false
+    val saysNotFound = raw.contains("NOT_FOUND", ignoreCase = true) ||
+        raw.contains("not found", ignoreCase = true)
+    val identifiesCache = raw.contains("cachedContent", ignoreCase = true) || raw.contains(cacheName)
+    return saysNotFound && identifiesCache
+}
+
 internal suspend fun AIService.sendGeminiRequest(
     conversation: List<ConversationTurn>,
     botName: String,
@@ -37,10 +47,11 @@ internal suspend fun AIService.sendGeminiRequest(
     roleplayInProgress: Boolean,
     repetitionAdvice: RepetitionAdvice?,
     systemPromptOverride: String?,
+    model: AIModel,
     onRawText: suspend (String) -> Unit,
     onBubble: suspend (GeneratedMessageBubble) -> Unit
 ): String {
-    val model = AIModel.GEMINI_37_FLASH
+    require(model.isGeminiConversationModel) { "Gemini conversation path requires a Gemini model." }
     val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
         ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
 
@@ -67,9 +78,9 @@ internal suspend fun AIService.sendGeminiRequest(
     )
 
     // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
-    val cache = usablePrefixCache(roomId, contents, system, apiKey)
+    val cache = usablePrefixCache(roomId, model, contents, system, apiKey)
     // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
-    val previousRequestAt = markRequest(roomId)
+    val previousRequestAt = markRequest(roomId, model)
 
     val sink = StreamBubbleSink(
         roleplayEstablished = mode == ChatMode.COMPANION && roleplayInProgress,
@@ -112,7 +123,14 @@ internal suspend fun AIService.sendGeminiRequest(
         // 쓰므로, 다시 건 요청은 십중팔구 **이미 느려진 그 연결을 그대로 다시 탔습니다.**
         // 그래서 이 결과는 "새 연결이 소용없다"의 증거가 아니라 "새 연결을 아예 못 얻었다"에
         // 가깝습니다. 다시 시도한다면 연결을 먼저 버리게 만들어야 합니다.
-        streamGemini(outcome, requestContents, system, cache, apiKey, model, mode, onText = consume)
+        try {
+            streamGemini(outcome, requestContents, system, cache, apiKey, model, mode, onText = consume)
+        } catch (_: MissingCachedContentException) {
+            // 서버가 TTL 전에 캐시를 잃었거나 정리했으면 이 모델의 로컬 포인터만 버리고
+            // 같은 요청을 캐시 없이 한 번 보냅니다. 다른 모델의 캐시는 건드리지 않습니다.
+            dropCache(cacheKey(roomId, model), deleteRemote = false, apiKey = apiKey)
+            streamGemini(outcome, requestContents, system, null, apiKey, model, mode, onText = consume)
+        }
         sink.finish()
     } finally {
         val finishedAt = SystemClock.elapsedRealtime()
@@ -183,7 +201,7 @@ internal suspend fun AIService.sendGeminiRequest(
     // 답변을 이미 확보한 뒤이므로 화면 표시를 막지 않도록 백그라운드에서 진행합니다.
     scope.launch {
         refreshPrefixCache(
-            roomId, contents, system, apiKey, previousRequestAt,
+            roomId, model, contents, system, apiKey, previousRequestAt,
             measure = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
         )
     }
@@ -232,6 +250,9 @@ internal suspend fun AIService.streamGemini(
         if (!it.isSuccessful) {
             // 오류 본문도 스트림으로 오므로 모아서 해석합니다.
             val raw = it.body?.string().orEmpty()
+            if (cache != null && isMissingCachedContentResponse(it.code, raw, cache.name)) {
+                throw MissingCachedContentException()
+            }
             throw AIServiceException(errorMessage(raw, it.code, "Gemini"))
         }
 

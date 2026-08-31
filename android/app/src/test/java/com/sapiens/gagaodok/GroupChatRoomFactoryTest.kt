@@ -28,6 +28,27 @@ class GroupChatRoomFactoryTest {
         assertEquals(AIModel.GEMINI_37_FLASH, group.resolvedModel(AIModel.GPT_56_LUNA))
     }
 
+    @Test
+    fun `legacy and new personal rooms default to companion`() {
+        val legacy = ChatRoom(modeIdentifier = null)
+
+        assertEquals(ChatMode.COMPANION, legacy.resolvedMode)
+    }
+
+    @Test
+    fun `personal companion supports both Gemini models but mentor stays on 37`() {
+        val companion = ChatRoom(
+            modeIdentifier = ChatMode.COMPANION.rawValue,
+            modelIdentifier = AIModel.GEMINI_35_FLASH_LITE.rawValue
+        )
+        val mentor = companion.copy(modeIdentifier = ChatMode.MATH_MENTOR.rawValue)
+        val luna = companion.copy(modelIdentifier = AIModel.GPT_56_LUNA.rawValue)
+
+        assertEquals(AIModel.GEMINI_35_FLASH_LITE, companion.resolvedModel(AIModel.GEMINI_37_FLASH))
+        assertEquals(AIModel.GEMINI_37_FLASH, mentor.resolvedModel(AIModel.GEMINI_35_FLASH_LITE))
+        assertEquals(AIModel.GEMINI_37_FLASH, luna.resolvedModel(AIModel.GEMINI_37_FLASH))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun requiresAtLeastTwoUniquePersonalParticipants() {
         val room = ChatRoom()

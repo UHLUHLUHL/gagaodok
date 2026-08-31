@@ -318,7 +318,8 @@ fun ChatRoomScreen(
             ),
             KakaoMenuSection(
                 title = "모델",
-                items = AIModel.entries.map { model ->
+                items = (if (activeMode == ChatMode.COMPANION) AIModel.personalCompanionModels
+                    else listOf(AIModel.GEMINI_37_FLASH)).map { model ->
                     KakaoMenuItem(model.displayName, checked = model == activeModel) {
                         menu.dismiss(); app.chatStore.updateModel(room.id, model)
                     }

@@ -7,6 +7,8 @@ These rules add only Gagaodok-specific constraints to the global contract.
 - macOS Swift: `Sources/KakaoSapiens/`; Android: `android/`; Worker:
   `cloudflare/sync-worker/`; project documents: `docs/`.
 - Identify mentor vs chatbot and phone vs tablet before changing shared behavior.
+- Unless the user explicitly asks otherwise, optimize and verify active Gemini
+  paths; do not expand or reactivate Luna behavior as part of unrelated work.
 - Preserve local messages, API context, compacted summaries, exports, and sync
   payloads as separate data flows.
 - When Codex and Claude Code collaborate, Codex leads architecture, task division,

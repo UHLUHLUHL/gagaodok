@@ -27,7 +27,9 @@ internal data class PrefixCache(
     val expiresAtMillis: Long,
     /// 이 캐시에 올라가 있는 토큰 수입니다. 다시 만들 값어치가 있는지 따질 때 씁니다.
     /// 예전 파일에는 없던 값이라 기본값을 둡니다.
-    val tokenCount: Int = 0
+    val tokenCount: Int = 0,
+    /// 예전 파일에는 없으므로 3.7로만 해석합니다. 다른 모델에 재사용하지 않습니다.
+    val modelIdentifier: String = AIModel.GEMINI_37_FLASH.rawValue
 )
 
 internal const val CACHE_TTL_SECONDS = 900
@@ -47,6 +49,14 @@ internal const val CACHE_REFRESH_TTL_FLOOR_MILLIS = 240_000L
 // 직전 요청이 이 안에 있었으면 "대화 중"으로 봅니다. 그때만 첫 캐시를 만듭니다.
 internal const val CACHE_BURST_WINDOW_MILLIS = 300_000L
 
+internal fun cacheKey(roomId: UUID, model: AIModel): String = "${roomId}|${model.rawValue}"
+
+internal fun normalizePrefixCacheMap(caches: Map<String, PrefixCache>): MutableMap<String, PrefixCache> =
+    caches.entries.associate { (storedKey, cache) ->
+        val key = if ('|' in storedKey) storedKey else "$storedKey|${cache.modelIdentifier}"
+        key to cache
+    }.toMutableMap()
+
 internal fun AIService.persistCaches() {
     val snapshot = synchronized(prefixCaches) { prefixCaches.toMap() }
     scope.launch { runCatching { cacheFile.writeText(Codec.json.encodeToString(snapshot)) } }
@@ -54,12 +64,17 @@ internal fun AIService.persistCaches() {
 
 internal fun AIService.usablePrefixCache(
     roomId: UUID,
+    model: AIModel,
     contents: List<JSONObject>,
     system: String,
     apiKey: String
 ): PrefixCache? {
-    val key = roomId.toString()
+    val key = cacheKey(roomId, model)
     val cache = synchronized(prefixCaches) { prefixCaches[key] } ?: return null
+    if (cache.modelIdentifier != model.rawValue) {
+        dropCache(key, deleteRemote = false, apiKey = apiKey)
+        return null
+    }
 
     // 만료된 것은 서버에도 없으므로 지울 것이 없습니다.
     if (cache.expiresAtMillis <= System.currentTimeMillis() + 30_000) {
@@ -97,21 +112,23 @@ internal fun AIService.dropCache(key: String, deleteRemote: Boolean, apiKey: Str
 }
 
 /// 직전 요청 시각을 꺼내면서 지금 시각으로 갱신합니다.
-internal fun AIService.markRequest(roomId: UUID): Long? = synchronized(lastRequestAt) {
-    val previous = lastRequestAt[roomId.toString()]
-    lastRequestAt[roomId.toString()] = System.currentTimeMillis()
+internal fun AIService.markRequest(roomId: UUID, model: AIModel): Long? = synchronized(lastRequestAt) {
+    val key = cacheKey(roomId, model)
+    val previous = lastRequestAt[key]
+    lastRequestAt[key] = System.currentTimeMillis()
     previous
 }
 
 internal suspend fun AIService.refreshPrefixCache(
     roomId: UUID,
+    model: AIModel,
     contents: List<JSONObject>,
     system: String,
     apiKey: String,
     previousRequestAt: Long?,
     measure: Boolean = false
 ) {
-    val key = roomId.toString()
+    val key = cacheKey(roomId, model)
     // 막지 않으면 같은 방에 대해 갱신이 겹치면서 캐시가 여러 개 만들어지고
     // 이전 것이 지워지지 않습니다.
     synchronized(refreshingRooms) {
@@ -184,7 +201,7 @@ internal suspend fun AIService.refreshPrefixCache(
         }
         observe(CacheDecision.CREATE_ATTEMPT)
         val payload = JSONObject()
-            .put("model", "models/${AIModel.GEMINI_37_FLASH.rawValue}")
+            .put("model", "models/${model.rawValue}")
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().apply { contents.forEach { put(it) } })
             .put("ttl", "${CACHE_TTL_SECONDS}s")
@@ -222,7 +239,8 @@ internal suspend fun AIService.refreshPrefixCache(
                 coveredTurns = contents.size,
                 fingerprint = fingerprint(contents, system),
                 expiresAtMillis = System.currentTimeMillis() + CACHE_TTL_SECONDS * 1000L,
-                tokenCount = if (cachedTokens > 0) cachedTokens else estimated
+                tokenCount = if (cachedTokens > 0) cachedTokens else estimated,
+                modelIdentifier = model.rawValue
             )
         }
         persistCaches()
@@ -237,7 +255,7 @@ internal suspend fun AIService.refreshPrefixCache(
         // 이전 것을 지우므로 실제로는 그보다 짧습니다. 이것도 넉넉한 쪽입니다.
         if (cachedTokens > 0) {
             usage.recordCacheCreation(
-                roomId, AIModel.GEMINI_37_FLASH,
+                roomId, model,
                 tokens = cachedTokens,
                 tokenHours = cachedTokens * (CACHE_TTL_SECONDS / 3600.0)
             )

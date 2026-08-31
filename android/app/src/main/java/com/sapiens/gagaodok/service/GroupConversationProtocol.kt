@@ -52,7 +52,8 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
         append("모든 대사 문단은 완전히 따옴표로 감싸고, 따옴표 안의 첫 글자부터 [[speaker:<ROOM_UUID>]]로 시작한다. ")
         append("나레이션은 빈 줄로 분리한 강조 문단이며 speaker 표식이 없다. ")
         append("말하지 않는 참여자의 반응은 대상 대사 문단 안에 [[react:<ROOM_UUID>:<EMOJI>]]로 한 번 둔다. ")
-        append("선택적으로 [[heart:<ROOM_UUID>:+N|-N:이유]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
+        append("선택적으로 [[heart:<ROOM_UUID>:+N|-N:이유]]를 대사 문단 안에 둔다. 상승은 +1부터 +2, 하락은 -1부터 -3이다. ")
+        append("평범한 친절에는 표식을 생략하고, 무례·약속 위반·거짓말·배신·반복적인 경계 침해에는 적극적으로 하락을 적용한다. ")
         append("이유는 왜 그렇게 느꼈는지를 그 인물의 시선에서 20자 안쪽 한 구절로 적고 대괄호와 콜론은 쓰지 않는다. ")
         append("예: [[heart:<ROOM_UUID>:+2:솔직하게 답해줘서]] ")
         append("목록에 있는 참여자 UUID만 사용한다. 표식은 설명할 텍스트가 아닌 전송 메타데이터다.")
@@ -131,7 +132,7 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
             }
         }
         return order.map { id ->
-            HeartChange(id, deltas.getValue(id).coerceIn(-3, 3), reasons[id].orEmpty())
+            HeartChange(id, deltas.getValue(id).coerceIn(-3, 2), reasons[id].orEmpty())
         }
     }
 
@@ -154,7 +155,7 @@ class GroupConversationProtocol(participants: List<ChatRoom>) {
                 append("모든 대사 문단은 완전히 따옴표로 감싸고, 따옴표 안의 첫 글자부터 [[speaker:<ROOM_UUID>]]로 시작한다. ")
                 append("나레이션은 빈 줄로 분리한 강조 문단이며 speaker 표식이 없다. ")
                 append("모든 참여자는 대사 또는 [[react:<ROOM_UUID>:<EMOJI>]] 반응으로 참여하고 앞서 보낸 말에 이어서 답한다. ")
-                append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 두며 한 턴 변화는 -3부터 +3까지다. ")
+                append("선택적으로 [[heart:<ROOM_UUID>:+N|-N]]를 대사 문단 안에 두며 상승은 +1부터 +2, 하락은 -1부터 -3이다. ")
                 append("목록에 있는 참여자 UUID만 사용한다. 표식은 설명할 텍스트가 아닌 전송 메타데이터다.")
             },
             samples = samples,

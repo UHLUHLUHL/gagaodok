@@ -91,9 +91,9 @@ class AIService private constructor(internal val appContext: Context) {
         onBubble: suspend (GeneratedMessageBubble) -> Unit
     ): String = withContext(Dispatchers.IO) {
         when (model) {
-            AIModel.GEMINI_37_FLASH -> sendGeminiRequest(
+            AIModel.GEMINI_37_FLASH, AIModel.GEMINI_35_FLASH_LITE -> sendGeminiRequest(
                 conversation, botName, roomId, persona, mode, roleplayInProgress,
-                repetitionAdvice, systemPromptOverride, onRawText, onBubble
+                repetitionAdvice, systemPromptOverride, model, onRawText, onBubble
             )
             AIModel.GPT_56_LUNA -> {
                 // Luna는 스트리밍하지 않습니다. 한 번에 받아 말풍선으로 갈라 내보냅니다.
@@ -119,7 +119,7 @@ class AIService private constructor(internal val appContext: Context) {
             Codec.json.decodeFromString<Map<String, PrefixCache>>(cacheFile.readText())
                 // 이미 만료된 것은 되살리지 않습니다. 서버에도 없습니다.
                 .filterValues { it.expiresAtMillis > System.currentTimeMillis() }
-                .toMutableMap()
+                .let(::normalizePrefixCacheMap)
         }.getOrElse { mutableMapOf() }
     }
     internal val refreshingRooms = mutableSetOf<String>()

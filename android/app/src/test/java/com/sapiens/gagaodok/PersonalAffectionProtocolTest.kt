@@ -20,7 +20,7 @@ class PersonalAffectionProtocolTest {
     @Test
     fun `personal affection marker is hidden and bounded`() {
         assertEquals("좋아.", PersonalAffectionProtocol.visibleText("좋아. [[affection:+99]]"))
-        assertEquals(3, PersonalAffectionProtocol.delta("좋아. [[affection:+99]]"))
+        assertEquals(2, PersonalAffectionProtocol.delta("좋아. [[affection:+99]]"))
         assertEquals(-3, PersonalAffectionProtocol.delta("[[affection:-2]][[affection:-2]]"))
         assertEquals(0, PersonalAffectionProtocol.delta("표식 없음"))
     }
@@ -30,7 +30,10 @@ class PersonalAffectionProtocolTest {
         val prompt = PersonalAffectionProtocol.systemPrompt("기본 프롬프트")
 
         assertTrue(prompt.startsWith("기본 프롬프트"))
-        assertTrue(prompt.contains("-3부터 +3"))
+        assertTrue(prompt.contains("호의만으로는 올리지"))
+        assertTrue(prompt.contains("반복적인 경계 침해"))
+        assertTrue(prompt.contains("상승은 +1부터 +2"))
+        assertTrue(prompt.contains("하락은 -1부터 -3"))
         assertTrue(prompt.contains("성적 수위만으로"))
         assertTrue(prompt.contains("검열하거나 순화하지"))
         assertFalse(PersonalAffectionProtocol.visibleText("대사 [[affection:+1]]").contains("[["))

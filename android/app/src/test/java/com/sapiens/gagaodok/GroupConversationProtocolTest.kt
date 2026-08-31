@@ -76,7 +76,7 @@ class GroupConversationProtocolTest {
     @Test
     fun `repeated allowed heart markers aggregate signed values`() {
         assertEquals(
-            mapOf(firstId to -1, secondId to 3),
+            mapOf(firstId to -1, secondId to 2),
             protocol.heartDeltas("[[heart:$firstId:+2]][[heart:$firstId:-3]][[heart:$secondId:+3]]")
         )
     }
@@ -84,7 +84,7 @@ class GroupConversationProtocolTest {
     @Test
     fun `heart changes are bounded per participant per turn`() {
         assertEquals(
-            mapOf(firstId to 3, secondId to -3),
+            mapOf(firstId to 2, secondId to -3),
             protocol.heartDeltas("[[heart:$firstId:+99]][[heart:$secondId:-20]]")
         )
     }
@@ -233,7 +233,7 @@ class GroupConversationProtocolTest {
 
         assertEquals(1, changes.size)
         // 한 턴 변화는 -3부터 +3까지로 묶습니다.
-        assertEquals(3, changes[0].delta)
+        assertEquals(2, changes[0].delta)
         assertEquals("솔직해서", changes[0].reason)
     }
 

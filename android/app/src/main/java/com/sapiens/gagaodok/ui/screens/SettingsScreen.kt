@@ -285,7 +285,7 @@ fun SettingsScreen() {
         // MARK: - 모델
         SettingsSection("기본 모델") {
             Column {
-                AIModel.entries.forEach { model ->
+                listOf(AIModel.GEMINI_37_FLASH).forEach { model ->
                     ChoiceRow(
                         title = model.displayName,
                         subtitle = model.providerName,

@@ -26,13 +26,14 @@ class AppSettings private constructor(context: Context) {
     }
 
     private val _selectedModel = MutableStateFlow(
-        prefs.getString(KEY_MODEL, null)?.let { AIModel.fromStoredValue(it) } ?: AIModel.GEMINI_37_FLASH
+        AIModel.GEMINI_37_FLASH
     )
     val selectedModel: StateFlow<AIModel> = _selectedModel
 
     fun setSelectedModel(model: AIModel) {
-        _selectedModel.value = model
-        prefs.edit().putString(KEY_MODEL, model.rawValue).apply()
+        // 전역 기본값은 안정적인 3.7로 고정합니다. Flash-Lite는 개인 챗봇방에서만 고릅니다.
+        _selectedModel.value = AIModel.GEMINI_37_FLASH
+        prefs.edit().putString(KEY_MODEL, AIModel.GEMINI_37_FLASH.rawValue).apply()
     }
 
     private val _exchangeRate = MutableStateFlow(

@@ -150,18 +150,22 @@ data class ChatRoom(
     /// 말투가 방마다 다른데 모델은 전역이라, 방을 옮길 때마다 모델이 따라와서
     /// 어느 방이 무엇으로 답했는지 헷갈렸습니다. 방에 붙여 둡니다.
     val modelIdentifier: String? = null,
-    /// 이 방이 수학 멘토인지 챗봇인지입니다. 비어 있으면 수학 멘토입니다.
+    /// 이 방이 수학 멘토인지 챗봇인지입니다. 비어 있으면 챗봇입니다.
     ///
-    /// 예전에 저장된 방에는 이 값이 없으므로, 없으면 지금까지와 똑같이 멘토로 동작합니다.
+    /// 예전에 저장된 개인방에도 이 값이 없으므로 기본 개인방 정책인 챗봇으로 동작합니다.
     val modeIdentifier: String? = null,
     /// 비어 있으면 기존 개인방, 값이 있으면 개인방과 완전히 분리된 단톡방입니다.
     val groupChat: GroupChatState? = null
 ) {
     /// 이 방이 실제로 쓸 모델입니다. 아직 고른 적이 없으면 전역 기본값입니다.
-    fun resolvedModel(fallback: AIModel): AIModel =
-        modelIdentifier?.let { AIModel.fromStoredValue(it) } ?: fallback
+    fun resolvedModel(fallback: AIModel): AIModel {
+        if (groupChat != null || resolvedMode == ChatMode.MATH_MENTOR) return AIModel.GEMINI_37_FLASH
+        val stored = modelIdentifier?.let(AIModel::fromStoredValue)
+        return (stored ?: fallback).takeIf { it in AIModel.personalCompanionModels }
+            ?: AIModel.GEMINI_37_FLASH
+    }
 
-    /// 이 방이 실제로 쓸 모드입니다. 고른 적이 없으면 지금까지의 동작인 수학 멘토입니다.
+    /// 이 방이 실제로 쓸 모드입니다. 고른 적이 없는 개인방은 챗봇입니다.
     val resolvedMode: ChatMode
-        get() = ChatMode.fromRawValue(modeIdentifier) ?: ChatMode.MATH_MENTOR
+        get() = ChatMode.fromRawValue(modeIdentifier) ?: ChatMode.COMPANION
 }
