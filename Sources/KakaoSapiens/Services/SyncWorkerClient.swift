@@ -88,6 +88,19 @@ public final class SyncWorkerClient {
         try await get(path: "/v1/account/devices")
     }
 
+    /// Issue a new recovery phrase for the account this device is already
+    /// linked to. The body carries no master key and no entropy.
+    public func rotateRecovery(body: Data) async throws -> SyncHTTPResponse {
+        var request = try authorizedRequest(path: "/v1/recovery/rotate", method: "POST")
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let response = try await transport.send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            throw SyncWorkerClientError.httpStatus(response.statusCode)
+        }
+        return response
+    }
+
     public func bootstrap(cursor: String? = nil, limit: Int = 300) async throws -> SyncHTTPResponse {
         var path = "/v1/sync/bootstrap?limit=\(limit)"
         if let cursor {

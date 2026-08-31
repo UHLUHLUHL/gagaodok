@@ -24,7 +24,11 @@ struct KakaoSyncSettingsSection: View {
                     pairing: host.pairingModel,
                     pairingConnection: host.pairingConnection,
                     transition: host.transitionModel,
-                    devices: host.deviceListModel
+                    devices: host.deviceListModel,
+                    rotation: host.rotationModel,
+                    shadow: host.shadowModel,
+                    shadowRoomTitle: host.shadowRoomTitle,
+                    shadowRead: host.shadowReadModel
                 )
             } else {
                 unconfigured
@@ -68,8 +72,21 @@ private final class SyncSettingsHost: ObservableObject {
     @Published private(set) var pairingModel: SyncPairingHostUIModel?
     @Published private(set) var transitionModel: SyncAccountTransitionModel?
     @Published private(set) var deviceListModel: SyncDeviceListModel?
+    @Published private(set) var rotationModel: SyncRecoveryRotationModel?
+    @Published private(set) var shadowModel: SyncShadowUploadModel?
+    @Published private(set) var shadowReadModel: SyncShadowReadModel?
     private(set) var pairingConnection: SyncConnectionConfiguration?
     private(set) var environmentHost = ""
+    private(set) var shadowRoomTitle = ""
+
+    /// The one room Phase 3 is allowed to copy, chosen by the user.
+    ///
+    /// Hard-coded rather than picked in the UI on purpose: a room picker over
+    /// the whole list is one misclick away from copying a conversation nobody
+    /// agreed to copy, and this phase is one room only.
+    private static let designatedShadowRoom = UUID(
+        uuidString: "90B3EE60-2244-4838-9C1E-10A27295F6EB"
+    )!
 
     func prepare() async {
         guard model == nil, let environment = SyncSyntheticEnvironment.load() else { return }
@@ -119,6 +136,58 @@ private final class SyncSettingsHost: ObservableObject {
         )
         model = built
         deviceListModel = SyncDeviceListModel(client: client)
+
+        // The account this device is actually in, which is not always the one
+        // its synthetic environment file names. A device that joined an
+        // existing account keeps its own pre-join account id in that file while
+        // the account it really belongs to is recorded in connection state.
+        // Scope keys are derived from the account, so reading the wrong one
+        // encrypts under a key nobody else can open — while identity, order and
+        // the content digest all still look correct.
+        var activeAccountID = environment.accountID
+        var activeDeviceID = environment.deviceID
+        if case .available(let connection) = connectionStore.load() {
+            activeAccountID = connection.accountID
+            activeDeviceID = connection.deviceID
+        }
+
+        // Enrollment writes version 1, so the first rotation claims 2. A wrong
+        // guess is refused by the Worker as a conflict rather than overwriting
+        // whatever is current, so this is a starting point and not an
+        // assumption the account depends on.
+        rotationModel = SyncRecoveryRotationModel(
+            coordinator: SyncRecoveryRotationCoordinator(
+                // The joined account, not the pre-join one in the environment
+                // file: the account is inside the recovery AAD, so wrapping
+                // under the wrong one produces a phrase that cannot open the
+                // master key when it is finally needed.
+                accountID: activeAccountID,
+                client: client,
+                words: (try? SyncRecoveryMnemonic.bundledWords(bundle: .module)) ?? []
+            )
+        )
+
+        // The conversation files live beside the app's other support data, not
+        // in the sync directory: the shadow reads them where they already are
+        // and writes nothing there.
+        let storageDirectory = support.appendingPathComponent("KakaoSapiens")
+        shadowRoomTitle = Self.roomTitle(
+            for: Self.designatedShadowRoom, in: storageDirectory
+        ) ?? "지정한 시험방"
+        shadowModel = SyncShadowUploadModel(
+            coordinator: SyncShadowUploadCoordinator(
+                directory: directory,
+                accountID: activeAccountID,
+                deviceID: activeDeviceID,
+                client: client,
+                outbox: SyncOutbox(fileURL: directory.appendingPathComponent("shadow-outbox.plist"))
+            ),
+            roomID: Self.designatedShadowRoom,
+            storageDirectory: storageDirectory
+        )
+        shadowReadModel = SyncShadowReadModel(
+            reader: SyncShadowReader(accountID: activeAccountID, client: client)
+        )
         // Reading stored status is the only thing that happens without a press.
         await built.refresh()
 
@@ -153,6 +222,18 @@ private final class SyncSettingsHost: ObservableObject {
         )
     }
 
+    /// Read-only, and only the title. Used to name the room on screen so the
+    /// user can see which one the button would copy.
+    private static func roomTitle(for roomID: UUID, in storageDirectory: URL) -> String? {
+        guard
+            let data = try? Data(contentsOf: storageDirectory.appendingPathComponent("rooms_list.json")),
+            let rooms = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return nil }
+        return rooms.first { row in
+            (row["id"] as? String)?.uppercased() == roomID.uuidString.uppercased()
+        }?["title"] as? String
+    }
+
     private static func storedToken() -> Data? {
         guard case .available(let bundle) = SyncSecretStore.load() else { return nil }
         return bundle.deviceToken
@@ -166,6 +247,10 @@ private struct SyncSettingsBody: View {
     let pairingConnection: SyncConnectionConfiguration?
     let transition: SyncAccountTransitionModel?
     let devices: SyncDeviceListModel?
+    let rotation: SyncRecoveryRotationModel?
+    let shadow: SyncShadowUploadModel?
+    let shadowRoomTitle: String
+    let shadowRead: SyncShadowReadModel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -174,6 +259,9 @@ private struct SyncSettingsBody: View {
             buttons
             if let transition { SyncAccountTransitionCard(model: transition, onboarding: model) }
             if let devices { SyncDeviceListCard(model: devices) }
+            if let rotation { SyncRecoveryRotationCard(model: rotation, nextVersion: 2) }
+            if let shadow { SyncShadowUploadCard(model: shadow, roomTitle: shadowRoomTitle) }
+            if let shadowRead { SyncShadowReadCard(model: shadowRead) }
             if let pairing, let pairingConnection {
                 SyncPairingHostCard(model: pairing, connection: pairingConnection)
             }
@@ -506,5 +594,277 @@ private struct SyncPairingHostCard: View {
         case .expired: return "QR이 만료됐습니다. 새 QR을 만드세요."
         case .error: return "합류를 진행하지 못했습니다. 비밀값은 표시하지 않았습니다."
         }
+    }
+}
+
+/// Reissuing the recovery phrase.
+///
+/// The three enrolled devices were connected with a phrase nobody wrote down,
+/// which means the account is one lost-devices event away from being
+/// unrecoverable. This card fixes that without disturbing the link: the master
+/// key is unchanged, so no device has to pair again.
+///
+/// The confirmation field is not a formality. What is typed is decoded back to
+/// entropy and used to actually unwrap the master key — the same path a
+/// recovery on a blank device takes. Until that succeeds the card does not say
+/// the account is recoverable, because it is not yet known to be.
+private struct SyncRecoveryRotationCard: View {
+    @ObservedObject var model: SyncRecoveryRotationModel
+    let nextVersion: UInt32
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("복구 문구 재발급")
+                .font(.custom("Pretendard-Bold", size: 12))
+
+            switch model.stage {
+            case .idle:
+                detail("지금 계정의 복구 문구는 어디에도 기록돼 있지 않습니다. 새 문구를 발급하면 연결된 기기는 그대로 두고 문구만 바뀝니다.")
+                button("새 복구 문구 발급") { await model.issue(nextVersion: nextVersion) }
+
+            case .awaitingConfirmation(let phrase, let version):
+                Text(phrase)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KakaoTheme.rowHover, in: RoundedRectangle(cornerRadius: 7))
+                detail("버전 \(version). 종이에 적은 뒤 아래에 그대로 다시 입력하십시오. 다시 입력해 확인하기 전까지는 복구가 된다고 볼 수 없습니다.")
+                TextField("적어 둔 문구를 입력", text: $model.typedPhrase)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                HStack(spacing: 7) {
+                    plainButton("확인") { model.confirm() }
+                    Spacer(minLength: 0)
+                }
+
+            case .confirmed(let version):
+                detail("복구 문구 버전 \(version) 확인됨. 적어 둔 문구로 계정 master key를 실제로 풀어 확인했습니다.")
+
+            case .failed(let error):
+                detail(message(for: error))
+                HStack(spacing: 7) {
+                    if case .phraseMismatch = error {
+                        plainButton("문구 다시 입력") { model.retryConfirmation() }
+                    } else {
+                        button("다시 시도") { await model.issue(nextVersion: nextVersion) }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func message(for error: SyncRecoveryRotationError) -> String {
+        switch error {
+        case .phraseMismatch:
+            return "입력한 문구가 화면의 문구와 다릅니다. 새 문구 자체는 이미 발급됐으니 다시 입력하십시오."
+        case .rejected(let status):
+            return "서버가 요청을 받지 않았습니다 (\(status)). 새 문구는 발급되지 않았습니다."
+        case .transport:
+            return "서버에 닿지 못했습니다. 새 문구는 발급되지 않았습니다."
+        case .secretsUnavailable:
+            return "이 기기에 계정 키가 없습니다. 먼저 계정에 연결하십시오."
+        case .wordListUnavailable:
+            return "단어 목록을 읽지 못했습니다."
+        case .malformedResponse:
+            return "요청을 만들지 못했습니다."
+        case .nothingToConfirm:
+            return "확인할 발급 건이 없습니다."
+        }
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text)
+            .font(.custom("Pretendard-Regular", size: 11))
+            .foregroundColor(KakaoTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func button(_ title: String, work: @escaping () async -> Void) -> some View {
+        plainButton(title) { Task { await work() } }
+    }
+
+    private func plainButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.custom("Pretendard-Medium", size: 11))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(KakaoTheme.bubbleMine, in: RoundedRectangle(cornerRadius: 7))
+                .foregroundColor(KakaoTheme.bubbleMineText)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The one-way shadow copy of the designated test room.
+///
+/// One room, one direction, one button. The report it shows is counts and a
+/// hash — never a title or a line of the conversation — because the question
+/// being answered is "did every row arrive", not "what does it say".
+///
+/// The remote numbers are read back from the change feed rather than tallied
+/// from the upload responses. An upload that answered "applied" proves the
+/// request was taken, not that another device will see the row.
+private struct SyncShadowUploadCard: View {
+    @ObservedObject var model: SyncShadowUploadModel
+    let roomTitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("시험방 shadow 복사 (단방향)")
+                .font(.custom("Pretendard-Bold", size: 12))
+
+            switch model.stage {
+            case .idle:
+                detail("\(roomTitle) 한 방만 암호화해 합성 Worker로 단방향 복사합니다. 원본 대화 파일은 읽기만 하고 고치지 않으며, 서버가 준 것을 원본에 되쓰지도 않습니다. 첨부 이미지는 이번 회차에서 복사하지 않습니다.")
+                button("shadow 복사 실행") { await model.run() }
+
+            case .running:
+                detail("복사하는 중입니다.")
+
+            case .finished(let report):
+                report.matches ? detail("로컬과 원격이 일치합니다.") : detail("로컬과 원격이 다릅니다. 아래 숫자를 확인하십시오.")
+                row("올린 operation", "\(report.uploadedOperations)")
+                row("turn", "로컬 \(report.localTurnCount) / 원격 \(report.remoteTurnCount)")
+                row("말풍선", "로컬 \(report.localBubbleCount) / 원격 \(report.remoteBubbleCount)")
+                if report.skippedAttachments > 0 {
+                    row("복사 안 한 첨부", "\(report.skippedAttachments)")
+                }
+                // Identity and order only; the text is not in this digest.
+                row("내용 hash", String(report.localContentHash.prefix(16)) + "…")
+
+            case .failed(let error):
+                detail(message(for: error))
+                button("다시 시도") { await model.run() }
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func message(for error: SyncShadowUploadError) -> String {
+        switch error {
+        case .secretsUnavailable: return "이 기기에 계정 키가 없습니다. 먼저 계정에 연결하십시오."
+        case .roomNotFound: return "지정한 시험방을 찾지 못했습니다."
+        case .unreadableStorage: return "로컬 대화 파일을 읽지 못했습니다. 원본은 그대로입니다."
+        case .uploadFailed(let status): return "서버가 operation을 받지 않았습니다 (\(status)). 남은 것은 outbox에 그대로 있어 다시 시도하면 이어집니다."
+        case .transport: return "서버에 닿지 못했습니다. 남은 것은 outbox에 그대로 있습니다."
+        case .projectionUnreadable: return "원격 projection을 읽지 못해 대조하지 못했습니다."
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.custom("Pretendard-Regular", size: 11))
+                .foregroundColor(KakaoTheme.textSecondary)
+            Spacer(minLength: 0)
+            Text(value).font(.system(size: 11, design: .monospaced))
+        }
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text)
+            .font(.custom("Pretendard-Regular", size: 11))
+            .foregroundColor(KakaoTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func button(_ title: String, work: @escaping () async -> Void) -> some View {
+        Button { Task { await work() } } label: {
+            Text(title)
+                .font(.custom("Pretendard-Medium", size: 11))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(KakaoTheme.bubbleMine, in: RoundedRectangle(cornerRadius: 7))
+                .foregroundColor(KakaoTheme.bubbleMineText)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Reading a room the phone owns.
+///
+/// The counterpart of the upload card, one direction the other way. The room id
+/// is typed in because this device has no local copy of that room to pick from —
+/// the phone reports it after it writes.
+private struct SyncShadowReadCard: View {
+    @ObservedObject var model: SyncShadowReadModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("다른 기기의 방 받아 확인 (역방향)")
+                .font(.custom("Pretendard-Bold", size: 12))
+            detail("폰이 올린 방을 받아 이 기기 키로 실제로 풀 수 있는지 확인합니다. 대화 내용은 표시하지 않습니다.")
+            TextField("폰이 알려준 방 ID", text: $model.roomIDText)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+
+            switch model.stage {
+            case .idle, .failed:
+                if case .failed(let error) = model.stage { detail(message(for: error)) }
+                button("받아서 확인") { await model.run() }
+                    .opacity(model.canRun ? 1 : 0.4)
+            case .running:
+                detail("받아서 확인하는 중입니다.")
+            case .finished(let result):
+                detail(result.allDecrypted ? "받은 말풍선을 모두 풀었습니다." : "풀지 못한 말풍선이 있습니다.")
+                row("공간", result.spaceID)
+                row("turn", "\(result.turnCount)")
+                row("말풍선", "\(result.bubbleCount)")
+                row("복호화 성공", "\(result.decryptedCount) / \(result.bubbleCount)")
+                row("내용 hash", String(result.contentHash.prefix(16)) + "…")
+                row("진단", result.diagnostic)
+                button("다시 확인") { await model.run() }
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func message(for error: SyncShadowReadError) -> String {
+        switch error {
+        case .secretsUnavailable: return "이 기기에 계정 키가 없습니다."
+        case .transport: return "서버에 닿지 못했습니다."
+        case .malformedProjection: return "받은 자료의 모양이 계약과 다릅니다."
+        case .roomAbsent: return "그 방이 아직 이 계정에 도착하지 않았습니다."
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.custom("Pretendard-Regular", size: 11))
+                .foregroundColor(KakaoTheme.textSecondary)
+            Spacer(minLength: 0)
+            Text(value).font(.system(size: 11, design: .monospaced))
+        }
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text)
+            .font(.custom("Pretendard-Regular", size: 11))
+            .foregroundColor(KakaoTheme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func button(_ title: String, work: @escaping () async -> Void) -> some View {
+        Button { Task { await work() } } label: {
+            Text(title)
+                .font(.custom("Pretendard-Medium", size: 11))
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(KakaoTheme.bubbleMine, in: RoundedRectangle(cornerRadius: 7))
+                .foregroundColor(KakaoTheme.bubbleMineText)
+        }
+        .buttonStyle(.plain)
     }
 }

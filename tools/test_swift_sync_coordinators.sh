@@ -123,3 +123,49 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncDeviceListModelTests.swift" \
   -o "$device_list_binary"
 "$device_list_binary"
+
+rotation_binary="${TMPDIR:-/tmp}/gagaodok-sync-recovery-rotation-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncRecoveryMnemonic.swift" \
+  "$services/SyncRecoveryEscrow.swift" \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncWorkerClient.swift" \
+  "$services/SyncRecoveryRotationBuilder.swift" \
+  "$services/SyncRecoveryRotationCoordinator.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncRecoveryRotationCoordinatorTests.swift" \
+  -o "$rotation_binary"
+"$rotation_binary"
+
+shadow_binary="${TMPDIR:-/tmp}/gagaodok-sync-shadow-importer-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncShadowImporter.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncShadowImporterTests.swift" \
+  -o "$shadow_binary"
+"$shadow_binary"
+
+shadow_upload_binary="${TMPDIR:-/tmp}/gagaodok-sync-shadow-upload-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncWorkerClient.swift" \
+  "$services/SyncShadowImporter.swift" \
+  "$services/SyncShadowUploadCoordinator.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncShadowUploadCoordinatorTests.swift" \
+  -o "$shadow_upload_binary"
+"$shadow_upload_binary"
+
+shadow_reader_binary="${TMPDIR:-/tmp}/gagaodok-sync-shadow-reader-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncSecretStore.swift" \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncWorkerClient.swift" \
+  "$services/SyncShadowReader.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncShadowReaderTests.swift" \
+  -o "$shadow_reader_binary"
+"$shadow_reader_binary"

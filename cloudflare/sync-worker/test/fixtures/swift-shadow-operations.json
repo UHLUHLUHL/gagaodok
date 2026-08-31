@@ -1,0 +1,129 @@
+{
+  "account_id" : "A0000000-0000-4000-8000-000000000001",
+  "device_id" : "B0000000-0000-4000-8000-000000000001",
+  "manifest" : {
+    "rooms" : [
+      {
+        "bubble_count" : 2,
+        "content_hash" : "c5e4ba69b8c7e79a0d633ccf1514cb437e4d3d654678b6ecef1067c3367d6ef8",
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "turn_count" : 1
+      }
+    ]
+  },
+  "operations" : [
+    {
+      "clear" : [
+
+      ],
+      "created_at" : "2026-08-31T05:22:29Z",
+      "device_id" : "B0000000-0000-4000-8000-000000000001",
+      "entity_type" : "room",
+      "metadata_clear" : [
+
+      ],
+      "metadata_set" : {
+
+      },
+      "op" : "create_room",
+      "operation_id" : "F0000000-0000-4000-8000-000000000002",
+      "protocol_version" : 1,
+      "set" : {
+        "title" : "AQEAAAABDBMaISgvNj1ES1JZiRz2RtfNGb+EYM4rus9jYGgDQTXBTUm1Fz1vagyeBs0="
+      },
+      "target" : {
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "worldline_id" : null
+      }
+    },
+    {
+      "clear" : [
+
+      ],
+      "created_at" : "2026-08-31T05:22:29Z",
+      "device_id" : "B0000000-0000-4000-8000-000000000001",
+      "entity_type" : "turn",
+      "metadata_clear" : [
+
+      ],
+      "metadata_set" : {
+        "created_at" : "2027-01-15T08:00:00Z",
+        "created_by_device_id" : "B0000000-0000-4000-8000-000000000001"
+      },
+      "op" : "create_turn",
+      "operation_id" : "F0000000-0000-4000-8000-000000000003",
+      "protocol_version" : 1,
+      "set" : {
+
+      },
+      "target" : {
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000A",
+        "worldline_id" : null
+      }
+    },
+    {
+      "bubble_order" : 0,
+      "clear" : [
+
+      ],
+      "created_at" : "2026-08-31T05:22:29Z",
+      "device_id" : "B0000000-0000-4000-8000-000000000001",
+      "entity_type" : "bubble",
+      "metadata_clear" : [
+
+      ],
+      "metadata_set" : {
+        "timestamp" : "2027-01-15T08:00:00Z"
+      },
+      "op" : "create_bubble",
+      "operation_id" : "F0000000-0000-4000-8000-000000000004",
+      "protocol_version" : 1,
+      "set" : {
+        "kind" : "AQEAAAABDBMaISgvNj1ES1JZF\/k6zzAUxHrkT4al9xIklgSXfHavEQ==",
+        "sender" : "AQEAAAABDBMaISgvNj1ES1JZEfo62K0\/W5AmCjWFoMFJdgXecko=",
+        "text" : "AQEAAAABDBMaISgvNj1ES1JZiDv0irjOsb+oRANRt40\/TVpteM5\/KxCDwfjQ6MlLrMlhFBzKKrsMKw=="
+      },
+      "target" : {
+        "message_id" : "E0000000-0000-4000-8000-000000000001",
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000A",
+        "worldline_id" : null
+      }
+    },
+    {
+      "bubble_order" : 1,
+      "clear" : [
+
+      ],
+      "created_at" : "2026-08-31T05:22:29Z",
+      "device_id" : "B0000000-0000-4000-8000-000000000001",
+      "entity_type" : "bubble",
+      "metadata_clear" : [
+
+      ],
+      "metadata_set" : {
+        "timestamp" : "2027-01-15T08:00:01Z"
+      },
+      "op" : "create_bubble",
+      "operation_id" : "F0000000-0000-4000-8000-000000000005",
+      "protocol_version" : 1,
+      "set" : {
+        "kind" : "AQEAAAABDBMaISgvNj1ES1JZF\/k6zzAUlzXSk0WUv8X9u4T5JlSflg==",
+        "sender" : "AQEAAAABDBMaISgvNj1ES1JZF+gvwzYSSjtdmWzcKJqrkto4vkNE6NA=",
+        "text" : "AQEAAAABDBMaISgvNj1ES1JZjjnGRs78GSd6jk1Qv7zzInrds5VRTmWw9OSJ1ZHuWTO7FSBPsMXd9QCnigZZlU+v0+yt"
+      },
+      "target" : {
+        "message_id" : "E0000000-0000-4000-8000-000000000002",
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000A",
+        "worldline_id" : null
+      }
+    }
+  ],
+  "room_id" : "C0000000-0000-4000-8000-00000000000A"
+}

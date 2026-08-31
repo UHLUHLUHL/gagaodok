@@ -83,3 +83,54 @@ export async function parseRecoveryRedeem(request: Request): Promise<RecoveryRed
     },
   };
 }
+
+/**
+ * An authenticated recovery rotation — replace the phrase, keep the account.
+ *
+ * The account master key is not touched. The client derives a fresh lookup,
+ * auth verifier and wrap key from new entropy and sends the same master key
+ * re-wrapped under the new phrase. The plaintext phrase, its entropy and the
+ * master key itself never reach the server.
+ */
+export interface RecoveryRotateRequest {
+  version: number;
+  lookup: string;
+  authVerifierHex: string;
+  wrappedMasterKey: string;
+  wrappedMasterKeyBytes: Uint8Array;
+}
+
+export async function parseRecoveryRotate(request: Request): Promise<RecoveryRotateRequest> {
+  let parsed: unknown;
+  try {
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > 65_536) throw validationFailed();
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
+  } catch (error) {
+    if (error instanceof Error && error.message === "VALIDATION_FAILED") throw error;
+    throw validationFailed();
+  }
+  const body = requireRecord(parsed);
+  requireExactKeys(body, [
+    "protocol_version", "recovery_version", "recovery_lookup",
+    "recovery_auth_verifier", "wrapped_master_key",
+  ]);
+  if (body["protocol_version"] !== 1) throw validationFailed();
+  // The next version is stated by the client so that a stale device cannot
+  // silently overwrite a rotation it never saw. Which version is actually
+  // current is decided in storage, not here.
+  const version = body["recovery_version"];
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 2 || version > 4_294_967_295) {
+    throw validationFailed();
+  }
+  const lookup = requireBinary32(body["recovery_lookup"]);
+  const verifier = requireBinary32(body["recovery_auth_verifier"]);
+  const wrapped = requireV1Envelope(body["wrapped_master_key"]);
+  return {
+    version,
+    lookup: lookup.encoded,
+    authVerifierHex: bytesToHex(verifier.bytes),
+    wrappedMasterKey: wrapped.encoded,
+    wrappedMasterKeyBytes: wrapped.bytes,
+  };
+}

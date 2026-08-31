@@ -1,0 +1,56 @@
+{
+  "account_id" : "A0000000-0000-4000-8000-000000000001",
+  "entries" : [
+    {
+      "entity_type" : "turn",
+      "identity" : {
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000A",
+        "worldline_id" : null
+      },
+      "projection" : {
+
+      }
+    },
+    {
+      "entity_type" : "bubble",
+      "identity" : {
+        "message_id" : "E0000000-0000-4000-8000-000000000001",
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000A",
+        "worldline_id" : null
+      },
+      "projection" : {
+        "bubble_order" : 0,
+        "kind" : "AQEAAAABDBMaISgvNj1ES1JZF\/k6zzAUxHrkT4al9xIklgSXfHavEQ==",
+        "sender" : "AQEAAAABDBMaISgvNj1ES1JZEfo62K0\/W5AmCjWFoMFJdgXecko=",
+        "text" : "AQEAAAABDBMaISgvNj1ES1JZiDv0irjOsb+oRANRt40\/TVpteM5\/KxCDwfjQ6MlLrMlhFBzKKrsMKw=="
+      }
+    },
+    {
+      "entity_type" : "bubble",
+      "identity" : {
+        "message_id" : "E0000000-0000-4000-8000-000000000002",
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000A",
+        "worldline_id" : null
+      },
+      "projection" : {
+        "bubble_order" : 1,
+        "kind" : "AQEAAAABDBMaISgvNj1ES1JZF\/k6zzAUlzXSk0WUv8X9u4T5JlSflg==",
+        "sender" : "AQEAAAABDBMaISgvNj1ES1JZF+gvwzYSSjtdmWzcKJqrkto4vkNE6NA=",
+        "text" : "AQEAAAABDBMaISgvNj1ES1JZjjnGRs78GSd6jk1Qv7zzInrds5VRTmWw9OSJ1ZHuWTO7FSBPsMXd9QCnigZZlU+v0+yt"
+      }
+    }
+  ],
+  "expected" : {
+    "bubble_count" : 2,
+    "content_hash" : "c5e4ba69b8c7e79a0d633ccf1514cb437e4d3d654678b6ecef1067c3367d6ef8",
+    "turn_count" : 1
+  },
+  "master_key_base64" : "Cw4RFBcaHSAjJiksLzI1ODs+QURHSk1QU1ZZXF9iZWg=",
+  "room_id" : "C0000000-0000-4000-8000-00000000000A"
+}

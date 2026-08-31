@@ -10,7 +10,11 @@ import { handleBootstrapRequest } from "./routes/bootstrap";
 import { handleChangesRequest } from "./routes/changes";
 import { handleDeviceListRequest } from "./routes/devices";
 import { handleOperationRequest } from "./routes/operations";
-import { handleEnrollmentInitialize, handleRecoveryRedeem } from "./routes/onboarding";
+import {
+  handleEnrollmentInitialize,
+  handleRecoveryRedeem,
+  handleRecoveryRotate,
+} from "./routes/onboarding";
 import { handlePairingMatch, handlePairingSession, matchPairingPath } from "./routes/pairing";
 import { assertRateLimit, type RateLimitScope } from "./security/rateLimit";
 import { runMaintenance } from "./maintenance/cleanup";
@@ -48,6 +52,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/v1/recovery/redeem") {
       return await limited(request, env, "recovery", () => handleRecoveryRedeem(request, env));
+    }
+
+    if (request.method === "POST" && url.pathname === "/v1/recovery/rotate") {
+      return await limited(request, env, "recovery", () => handleRecoveryRotate(request, env));
     }
 
     if (request.method === "POST" && url.pathname === "/v1/pairing/sessions") {
