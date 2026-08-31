@@ -63,6 +63,7 @@ class SyncWorkerClient(
         return response
     }
     fun changes(after: Long, limit: Int = 300): SyncHttpResponse = get("/v1/sync/changes?after_seq=$after&limit=$limit")
+    fun devices(): SyncHttpResponse = get("/v1/account/devices")
     fun bootstrap(cursor: String? = null, limit: Int = 300): SyncHttpResponse {
         val suffix = cursor?.let { "&cursor=" + java.net.URLEncoder.encode(it, Charsets.UTF_8.name()) } ?: ""
         return get("/v1/sync/bootstrap?limit=$limit$suffix")

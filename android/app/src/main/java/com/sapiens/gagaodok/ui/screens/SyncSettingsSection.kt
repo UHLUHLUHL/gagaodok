@@ -31,6 +31,8 @@ import com.sapiens.gagaodok.sync.SyncAccountTransitionModel
 import com.sapiens.gagaodok.sync.SyncAccountTransitionUiState
 import com.sapiens.gagaodok.sync.OkHttpSyncTransport
 import com.sapiens.gagaodok.sync.SyncConnectionStateStore
+import com.sapiens.gagaodok.sync.SyncDeviceListModel
+import com.sapiens.gagaodok.sync.SyncDeviceListState
 import com.sapiens.gagaodok.sync.SyncEnrollmentJournal
 import com.sapiens.gagaodok.sync.SyncOnboardingCoordinator
 import com.sapiens.gagaodok.sync.SyncOnboardingIdentity
@@ -79,6 +81,7 @@ fun SyncSettingsSection() {
     val environment = remember { SyncSyntheticEnvironment.load(SyncSyntheticEnvironment.file(context)) }
     val model = remember(environment) { environment?.let { buildModel(context, it) } }
     val transition = remember(environment) { environment?.let { buildTransition(context) } }
+    val devices = remember(environment) { environment?.let { buildDeviceList(context, it) } }
 
     Column(Modifier.fillMaxWidth().padding(14.dp)) {
         Text(
@@ -201,6 +204,8 @@ fun SyncSettingsSection() {
             }
         }
 
+        devices?.let { SyncDeviceListSection(it) }
+
         // The host only. A full URL could carry a path or query, and this is the
         // one thing about the endpoint the screen ever shows.
         Text(
@@ -209,6 +214,38 @@ fun SyncSettingsSection() {
             color = colors.textTertiary,
             modifier = Modifier.padding(top = 10.dp),
         )
+    }
+}
+
+@Composable
+private fun SyncDeviceListSection(model: SyncDeviceListModel) {
+    val state by model.state.collectAsState()
+    val colors = KakaoTheme.colors
+    Column(
+        Modifier.fillMaxWidth().padding(top = 12.dp)
+            .background(colors.surface, RoundedCornerShape(10.dp)).padding(12.dp),
+    ) {
+        Text("연결된 기기", style = KakaoText.listName, color = colors.textPrimary)
+        when (val current = state) {
+            SyncDeviceListState.Idle -> {
+                Text("버튼을 누르면 이 계정에 연결된 기기만 확인합니다.", style = KakaoText.caption, color = colors.textSecondary)
+                SyncActionButton("연결된 기기 보기") { model.load() }
+            }
+            SyncDeviceListState.Loading ->
+                Text("기기 목록을 확인하고 있습니다.", style = KakaoText.caption, color = colors.textSecondary)
+            SyncDeviceListState.Failed -> {
+                Text("기기 목록을 가져오지 못했습니다. 비밀값은 표시하지 않았습니다.", style = KakaoText.caption, color = colors.textSecondary)
+                SyncActionButton("다시 시도") { model.load() }
+            }
+            is SyncDeviceListState.Loaded -> {
+                if (current.devices.isEmpty()) Text("현재 표시할 기기가 없습니다.", style = KakaoText.caption, color = colors.textSecondary)
+                current.devices.forEach { device ->
+                    Text(device.title + if (device.isCurrent) " · 현재 기기" else "", style = KakaoText.listPreview, color = colors.textPrimary)
+                    Text("연결: ${device.linkedAt}", style = KakaoText.listTime, color = colors.textTertiary)
+                }
+                SyncActionButton("새로고침") { model.load() }
+            }
+        }
     }
 }
 
@@ -285,6 +322,17 @@ private fun buildTransition(context: Context): SyncTransitionUI? = runCatching {
     coordinator.recoverIfNeeded()
     val availability = coordinator.availability()
     SyncTransitionUI(SyncAccountTransitionModel(coordinator), coordinator, availability)
+}.getOrNull()
+
+private fun buildDeviceList(context: Context, environment: SyncSyntheticEnvironment): SyncDeviceListModel? = runCatching {
+    val secrets = SyncSecretStore(context)
+    SyncDeviceListModel(
+        SyncWorkerClient(
+            environment.base_url,
+            { (secrets.load() as? SyncSecretLoadResult.Available)?.secrets?.deviceToken },
+            OkHttpSyncTransport(),
+        ),
+    )
 }.getOrNull()
 
 /** Runs the blocking coordinators off the main thread. */

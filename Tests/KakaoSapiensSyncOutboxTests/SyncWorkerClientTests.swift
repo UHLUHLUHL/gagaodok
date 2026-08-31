@@ -56,7 +56,20 @@ enum SyncWorkerClientTests {
         try require(lateRequests.count == 1)
         try require(lateRequests[0].value(forHTTPHeaderField: "Authorization")?.hasPrefix("Device gdt1_") == true)
 
-        print("Swift sync worker client: 2 passed")
+        let deviceTransport = Transport([SyncHTTPResponse(statusCode: 200, body: Data("{}".utf8))])
+        let deviceClient = try SyncWorkerClient(
+            baseURL: URL(string: "https://sync.invalid")!,
+            deviceToken: Data((0..<32).map(UInt8.init)),
+            transport: deviceTransport
+        )
+        _ = try await deviceClient.devices()
+        let deviceRequests = await deviceTransport.captured()
+        try require(deviceRequests.count == 1)
+        try require(deviceRequests[0].url?.path == "/v1/account/devices")
+        try require(deviceRequests[0].url?.query == nil)
+        try require(deviceRequests[0].value(forHTTPHeaderField: "Authorization")?.hasPrefix("Device gdt1_") == true)
+
+        print("Swift sync worker client: 3 passed")
     }
     private static func require(_ value:@autoclosure() throws->Bool)throws{if try !value(){throw Failure()}}
     private struct Failure:Error{}

@@ -96,6 +96,7 @@ flowchart TB
 | 정식 앱 account 전환·연결 해제 안전 경계 | `8e52b30`, `20fda69`, `4bea117`, `7734681`, `dafd772`; 양 플랫폼 active/candidate secure slot, durable journal, 원자적 commit·rollback·crash recovery. Android는 candidate shadow bootstrap을 거치는 전환 UI, Mac은 안전한 local 연결 해제 UI를 제공. sync 활성·pending outbox에서는 동작을 막고 원격 계정·다른 기기·local conversation을 삭제하지 않음 | ⚠️ | 동일 signer update 설치 뒤 phone·tablet 합성 전환 실기기 검증 |
 | 복구 문구 7일 재열람 계약 | `4ba3bcd`, `79dd7d4`, `e16d112`; 16-byte entropy만 device-local escrow, 매회 소유자 인증, 확인·만료 시 폐기, entropy 부재 시 재생성 금지 | ⚠️ | 실제 escrow 저장소·소유자 인증 UI·만료 청소 |
 | 앱 remote UI (실제 대화) | 합성 화면만 있고 기존 mutation·대화 표시 연결은 미착수 | ⏳ | 실데이터 승인 뒤 |
+| 연결된 기기 목록 | 인증 account의 active device만 반환하는 로컬 Worker route, 양 플랫폼 client·수동 조회 UI, 현재 기기 표시. 화면 진입만으로 요청하지 않고 암호문·token·폐기 정보는 표시하지 않음 | 🟡 | 합성 원격 배포·세 실기기 확인 |
 | Phase 3 실제 data shadow upload | 사용자 별도 승인 없음 | ⏳ | Phase 0~2 gate 및 명시 승인 |
 
 원격 smoke 결과와 남은 한계는 [Cloudflare 합성 smoke 결과](CLOUDFLARE_SYNTHETIC_SMOKE_RESULT.md)에 있다.

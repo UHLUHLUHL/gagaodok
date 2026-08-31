@@ -84,6 +84,10 @@ public final class SyncWorkerClient {
         try await get(path: "/v1/sync/changes?after_seq=\(sequence)&limit=\(limit)")
     }
 
+    public func devices() async throws -> SyncHTTPResponse {
+        try await get(path: "/v1/account/devices")
+    }
+
     public func bootstrap(cursor: String? = nil, limit: Int = 300) async throws -> SyncHTTPResponse {
         var path = "/v1/sync/bootstrap?limit=\(limit)"
         if let cursor {

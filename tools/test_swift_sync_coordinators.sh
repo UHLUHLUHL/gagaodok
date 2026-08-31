@@ -114,3 +114,12 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncAccountTransitionModelTests.swift" \
   -o "$transition_model_binary"
 "$transition_model_binary"
+
+device_list_binary="${TMPDIR:-/tmp}/gagaodok-sync-device-list-tests"
+swiftc \
+  "$services/SyncOutbox.swift" \
+  "$services/SyncWorkerClient.swift" \
+  "$services/SyncDeviceListModel.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncDeviceListModelTests.swift" \
+  -o "$device_list_binary"
+"$device_list_binary"

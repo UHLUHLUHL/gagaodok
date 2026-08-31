@@ -8,6 +8,7 @@ import {
 } from "./routes/attachments";
 import { handleBootstrapRequest } from "./routes/bootstrap";
 import { handleChangesRequest } from "./routes/changes";
+import { handleDeviceListRequest } from "./routes/devices";
 import { handleOperationRequest } from "./routes/operations";
 import { handleEnrollmentInitialize, handleRecoveryRedeem } from "./routes/onboarding";
 import { handlePairingMatch, handlePairingSession, matchPairingPath } from "./routes/pairing";
@@ -67,6 +68,10 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/v1/sync/bootstrap") {
       return await limited(request, env, "sync_read", () => handleBootstrapRequest(request, env));
+    }
+
+    if (request.method === "GET" && url.pathname === "/v1/account/devices") {
+      return await limited(request, env, "sync_read", () => handleDeviceListRequest(request, env));
     }
 
     const attachment = matchAttachmentPath(url.pathname);

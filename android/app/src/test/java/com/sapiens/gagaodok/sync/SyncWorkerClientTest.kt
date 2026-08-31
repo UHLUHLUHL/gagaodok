@@ -64,4 +64,20 @@ class SyncWorkerClientTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test fun `device inventory uses the authenticated account path`() {
+        val requests = mutableListOf<Request>()
+        val client = SyncWorkerClient(
+            "https://sync.invalid",
+            ByteArray(32) { it.toByte() },
+            SyncHttpTransport { request -> requests += request; SyncHttpResponse(200, "{}".toByteArray()) },
+        )
+
+        client.devices()
+
+        assertEquals(1, requests.size)
+        assertEquals("/v1/account/devices", requests.single().url.encodedPath)
+        assertNull(requests.single().url.query)
+        assertTrue(requests.single().header("Authorization")!!.startsWith("Device gdt1_"))
+    }
 }

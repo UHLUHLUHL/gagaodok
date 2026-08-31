@@ -150,6 +150,32 @@ AuthContext = {
 
 ## 4. Sync endpoints
 
+### 4.0 `GET /v1/account/devices`
+
+인증된 account의 활성 기기 목록을 반환한다. query parameter는 없으며 폐기된 기기와
+다른 account 기기는 포함하지 않는다. `display_name`은 canonical v1 암호화 envelope
+또는 null이고 Worker는 복호화하지 않는다. token hash·recovery material·`revoked_at`은
+응답하지 않는다. 현재 token이 가리키는 한 행만 `is_current: true`다.
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "90000000-0000-4000-8000-000000000010",
+  "result": {
+    "devices": [{
+      "device_id": "80000000-0000-4000-8000-000000000001",
+      "space_id": "MAC_SPACE",
+      "platform": "macos",
+      "display_name": null,
+      "linked_at": "2026-08-31T00:00:00Z",
+      "is_current": true
+    }]
+  }
+}
+```
+
+v1에는 `last_seen_at`이 없으므로 온라인·최근 접속 상태를 추정해 표시하지 않는다.
+
 ### 4.1 `POST /v1/sync/operations`
 
 operation 하나를 적용한다.

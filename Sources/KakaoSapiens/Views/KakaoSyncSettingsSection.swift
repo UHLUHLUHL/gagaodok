@@ -23,7 +23,8 @@ struct KakaoSyncSettingsSection: View {
                     host: host.environmentHost,
                     pairing: host.pairingModel,
                     pairingConnection: host.pairingConnection,
-                    transition: host.transitionModel
+                    transition: host.transitionModel,
+                    devices: host.deviceListModel
                 )
             } else {
                 unconfigured
@@ -66,6 +67,7 @@ private final class SyncSettingsHost: ObservableObject {
     @Published private(set) var model: SyncOnboardingModel?
     @Published private(set) var pairingModel: SyncPairingHostUIModel?
     @Published private(set) var transitionModel: SyncAccountTransitionModel?
+    @Published private(set) var deviceListModel: SyncDeviceListModel?
     private(set) var pairingConnection: SyncConnectionConfiguration?
     private(set) var environmentHost = ""
 
@@ -116,6 +118,7 @@ private final class SyncSettingsHost: ObservableObject {
             identity: { (environment.accountID, environment.deviceID, environment.enrollmentID) }
         )
         model = built
+        deviceListModel = SyncDeviceListModel(client: client)
         // Reading stored status is the only thing that happens without a press.
         await built.refresh()
 
@@ -162,6 +165,7 @@ private struct SyncSettingsBody: View {
     let pairing: SyncPairingHostUIModel?
     let pairingConnection: SyncConnectionConfiguration?
     let transition: SyncAccountTransitionModel?
+    let devices: SyncDeviceListModel?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -169,6 +173,7 @@ private struct SyncSettingsBody: View {
             if let phrase = model.recoveryPhrase { phraseCard(phrase) }
             buttons
             if let transition { SyncAccountTransitionCard(model: transition, onboarding: model) }
+            if let devices { SyncDeviceListCard(model: devices) }
             if let pairing, let pairingConnection {
                 SyncPairingHostCard(model: pairing, connection: pairingConnection)
             }
@@ -308,6 +313,60 @@ private struct SyncSettingsBody: View {
         case .bootstrapFailed: return "받은 페이지를 적용하지 못했습니다. 같은 위치부터 다시 받습니다."
         case .notConnected: return "먼저 계정을 연결해야 합니다."
         }
+    }
+}
+
+private struct SyncDeviceListCard: View {
+    @ObservedObject var model: SyncDeviceListModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("연결된 기기")
+                .font(.custom("Pretendard-Bold", size: 12))
+            switch model.state {
+            case .idle:
+                detail("버튼을 누르면 이 계정에 연결된 기기만 확인합니다.")
+                button("연결된 기기 보기") { await model.load() }
+            case .loading:
+                detail("기기 목록을 확인하고 있습니다.")
+            case .failed:
+                detail("기기 목록을 가져오지 못했습니다. 비밀값은 표시하지 않았습니다.")
+                button("다시 시도") { await model.load() }
+            case .loaded(let devices):
+                if devices.isEmpty { detail("현재 표시할 기기가 없습니다.") }
+                ForEach(devices) { device in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.title + (device.isCurrent ? " · 현재 기기" : ""))
+                                .font(.custom("Pretendard-Medium", size: 11))
+                            Text("연결: \(device.linkedAt)")
+                                .font(.custom("Pretendard-Regular", size: 10))
+                                .foregroundColor(KakaoTheme.textTertiary)
+                        }
+                        Spacer()
+                    }
+                }
+                button("새로고침") { await model.load() }
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text).font(.custom("Pretendard-Regular", size: 11))
+            .foregroundColor(KakaoTheme.textSecondary)
+    }
+
+    private func button(_ title: String, work: @escaping () async -> Void) -> some View {
+        Button { Task { await work() } } label: {
+            Text(title).font(.custom("Pretendard-Medium", size: 11))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(KakaoTheme.bubbleMine, in: RoundedRectangle(cornerRadius: 7))
+        .foregroundColor(KakaoTheme.bubbleMineText)
     }
 }
 
