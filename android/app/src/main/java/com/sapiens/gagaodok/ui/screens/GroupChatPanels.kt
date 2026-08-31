@@ -231,6 +231,9 @@ internal fun HeartGaugePanel(
     modifier: Modifier = Modifier,
     /// 방금 일어난 변화입니다. 비어 있으면 평소 카드입니다.
     changes: List<MessageHeartChange> = emptyList(),
+    /// 가장 마지막에 일어난 변화입니다. [changes]와 달리 다음 변화가 올 때까지 남습니다.
+    /// 없으면 아직 한 번도 변한 적이 없는 방입니다.
+    lastChange: MessageHeartChange? = null,
     /// 카드가 어디에 얼마만 한 크기로 앉았는지 알립니다.
     ///
     /// 유리는 **대화 목록 쪽에서** 만듭니다. 카드가 자기 자리를 알려주지 않으면 배경은
@@ -397,18 +400,38 @@ internal fun HeartGaugePanel(
                         }
                     }
                 }
-                // 변화를 보여주는 동안에는 안내문을 감춥니다. 이유 줄이 그 자리를 대신합니다.
-                if (!showingChange) Text(
-                    when {
-                        hiddenCount > 0 -> "외 ${hiddenCount}명은 이 카드에 표시하지 않았습니다."
-                        participants.size == 1 -> "앞으로의 대화에 따라 변화합니다."
-                        else -> "기본 호감도를 이어받아 이 세계선에서 변화합니다."
-                    },
-                    style = KakaoText.timestamp,
-                    color = colors.textTertiary,
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+                // 변화를 보여주는 동안에는 아래 줄을 감춥니다. 참여자 줄의 이유가 그 자리를 대신합니다.
+                if (!showingChange) {
+                    // 개인방에서는 "앞으로 변합니다" 같은 안내문 대신 **마지막으로 왜 변했는지**를
+                    // 둡니다. 안내문은 처음 한 번 읽으면 그 뒤로는 아무것도 알려주지 않는 자리였고,
+                    // 정작 사용자가 알고 싶은 것은 지금 이 숫자가 어쩌다 이렇게 됐는지입니다.
+                    if (lastChange != null && lastChange.reason.isNotBlank()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            DeltaArrow(lastChange.delta >= 0)
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                lastChange.reason,
+                                style = KakaoText.timestamp,
+                                color = colors.textSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else Text(
+                        when {
+                            hiddenCount > 0 -> "외 ${hiddenCount}명은 이 카드에 표시하지 않았습니다."
+                            participants.size == 1 -> "앞으로의 대화에 따라 변화합니다."
+                            else -> "기본 호감도를 이어받아 이 세계선에서 변화합니다."
+                        },
+                        style = KakaoText.timestamp,
+                        color = colors.textTertiary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
             }
             RelationshipHeart(Modifier.offset(x = heartX, y = heartY).size(20.dp))
             RelationshipChevron(
@@ -438,6 +461,40 @@ private fun DeltaBadge(delta: Int, up: Boolean) {
             style = KakaoText.timestamp,
             color = if (up) HeartGaugeTokens.heart else HeartGaugeTokens.down
         )
+    }
+}
+
+/// 마지막 변화가 오름이었는지 내림이었는지를 이유 앞에 세우는 작은 삼각형입니다.
+///
+/// 뱃지(`DeltaBadge`)와 다릅니다. 뱃지는 "방금 얼마나"를 잠깐 보여주고 사라지지만,
+/// 이 화살표는 이유와 함께 계속 남습니다. 그래서 숫자를 빼고 방향만 남깁니다.
+/// 숫자를 남기면 옆의 현재 값과 나란히 놓여 어느 쪽이 지금 값인지 흐려집니다.
+///
+/// 색은 게이지와 같은 규칙을 씁니다. 오름은 하트색, 내림은 차가운 쪽입니다.
+/// 빨강을 쓰지 않는 이유는 [HeartGaugeTokens.down]에 적어 두었습니다.
+@Composable
+private fun DeltaArrow(up: Boolean) {
+    // 옆 글자가 10sp라 삼각형을 그보다 작게 둡니다. 글자와 같은 크기로 두면
+    // 삼각형이 더 커 보입니다. 속이 꽉 찬 도형이라 같은 치수에서 더 무겁습니다.
+    // **7dp는 짐작입니다.** 실기기에서 나란히 놓고 다시 봐야 합니다.
+    val size = 7.dp
+    val tone = if (up) HeartGaugeTokens.heart else HeartGaugeTokens.down
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val path = Path().apply {
+            if (up) {
+                moveTo(w / 2f, 0f)
+                lineTo(w, h)
+                lineTo(0f, h)
+            } else {
+                moveTo(w / 2f, h)
+                lineTo(w, 0f)
+                lineTo(0f, 0f)
+            }
+            close()
+        }
+        drawPath(path, tone)
     }
 }
 

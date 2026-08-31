@@ -545,7 +545,21 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }
                     } else if (personalAffectionEnabled) {
-                        store.adjustBaseAffection(id, PersonalAffectionProtocol.delta(rawText))
+                        val change = PersonalAffectionProtocol.change(rawText)
+                        if (!change.isEmpty) {
+                            // 개인방도 단톡방과 똑같이 카드를 펼쳐 알립니다. 예전에는 이 줄이
+                            // 없어서 숫자만 소리 없이 움직였습니다.
+                            //
+                            // 게이지에 실제로 반영된 폭을 씁니다. 0이나 100에서 잘렸으면
+                            // 요청한 폭과 다르고, 뱃지가 게이지와 다른 값을 말하면 안 됩니다.
+                            val applied = store.adjustBaseAffection(id, change.delta, change.reason)
+                            if (applied != 0 && requestBinding.matches(roomId, boundWorldlineId)) {
+                                _affectionCue.value = AffectionCue(
+                                    responseTurnId,
+                                    listOf(MessageHeartChange(id, applied, change.reason))
+                                )
+                            }
+                        }
                     }
                     _isResponding.value = false
                     return@launch

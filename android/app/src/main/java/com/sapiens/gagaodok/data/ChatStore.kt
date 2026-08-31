@@ -28,6 +28,23 @@ import java.util.UUID
 
 internal fun initialRooms(saved: List<ChatRoom>): List<ChatRoom> = saved
 
+/// 호감도를 옮긴 결과입니다. 게이지가 실제로 움직이지 않았으면 null입니다.
+///
+/// **여기서 돌려주는 폭이 화면에 뜨는 폭입니다.** 0에서 더 내려가거나 100에서 더
+/// 올라가려는 턴에는 요청한 값과 실제로 움직인 값이 다릅니다. 그때 요청한 값을
+/// 뱃지에 쓰면 "-3"이라고 적힌 옆에서 숫자가 그대로 있는 화면이 됩니다.
+internal fun RoomProfile.applyingAffection(delta: Int, reason: String): RoomProfile? {
+    if (delta == 0) return null
+    val value = (baseAffection.toLong() + delta.toLong()).coerceIn(0L, 100L).toInt()
+    val moved = value - baseAffection
+    if (moved == 0) return null
+    return copy(
+        baseAffection = value,
+        lastAffectionDelta = moved,
+        lastAffectionReason = reason.trim()
+    )
+}
+
 /// 대화방과 대화 내용을 파일에 둡니다.
 ///
 /// **파일 이름과 JSON 형식을 맥 판과 똑같이 맞췄습니다.** 맥에서 쓰던 기록을
@@ -377,11 +394,17 @@ class ChatStore private constructor(context: Context) {
         update(roomId) { it.copy(groupChat = group.adjustHeart(worldlineId, participantRoomId, delta)) }
     }
 
-    fun adjustBaseAffection(roomId: UUID, delta: Int) {
-        update(roomId) { room ->
-            val value = (room.profile.baseAffection.toLong() + delta.toLong()).coerceIn(0L, 100L).toInt()
-            room.copy(profile = room.profile.copy(baseAffection = value))
-        }
+    /// 개인방 호감도를 옮기고, 왜 옮겼는지를 함께 남깁니다.
+    ///
+    /// **게이지가 실제로 움직였을 때만 이유를 갱신합니다.** 0에서 더 못 내려가거나
+    /// 100에서 더 못 오르는 턴에도 이유를 덮으면, 화면에는 바뀌지 않은 숫자 아래에
+    /// 새 이유만 붙어 "변했다는데 그대로"로 보입니다.
+    /// 실제로 게이지에 반영된 폭을 돌려줍니다. 0이면 아무것도 바뀌지 않았습니다.
+    fun adjustBaseAffection(roomId: UUID, delta: Int, reason: String = ""): Int {
+        val room = room(roomId) ?: return 0
+        val moved = room.profile.applyingAffection(delta, reason) ?: return 0
+        update(roomId) { it.copy(profile = moved) }
+        return moved.lastAffectionDelta
     }
 
     // MARK: - 대화 내용 검색 색인

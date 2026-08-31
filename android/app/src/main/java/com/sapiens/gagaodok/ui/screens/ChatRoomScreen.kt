@@ -67,6 +67,7 @@ import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.model.ChatMessage
 import com.sapiens.gagaodok.model.ChatMode
+import com.sapiens.gagaodok.model.MessageHeartChange
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.InkDocument
 import com.sapiens.gagaodok.service.InkAttachmentFactory
@@ -584,6 +585,13 @@ fun ChatRoomScreen(
                         },
                         modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
                         changes = affectionCue?.changes.orEmpty(),
+                        // 개인방에서만 마지막 변동을 이어서 보여줍니다. 단톡방은 세계선마다
+                        // 참여자별로 기록이 갈려서, 카드 아래 한 줄로 대표할 수가 없습니다.
+                        lastChange = if (displayedWorldline == null) {
+                            room.profile.takeIf { it.lastAffectionDelta != 0 }?.let {
+                                MessageHeartChange(room.id, it.lastAffectionDelta, it.lastAffectionReason)
+                            }
+                        } else null,
                         onGlassBounds = { glassRegion = it }
                     )
                 }

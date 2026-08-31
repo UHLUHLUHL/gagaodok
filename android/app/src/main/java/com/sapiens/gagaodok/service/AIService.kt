@@ -91,7 +91,7 @@ class AIService private constructor(internal val appContext: Context) {
         onBubble: suspend (GeneratedMessageBubble) -> Unit
     ): String = withContext(Dispatchers.IO) {
         when (model) {
-            AIModel.GEMINI_37_FLASH, AIModel.GEMINI_35_FLASH_LITE -> sendGeminiRequest(
+            AIModel.GEMINI_37_FLASH -> sendGeminiRequest(
                 conversation, botName, roomId, persona, mode, roleplayInProgress,
                 repetitionAdvice, systemPromptOverride, model, onRawText, onBubble
             )

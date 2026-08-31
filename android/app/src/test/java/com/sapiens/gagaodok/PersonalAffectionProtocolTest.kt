@@ -26,6 +26,37 @@ class PersonalAffectionProtocolTest {
     }
 
     @Test
+    fun `표식은 이유까지 읽고 숫자만 오던 옛 형식도 그대로 읽는다`() {
+        val withReason = PersonalAffectionProtocol.change("좋아. [[affection:+2:솔직하게 답해줘서]]")
+        assertEquals(2, withReason.delta)
+        assertEquals("솔직하게 답해줘서", withReason.reason)
+        // 이유가 붙어도 화면에는 표식이 통째로 사라져야 합니다.
+        assertEquals("좋아.", PersonalAffectionProtocol.visibleText("좋아. [[affection:+2:솔직하게 답해줘서]]"))
+
+        val legacy = PersonalAffectionProtocol.change("좋아. [[affection:+1]]")
+        assertEquals(1, legacy.delta)
+        assertEquals("", legacy.reason)
+
+        assertTrue(PersonalAffectionProtocol.change("표식 없음").isEmpty)
+    }
+
+    @Test
+    fun `한 턴에 표식이 여럿이면 변화량은 더하고 이유는 처음 것을 쓴다`() {
+        val change = PersonalAffectionProtocol.change(
+            "[[affection:-2:약속을 어겨서]] 중간 [[affection:-2:또 다른 이유]]"
+        )
+
+        assertEquals(-3, change.delta)
+        assertEquals("약속을 어겨서", change.reason)
+    }
+
+    @Test
+    fun `이유는 화면 한 줄에 맞게 잘린다`() {
+        val long = "가".repeat(40)
+        assertEquals(24, PersonalAffectionProtocol.change("[[affection:+1:$long]]").reason.length)
+    }
+
+    @Test
     fun `prompt keeps metadata separate from visible adult roleplay`() {
         val prompt = PersonalAffectionProtocol.systemPrompt("기본 프롬프트")
 

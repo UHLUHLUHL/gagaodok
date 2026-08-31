@@ -129,7 +129,16 @@ data class RoomProfile(
     val persona: PersonaStyle = PersonaStyle(),
     /// 개인방에서 쌓이는 기본 호감도입니다. 단톡방을 만들 때 이 값을 복사해 시작하고,
     /// 이후 단톡방 세계선의 하트 변화는 이 값에 역으로 반영하지 않습니다.
-    val baseAffection: Int = 50
+    val baseAffection: Int = 50,
+    /// 가장 마지막으로 호감도가 변한 폭과 이유입니다. 0이면 아직 변한 적이 없습니다.
+    ///
+    /// 게이지 숫자만으로는 "지금 얼마인지"만 알 수 있고 "왜 그렇게 됐는지"는 알 수
+    /// 없습니다. 그래서 카드를 펼치면 이 값을 보여줍니다. 방금 변화를 알리는 표시와
+    /// 달리 이 값은 다음 변화가 올 때까지 남습니다.
+    ///
+    /// 옛 저장에는 없는 값이라 기본은 "변한 적 없음"입니다.
+    val lastAffectionDelta: Int = 0,
+    val lastAffectionReason: String = ""
 )
 
 @Serializable

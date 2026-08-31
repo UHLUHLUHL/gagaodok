@@ -36,16 +36,17 @@ class GroupChatRoomFactoryTest {
     }
 
     @Test
-    fun `personal companion supports both Gemini models but mentor stays on 37`() {
+    fun `개인방과 멘토방 모두 3_7로 모이고 Lite를 쓰던 방도 따라온다`() {
         val companion = ChatRoom(
             modeIdentifier = ChatMode.COMPANION.rawValue,
-            modelIdentifier = AIModel.GEMINI_35_FLASH_LITE.rawValue
+            // Flash-Lite로 대화했던 방이 저장에 그대로 남아 있는 상황입니다.
+            modelIdentifier = "gemini-3.5-flash-lite"
         )
         val mentor = companion.copy(modeIdentifier = ChatMode.MATH_MENTOR.rawValue)
         val luna = companion.copy(modelIdentifier = AIModel.GPT_56_LUNA.rawValue)
 
-        assertEquals(AIModel.GEMINI_35_FLASH_LITE, companion.resolvedModel(AIModel.GEMINI_37_FLASH))
-        assertEquals(AIModel.GEMINI_37_FLASH, mentor.resolvedModel(AIModel.GEMINI_35_FLASH_LITE))
+        assertEquals(AIModel.GEMINI_37_FLASH, companion.resolvedModel(AIModel.GEMINI_37_FLASH))
+        assertEquals(AIModel.GEMINI_37_FLASH, mentor.resolvedModel(AIModel.GEMINI_37_FLASH))
         assertEquals(AIModel.GEMINI_37_FLASH, luna.resolvedModel(AIModel.GEMINI_37_FLASH))
     }
 

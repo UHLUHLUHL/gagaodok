@@ -31,7 +31,7 @@ class AppSettings private constructor(context: Context) {
     val selectedModel: StateFlow<AIModel> = _selectedModel
 
     fun setSelectedModel(model: AIModel) {
-        // 전역 기본값은 안정적인 3.7로 고정합니다. Flash-Lite는 개인 챗봇방에서만 고릅니다.
+        // 대화 모델은 3.7 하나뿐이라 전역 기본값을 여기에 고정합니다.
         _selectedModel.value = AIModel.GEMINI_37_FLASH
         prefs.edit().putString(KEY_MODEL, AIModel.GEMINI_37_FLASH.rawValue).apply()
     }
