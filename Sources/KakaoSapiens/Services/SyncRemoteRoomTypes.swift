@@ -1,5 +1,10 @@
 import Foundation
 
+public enum SyncRemoteContinuationCapability: String, Codable, Equatable {
+    case chatbot
+    case unsupported
+}
+
 public struct SyncRoomHandle: Codable, Hashable {
     public let originSpaceID: String
     public let roomID: UUID
@@ -68,24 +73,38 @@ public struct SyncRemoteRoomSnapshot: Codable, Equatable {
     public let writerSpaces: [String]
     public let messages: [SyncRemoteBubble]
     public let contentHash: String
+    /// Missing on legacy projections: those rooms remain read-only.
+    public let continuationCapability: SyncRemoteContinuationCapability?
 
     public init(
         handle: SyncRoomHandle,
         title: String,
         writerSpaces: [String],
         messages: [SyncRemoteBubble],
-        contentHash: String
+        contentHash: String,
+        continuationCapability: SyncRemoteContinuationCapability? = nil
     ) {
         self.handle = handle
         self.title = title
         self.writerSpaces = writerSpaces
         self.messages = messages
         self.contentHash = contentHash
+        self.continuationCapability = continuationCapability
     }
 
     enum CodingKeys: String, CodingKey {
-        case handle, title, messages
+        case handle, title, messages, continuationCapability
         case writerSpaces = "writer_spaces"
         case contentHash = "content_hash"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        handle = try values.decode(SyncRoomHandle.self, forKey: .handle)
+        title = try values.decode(String.self, forKey: .title)
+        writerSpaces = try values.decode([String].self, forKey: .writerSpaces)
+        messages = try values.decode([SyncRemoteBubble].self, forKey: .messages)
+        contentHash = try values.decode(String.self, forKey: .contentHash)
+        continuationCapability = try values.decodeIfPresent(SyncRemoteContinuationCapability.self, forKey: .continuationCapability)
     }
 }

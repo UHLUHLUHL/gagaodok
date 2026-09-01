@@ -33,6 +33,7 @@ public struct SyncRemoteRoomAssembler {
         let space: String
         let origin: String
         let projection: [String: Any]
+        let extensions: [[String: Any]]
     }
 
     private struct TurnKey: Hashable {
@@ -69,7 +70,8 @@ public struct SyncRemoteRoomAssembler {
                       canonicalUUID(identity["room_id"] as? String) == roomID,
                       projection["title"] is String
                 else { return nil }
-                rooms.append(RoomRow(space: space, origin: origin, projection: projection))
+                let extensions = projection["extensions"] as? [[String: Any]] ?? []
+                rooms.append(RoomRow(space: space, origin: origin, projection: projection, extensions: extensions))
             case "turn":
                 guard Set(identity.keys) == ["space_id", "room_id", "worldline_id", "turn_id"],
                       identity["worldline_id"] is NSNull,
@@ -166,12 +168,23 @@ public struct SyncRemoteRoomAssembler {
             if $0.writerSpaceID != $1.writerSpaceID { return $0.writerSpaceID < $1.writerSpaceID }
             return $0.bubbleOrder < $1.bubbleOrder
         }
+        let capabilities = Set(rooms.compactMap { continuationCapability($0, roomID: roomID) })
+        guard capabilities.count <= 1 else { return nil }
         return SyncRemoteRoomSnapshot(
             handle: SyncRoomHandle(originSpaceID: origin, roomID: UUID(uuidString: roomID)!),
             title: title,
             writerSpaces: writerSpaces.sorted(), messages: messages,
-            contentHash: Self.contentHash(roomID: roomID, messages: messages)
+            contentHash: Self.contentHash(roomID: roomID, messages: messages),
+            continuationCapability: capabilities.first
         )
+    }
+
+    private func continuationCapability(_ room: RoomRow, roomID: String) -> SyncRemoteContinuationCapability? {
+        let candidates = room.extensions.filter { $0["key"] as? String == "gagaodok.room.continuation_capability" }
+        guard candidates.count <= 1, let value = candidates.first?["value"] as? String,
+              let decoded = open(value, space: room.space, room: roomID, entityType: "room", entityID: roomID, field: "extensions.gagaodok.room.continuation_capability", order: nil)
+        else { return candidates.isEmpty ? nil : .unsupported }
+        return SyncRemoteContinuationCapability(rawValue: decoded) ?? .unsupported
     }
 
     private func object(_ data: Data) -> [String: Any]? {
