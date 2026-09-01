@@ -33,6 +33,12 @@ data class SyncShadowWriteManifest(
     val worldlineId: String?,
 )
 
+/** Exact operation bytes, retained before an outbox makes them deliverable. */
+data class SyncShadowWritePlan(
+    val manifest: SyncShadowWriteManifest,
+    val operations: List<SyncOutboxEntry>,
+)
+
 /**
  * Writing this device's own rows, for the other devices to read.
  *
@@ -83,7 +89,21 @@ class SyncShadowWriter(
         worldlineId: String? = null,
         includeRoom: Boolean = true,
         continuationCapability: String? = null,
-    ): SyncShadowWriteManifest {
+    ): SyncShadowWriteManifest = prepare(
+        roomId, title, bubbles, startingBubbleOrder, worldlineId, includeRoom, continuationCapability,
+    ).also { plan ->
+        plan.operations.forEach { outbox.enqueue(it.operationId, it.rawBody) }
+    }.manifest
+
+    fun prepare(
+        roomId: String,
+        title: String,
+        bubbles: List<SyncShadowOutgoingBubble>,
+        startingBubbleOrder: Long = 0,
+        worldlineId: String? = null,
+        includeRoom: Boolean = true,
+        continuationCapability: String? = null,
+    ): SyncShadowWritePlan {
         val room = roomId.uppercase(Locale.ROOT)
         val worldline = worldlineId?.uppercase(Locale.ROOT)
         val scope = SyncE2EE.Scope(accountId, writerSpaceId, room, worldline)
@@ -96,11 +116,11 @@ class SyncShadowWriter(
         val roomKeys =
             if (worldline == null) keys else SyncE2EE.deriveScopeKeys(masterKey, roomScope)
 
-        var operations = 0
+        val operations = mutableListOf<JsonObject>()
         // A room row has no worldline component in its identity — its
         // worldline-scoped rows do — so the room is written once either way.
         if (includeRoom) {
-            enqueue(outbox, roomOperation(room, title, roomScope, roomKeys, continuationCapability)); operations += 1
+            operations += roomOperation(room, title, roomScope, roomKeys, continuationCapability)
         }
 
         val seenTurns = LinkedHashSet<String>()
@@ -111,24 +131,31 @@ class SyncShadowWriter(
         for (bubble in bubbles) {
             val turn = bubble.turnId.uppercase(Locale.ROOT)
             if (seenTurns.add(turn)) {
-                enqueue(outbox, turnOperation(room, turn, bubble.timestampRfc3339, worldline))
-                operations += 1
+                operations += turnOperation(room, turn, bubble.timestampRfc3339, worldline)
             }
-            enqueue(outbox, bubbleOperation(room, bubble, order, scope, keys, worldline))
-            operations += 1
+            operations += bubbleOperation(room, bubble, order, scope, keys, worldline)
             digest.update(bubble.messageId.uppercase(Locale.ROOT).toByteArray(Charsets.UTF_8))
             digest.update(bigEndian(order))
             order += 1
         }
 
-        return SyncShadowWriteManifest(
+        val manifest = SyncShadowWriteManifest(
             roomId = room,
             spaceId = writerSpaceId,
             turnCount = seenTurns.size,
             bubbleCount = bubbles.size,
             contentHash = digest.digest().joinToString("") { "%02x".format(it) },
-            operationCount = operations,
+            operationCount = operations.size,
             worldlineId = worldline,
+        )
+        return SyncShadowWritePlan(
+            manifest,
+            operations.map { operation ->
+                SyncOutboxEntry(
+                    (operation.getValue("operation_id") as JsonPrimitive).content,
+                    operation.toString().toByteArray(Charsets.UTF_8),
+                )
+            },
         )
     }
 
@@ -243,11 +270,6 @@ class SyncShadowWriter(
         put("clear", buildJsonArray { })
         put("created_at", now())
         fill()
-    }
-
-    private fun enqueue(outbox: SyncOutbox, operation: JsonObject) {
-        val id = (operation.getValue("operation_id") as JsonPrimitive).content
-        outbox.enqueue(id, operation.toString().toByteArray(Charsets.UTF_8))
     }
 
     private fun bigEndian(value: Long): ByteArray =

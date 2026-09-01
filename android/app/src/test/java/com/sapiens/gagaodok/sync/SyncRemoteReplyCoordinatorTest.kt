@@ -15,4 +15,18 @@ class SyncRemoteReplyCoordinatorTest {
         SyncRemoteReplyCoordinator("A0000000-0000-4000-8000-000000000002", "A0000000-0000-4000-8000-000000000003", ByteArray(32) { 7 }).prepare(room, "PHONE_SPACE", "질문", "답", AIModel.GEMINI_37_FLASH, outbox)
         assertEquals(4, outbox.pending().size)
     }
+
+    @Test fun `reply is journaled before its encrypted operations are exposed to delivery`() {
+        val room = SyncRemoteRoomSnapshot(SyncRoomHandle("MAC_SPACE", "A0000000-0000-4000-8000-000000000001"), "합성", listOf("MAC_SPACE"), emptyList(), "x", SyncRemoteContinuationCapability.CHATBOT)
+        val directory = folder.newFolder()
+        val outbox = SyncOutbox(File(directory, "outbox.bin"))
+        val journal = SyncRemoteReplyJournal(File(directory, "remote-replies.bin"))
+        val coordinator = SyncRemoteReplyCoordinator(
+            "A0000000-0000-4000-8000-000000000002", "A0000000-0000-4000-8000-000000000003", ByteArray(32) { 7 }, journal,
+        )
+        val replyId = coordinator.prepare(room, "PHONE_SPACE", "질문", "답", AIModel.GEMINI_37_FLASH, outbox)
+        val entry = journal.entry(replyId)!!
+        assertEquals(4, entry.operations.size)
+        assertEquals(outbox.pending().map { it.operationId }, entry.operations.map { it.operationId })
+    }
 }
