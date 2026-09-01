@@ -180,3 +180,12 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncRemoteRoomAssemblerTests.swift" \
   -o "$remote_room_binary"
 "$remote_room_binary"
+
+exposure_binary="${TMPDIR:-/tmp}/gagaodok-sync-room-exposure-tests"
+swiftc \
+  "$services/SyncRemoteRoomTypes.swift" \
+  "$services/SyncRemoteRoomRepository.swift" \
+  "$services/SyncRoomExposurePolicy.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncRoomExposurePolicyTests.swift" \
+  -o "$exposure_binary"
+"$exposure_binary"

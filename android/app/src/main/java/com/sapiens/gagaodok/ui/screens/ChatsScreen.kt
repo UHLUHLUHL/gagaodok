@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,10 @@ import com.sapiens.gagaodok.ui.components.RoomAvatar
 import com.sapiens.gagaodok.ui.icons.ComposeChatIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
+import com.sapiens.gagaodok.sync.SyncRemoteRoomCatalog
+import com.sapiens.gagaodok.sync.SyncRemoteRoomRepository
+import com.sapiens.gagaodok.sync.SyncRemoteRoomSnapshot
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -45,6 +50,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ChatsScreen(
@@ -66,7 +72,18 @@ fun ChatsScreen(
     var addingFriend by remember { mutableStateOf(false) }
     var creatingGroup by remember { mutableStateOf(false) }
     var editingRoom by remember { mutableStateOf<ChatRoom?>(null) }
+    var remoteRooms by remember { mutableStateOf<List<SyncRemoteRoomSnapshot>>(emptyList()) }
+    var selectedRemoteRoom by remember { mutableStateOf<SyncRemoteRoomSnapshot?>(null) }
     val menu = LocalKakaoMenu.current
+
+    LaunchedEffect(Unit) {
+        remoteRooms = withContext(Dispatchers.IO) {
+            val viewer = if (BuildConfig.TABLET_MENTOR) "TABLET_SPACE" else "PHONE_SPACE"
+            SyncRemoteRoomCatalog(
+                SyncRemoteRoomRepository(File(context.filesDir, "KakaoSapiens")), viewer,
+            ).refresh()
+        }
+    }
 
     fun openMenu(room: ChatRoom) = menu.show(
         KakaoMenuItem("채팅방 열기") { menu.dismiss(); onOpenRoom(room.id) },
@@ -88,6 +105,12 @@ fun ChatsScreen(
                 room.profile.name.contains(query, ignoreCase = true) ||
                 room.profile.statusMessage.contains(query, ignoreCase = true) ||
                 store.firstMatch(room.id, query) != null
+        }
+    }
+    val listedRemote = remember(remoteRooms, query) {
+        remoteRooms.filter { remote ->
+            query.isEmpty() || remote.title.contains(query, ignoreCase = true) ||
+                remote.messages.any { it.text.contains(query, ignoreCase = true) }
         }
     }
 
@@ -122,7 +145,7 @@ fun ChatsScreen(
             }
         )
 
-        if (listed.isEmpty()) {
+        if (listed.isEmpty() && listedRemote.isEmpty()) {
             EmptyState(
                 title = if (query.isEmpty()) "진행 중인 대화가 없어요" else "검색 결과가 없어요",
                 detail = if (query.isEmpty()) "친구 탭에서 상대를 골라 대화를 시작해 보세요." else null
@@ -139,6 +162,18 @@ fun ChatsScreen(
                         onOpen = { onOpenRoom(room.id) },
                         onLongPress = { openMenu(room) }
                     )
+                }
+                if (listedRemote.isNotEmpty()) {
+                    item(key = "remote-header") {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Text("다른 기기의 방 ${listedRemote.size}", style = KakaoText.listPreview, color = colors.textSecondary)
+                            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                            Text("수동 확인 필요", style = KakaoText.listPreview, color = colors.textTertiary)
+                        }
+                    }
+                    items(listedRemote, key = { "remote-${it.handle.originSpaceId}-${it.handle.roomId}" }) { remote ->
+                        RemoteRoomRow(remote) { selectedRemoteRoom = remote }
+                    }
                 }
             }
         }
@@ -188,6 +223,39 @@ fun ChatsScreen(
                 editingRoom = null
             }
         )
+    }
+    selectedRemoteRoom?.let { remote ->
+        RemoteChatRoomScreen(snapshot = remote, onClose = { selectedRemoteRoom = null })
+    }
+}
+
+@Composable
+private fun RemoteRoomRow(room: SyncRemoteRoomSnapshot, onOpen: () -> Unit) {
+    val colors = KakaoTheme.colors
+    Row(
+        Modifier.fillMaxWidth().combinedClickable(onClick = onOpen, onLongClick = {})
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(room.title, style = KakaoText.listName, color = colors.textPrimary, maxLines = 1)
+                Text(
+                    if (room.handle.originSpaceId == "TABLET_SPACE") "  태블릿" else "  Mac",
+                    style = KakaoText.listPreview, color = colors.textTertiary,
+                )
+            }
+            Text(
+                cleanSnippet(room.messages.lastOrNull()?.text ?: "받은 메시지가 없습니다"),
+                style = KakaoText.listPreview, color = colors.textSecondary, maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        room.messages.lastOrNull()?.timestamp?.let { timestamp ->
+            runCatching { java.time.Instant.parse(timestamp).toEpochMilli() }.getOrNull()?.let {
+                Text(formatRoomTime(it), style = KakaoText.listTime, color = colors.textTertiary)
+            }
+        }
     }
 }
 

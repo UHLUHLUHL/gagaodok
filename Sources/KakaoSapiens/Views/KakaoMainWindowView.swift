@@ -19,6 +19,8 @@ public struct KakaoMainWindowView: View {
     @State private var profileCardRoomId: UUID?
     @State private var favoritesCollapsed = false
     @State private var friendsCollapsed = false
+    @State private var remoteRooms: [SyncRemoteRoomSnapshot] = []
+    @State private var selectedRemoteRoom: SyncRemoteRoomSnapshot?
 
     // 카카오톡 팔레트
     private let ink = KakaoTheme.textPrimary
@@ -82,10 +84,15 @@ public struct KakaoMainWindowView: View {
             if isAddingFriend { addFriendSheet }
             if let friend = editingFriend { editFriendSheet(friend) }
             if isEditingMyProfile { myProfileSheet }
+            if let remote = selectedRemoteRoom {
+                RemoteChatRoomView(snapshot: remote) { selectedRemoteRoom = nil }
+                    .transition(.opacity)
+            }
         }
         .frame(minWidth: 350, idealWidth: 420, minHeight: 480, idealHeight: 680)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.all)
+        .onAppear(perform: refreshRemoteRooms)
         
     }
 
@@ -249,7 +256,13 @@ public struct KakaoMainWindowView: View {
 
     @ViewBuilder
     private var chatList: some View {
-        if chatRooms.isEmpty {
+        let visibleRemote = remoteRooms.filter { remote in
+            let query = trimmedQuery.lowercased()
+            return query.isEmpty
+                || remote.title.lowercased().contains(query)
+                || remote.messages.contains { $0.text.lowercased().contains(query) }
+        }
+        if chatRooms.isEmpty && visibleRemote.isEmpty {
             emptyState(icon: "bubble.left.and.bubble.right",
                        title: searchText.isEmpty ? "진행 중인 대화가 없어요" : "검색 결과가 없어요",
                        detail: searchText.isEmpty ? "친구 탭에서 상대를 골라 대화를 시작해 보세요." : nil)
@@ -265,7 +278,76 @@ public struct KakaoMainWindowView: View {
                     onEditProfile: { editingFriend = room }
                 )
             }
+            if !visibleRemote.isEmpty {
+                remoteSectionHeader(visibleRemote.count)
+                ForEach(visibleRemote, id: \.handle) { remoteRoomRow($0) }
+            }
         }
+    }
+
+    private func refreshRemoteRooms() {
+        let repository = SyncRemoteRoomRepository(rootDirectory: roomManager.appSupportURL)
+        remoteRooms = (try? SyncRemoteRoomCatalog(
+            repository: repository,
+            viewerSpaceID: "MAC_SPACE"
+        ).refresh()) ?? []
+    }
+
+    private func remoteSectionHeader(_ count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text("다른 기기의 방")
+            Text("\(count)").foregroundColor(subInk.opacity(0.8))
+            Spacer()
+            Text("수동 확인 필요")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.orange)
+        }
+        .font(.custom("Pretendard-Medium", size: 12))
+        .foregroundColor(subInk)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+    }
+
+    private func remoteRoomRow(_ room: SyncRemoteRoomSnapshot) -> some View {
+        Button(action: { selectedRemoteRoom = room }) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(KakaoTheme.sunken)
+                    Image(systemName: room.handle.originSpaceID == "TABLET_SPACE" ? "ipad" : "desktopcomputer")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(ink)
+                }
+                .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(room.title).font(.custom("Pretendard-SemiBold", size: 14))
+                        Text(room.handle.originSpaceID == "TABLET_SPACE" ? "태블릿" : "Mac")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(KakaoTheme.sunken, in: Capsule())
+                        Spacer()
+                        Text(remoteRoomTime(room.messages.last?.timestamp))
+                            .font(.system(size: 10)).foregroundColor(subInk)
+                    }
+                    Text(room.messages.last?.text ?? "받은 메시지가 없습니다")
+                        .font(.custom("Pretendard-Regular", size: 12))
+                        .foregroundColor(subInk).lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func remoteRoomTime(_ value: String?) -> String {
+        guard let value,
+              let date = ISO8601DateFormatter().date(from: value) else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = Calendar.current.isDateInToday(date) ? "a h:mm" : "M월 d일"
+        return formatter.string(from: date)
     }
 
     private func sectionHeader(_ title: String, _ count: Int, collapsed: Binding<Bool>) -> some View {
