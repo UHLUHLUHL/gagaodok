@@ -168,7 +168,10 @@ public final class SyncShadowUploadCoordinator {
             SyncShadowRoomInput(
                 roomID: roomID,
                 title: (row["title"] as? String) ?? "",
-                bubbles: bubbles
+                bubbles: bubbles,
+                // Only a local companion room is explicitly eligible. Missing
+                // legacy metadata remains read-only rather than being guessed.
+                continuationCapability: (row["modeIdentifier"] as? String) == "companion"
             ),
             skipped
         )

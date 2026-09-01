@@ -73,7 +73,8 @@ private func writeStorage(
     bubbleCount: Int,
     turnsOf: (Int) -> Int,
     withAttachmentAt: Set<Int> = [],
-    malformedAt: Set<Int> = []
+    malformedAt: Set<Int> = [],
+    companion: Bool = false
 ) throws -> URL {
     let directory = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent("gagaodok-shadow-store-\(UUID().uuidString)")
@@ -83,6 +84,7 @@ private func writeStorage(
         "id": ROOM.uuidString, "title": "테스트2",
         "createdAt": 1_800_000_000.0, "isPinned": false, "unreadCount": 0,
         "lastMessageText": "마지막", "lastMessageTime": 1_800_000_000.0,
+        "modeIdentifier": companion ? "companion" : "math-mentor",
     ]]
     try JSONSerialization.data(withJSONObject: rooms)
         .write(to: directory.appendingPathComponent("rooms_list.json"))
@@ -114,6 +116,13 @@ private func writeStorage(
     try JSONSerialization.data(withJSONObject: messages)
         .write(to: directory.appendingPathComponent("room_\(ROOM.uuidString)_messages.json"))
     return directory
+}
+
+@MainActor private func testReadsCompanionCapabilityWithoutOpeningMessageContent() throws {
+    let directory = try writeStorage(bubbleCount: 0, turnsOf: { _ in 1 }, companion: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let (room, _) = try SyncShadowUploadCoordinator.readRoom(roomID: ROOM, from: directory)
+    try check(room.continuationCapability, "companion room must be eligible")
 }
 
 @MainActor
@@ -288,6 +297,7 @@ struct Runner {
             ("leaves unreadable rows and the original alone", testLeavesUnreadableRowsBehindAndDoesNotTouchTheOriginal),
             ("refuses without secrets or room", testRefusesWithoutSecretsOrRoom),
             ("a failed upload keeps the journal", testAFailedUploadKeepsTheJournal),
+            ("reads companion continuation capability", testReadsCompanionCapabilityWithoutOpeningMessageContent),
         ]
         for (name, test) in tests {
             do {
