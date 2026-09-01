@@ -268,6 +268,16 @@ private func testCarriesOriginSeparatelyFromTheWriterSpace() throws {
     try check(metadata["origin_space_id"] as? String == "MAC_SPACE", "the family keeps its origin")
 }
 
+private func testCompanionRoomCarriesEncryptedContinuationCapability() throws {
+    let (outbox, directory) = try makeOutbox()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    _ = try makeImporter(counter: Counter()).importRooms(
+        [SyncShadowRoomInput(roomID: ROOM, title: "챗봇", bubbles: [], continuationCapability: true)], into: outbox
+    )
+    let fields = try bodies(outbox)[0]["set"] as! [String: Any]
+    try check(fields["extensions.gagaodok.room.continuation_capability"] is String, "capability must be sealed in the room extension")
+}
+
 private func testEmitsTheFixtureTheWorkerPinsAgainst() throws {
     let (outbox, directory) = try makeOutbox()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -324,6 +334,7 @@ struct Runner {
             ("manifest is counts only", testManifestIsCountsAndIdentityOnly),
             ("an empty room still copies", testEmptyRoomStillCopiesTheRoomItself),
             ("origin and writer space stay separate", testCarriesOriginSeparatelyFromTheWriterSpace),
+            ("companion capability is sealed", testCompanionRoomCarriesEncryptedContinuationCapability),
             ("emits the Worker fixture", testEmitsTheFixtureTheWorkerPinsAgainst),
         ]
         for (name, test) in tests {

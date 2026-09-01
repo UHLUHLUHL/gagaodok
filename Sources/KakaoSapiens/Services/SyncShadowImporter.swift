@@ -60,11 +60,13 @@ public struct SyncShadowRoomInput {
     public let roomID: UUID
     public let title: String
     public let bubbles: [Bubble]
+    public let continuationCapability: Bool
 
-    public init(roomID: UUID, title: String, bubbles: [Bubble]) {
+    public init(roomID: UUID, title: String, bubbles: [Bubble], continuationCapability: Bool = false) {
         self.roomID = roomID
         self.title = title
         self.bubbles = bubbles
+        self.continuationCapability = continuationCapability
     }
 }
 
@@ -143,7 +145,7 @@ public struct SyncShadowImporter {
             }
 
             try enqueue(
-                body: roomOperation(roomID: roomID, title: room.title, scope: scope, keys: keys),
+                body: roomOperation(roomID: roomID, title: room.title, scope: scope, keys: keys, continuationCapability: room.continuationCapability),
                 into: outbox
             )
 
@@ -205,7 +207,8 @@ public struct SyncShadowImporter {
         roomID: String,
         title: String,
         scope: SyncE2EE.Scope,
-        keys: SyncE2EE.ScopeKeys
+        keys: SyncE2EE.ScopeKeys,
+        continuationCapability: Bool
     ) throws -> Data {
         let sealed = try seal(
             title,
@@ -215,12 +218,20 @@ public struct SyncShadowImporter {
                 fieldPath: "title", bubbleOrder: nil, recoveryVersion: nil
             )
         )
+        var fields = ["title": sealed]
+        if continuationCapability {
+            fields["extensions.gagaodok.room.continuation_capability"] = try seal(
+                "chatbot", keys: keys,
+                context: SyncE2EE.AADContext(scope: scope, entityType: "room", entityID: roomID,
+                                               fieldPath: "extensions.gagaodok.room.continuation_capability", bubbleOrder: nil, recoveryVersion: nil)
+            )
+        }
         return try body([
             "op": "create_room",
             "entity_type": "room",
             "target": ["space_id": writerSpaceID, "room_id": roomID, "worldline_id": NSNull()],
             "metadata_set": ["origin_space_id": originSpaceID],
-            "set": ["title": sealed],
+            "set": fields,
         ])
     }
 
