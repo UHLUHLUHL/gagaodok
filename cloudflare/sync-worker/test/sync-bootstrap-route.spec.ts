@@ -115,12 +115,13 @@ async function run(sql: string, ...values: (string | number | null)[]): Promise<
 async function seedRoom(accountId: string, roomId: string, spaceId = MAC): Promise<void> {
   await run(
     `INSERT INTO room
-       (account_id, space_id, room_id, title_enc, status_message_enc, music_title_enc,
+       (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc, music_title_enc,
         music_artist_enc, revision, server_seq, created_at, updated_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, NULL, 0, NULL, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, 0, NULL, ?, ?)`,
     accountId,
     spaceId,
     roomId,
+    spaceId,
     envelope(1),
     TIMESTAMP,
     TIMESTAMP,
@@ -456,10 +457,11 @@ describe("GET /v1/sync/bootstrap — the snapshot boundary", () => {
     await run("UPDATE account SET next_server_seq = 9 WHERE account_id = ?", ACCOUNT);
     await run(
       `INSERT INTO room
-         (account_id, space_id, room_id, title_enc, status_message_enc, music_title_enc,
+         (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc, music_title_enc,
           music_artist_enc, revision, server_seq, created_at, updated_at)
-       VALUES (?, ?, '10000000-0000-4000-8000-0000000000A0', ?, NULL, NULL, NULL, 0, 5, ?, ?)`,
+       VALUES (?, ?, '10000000-0000-4000-8000-0000000000A0', ?, ?, NULL, NULL, NULL, 0, 5, ?, ?)`,
       ACCOUNT,
+      MAC,
       MAC,
       envelope(1),
       TIMESTAMP,

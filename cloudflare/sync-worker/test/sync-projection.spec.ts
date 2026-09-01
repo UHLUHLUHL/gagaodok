@@ -85,12 +85,13 @@ async function seedRoom(
 ): Promise<void> {
   await run(
     `INSERT INTO room
-       (account_id, space_id, room_id, title_enc, status_message_enc, music_title_enc,
+       (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc, music_title_enc,
         music_artist_enc, revision, server_seq, created_at, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)`,
     accountId,
     spaceId,
     roomId,
+    spaceId,
     envelope(1),
     envelope(2),
     revision,
@@ -370,6 +371,7 @@ describe("the shared projection registry", () => {
     // The storage column name never reaches the wire.
     expect(Object.keys(room)).not.toContain("title_enc");
     expect(room["status_message"]).toBeNull();
+    expect(room["origin_space_id"]).toBe(MAC);
   });
 
   it("maps the empty worldline key to a null worldline_id and hides the key", async () => {

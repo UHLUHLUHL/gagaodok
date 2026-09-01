@@ -390,6 +390,7 @@ export async function applyCreateRoom(
   const accountId = auth.account_id;
   const spaceId = request.target.space_id;
   const roomId = request.target.room_id as string;
+  const originSpaceId = request.metadata_set.origin_space_id as string;
 
   const setFields = partitionFieldNames(Object.keys(request.set), ROOM_FIELD_COLUMNS);
   // A clear on a row that does not exist yet is just the absent value; the
@@ -408,20 +409,50 @@ export async function applyCreateRoom(
          VALUES (?, ?,
            ((SELECT COUNT(*) FROM room
               WHERE account_id = ? AND space_id = ? AND room_id = ?) = 0
+            AND NOT EXISTS (
+              SELECT 1 FROM room
+               WHERE account_id = ? AND room_id = ?
+                 AND (origin_space_id IS NULL OR origin_space_id <> ?)
+            )
+            AND (
+              ? = ?
+              OR EXISTS (
+                SELECT 1 FROM room
+                 WHERE account_id = ? AND space_id = ? AND room_id = ?
+                   AND origin_space_id = ?
+              )
+            )
             AND (SELECT next_server_seq FROM account WHERE account_id = ?) <= ${MAX_ALLOCATABLE_SEQ}))`,
       )
-      .bind(accountId, request.operation_id, accountId, spaceId, roomId, accountId),
+      .bind(
+        accountId,
+        request.operation_id,
+        accountId,
+        spaceId,
+        roomId,
+        accountId,
+        roomId,
+        originSpaceId,
+        originSpaceId,
+        spaceId,
+        accountId,
+        originSpaceId,
+        roomId,
+        originSpaceId,
+        accountId,
+      ),
     db
       .prepare(
         `INSERT INTO room
-           (account_id, space_id, room_id, title_enc, status_message_enc,
+           (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc,
             music_title_enc, music_artist_enc, revision, server_seq, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 0, ${CURRENT_SEQ}, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ${CURRENT_SEQ}, ?, ?)`,
       )
       .bind(
         accountId,
         spaceId,
         roomId,
+        originSpaceId,
         request.set["title"] ?? null,
         request.set["status_message"] ?? null,
         request.set["music_title"] ?? null,
@@ -476,6 +507,27 @@ async function classifyCreateFailure(
     // Another operation already created this room. The only detail is the
     // number the client needs to switch to patching.
     throw new ApiError("REVISION_CONFLICT", { detail: { current_revision: revision } });
+  }
+  const originSpaceId = request.metadata_set.origin_space_id as string;
+  const family = await db
+    .prepare(
+      `SELECT origin_space_id, space_id
+         FROM room
+        WHERE account_id = ? AND room_id = ?
+        ORDER BY space_id`,
+    )
+    .bind(accountId, request.target.room_id as string)
+    .all<{ origin_space_id: string | null; space_id: string }>();
+  if (family.results.some((row) => row.origin_space_id !== originSpaceId)) {
+    throw new ApiError("AUTH_INVALID");
+  }
+  if (
+    originSpaceId !== request.target.space_id &&
+    !family.results.some(
+      (row) => row.space_id === originSpaceId && row.origin_space_id === originSpaceId,
+    )
+  ) {
+    throw new ApiError("ENTITY_NOT_FOUND");
   }
   if (await sequenceExhausted(db, accountId)) {
     throw new ApiError("STORAGE_UNAVAILABLE", { retryable: false });

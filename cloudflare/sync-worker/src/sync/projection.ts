@@ -96,6 +96,7 @@ const ENTITY_SPECS: Readonly<Record<EntityType, EntitySpec>> = Object.freeze({
     table: "room",
     keyColumns: ["space_id", "room_id"],
     valueColumns: [
+      "origin_space_id",
       "title_enc",
       "status_message_enc",
       "music_title_enc",

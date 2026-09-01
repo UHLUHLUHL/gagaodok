@@ -146,20 +146,20 @@ async function insertFixtures(): Promise<void> {
   await db
     .prepare(
       `INSERT INTO room
-         (account_id, space_id, room_id, title_enc, status_message_enc,
+         (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc,
           music_title_enc, music_artist_enc, revision, server_seq, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, 4, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 4, NULL, ?, ?)`,
     )
-    .bind(ACCOUNT, SPACE, ROOM, envelope(200), envelope(210), TIMESTAMP, TIMESTAMP)
+    .bind(ACCOUNT, SPACE, ROOM, SPACE, envelope(200), envelope(210), TIMESTAMP, TIMESTAMP)
     .run();
   await db
     .prepare(
       `INSERT INTO room
-         (account_id, space_id, room_id, title_enc, status_message_enc,
+         (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc,
           music_title_enc, music_artist_enc, revision, server_seq, created_at, updated_at)
-       VALUES (?, ?, ?, ?, NULL, NULL, NULL, 4, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, 4, NULL, ?, ?)`,
     )
-    .bind(ACCOUNT, OTHER_SPACE, MAC_ROOM, envelope(220), TIMESTAMP, TIMESTAMP)
+    .bind(ACCOUNT, OTHER_SPACE, MAC_ROOM, OTHER_SPACE, envelope(220), TIMESTAMP, TIMESTAMP)
     .run();
   await db
     .prepare(

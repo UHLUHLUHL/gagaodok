@@ -300,6 +300,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0009_pairing_recovery.sql",
       "0010_rate_limit.sql",
       "0011_room_origin_expand.sql",
+      "0012_room_origin_enforce.sql",
     ]);
   });
 

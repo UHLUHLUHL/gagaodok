@@ -125,11 +125,11 @@ async function insertRoom(accountId: string, spaceId: string, roomId: string): P
   await db
     .prepare(
       `INSERT INTO room
-         (account_id, space_id, room_id, title_enc, status_message_enc,
+         (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc,
           music_title_enc, music_artist_enc, revision, server_seq, created_at, updated_at)
-       VALUES (?, ?, ?, ?, NULL, NULL, NULL, 3, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, 3, NULL, ?, ?)`,
     )
-    .bind(accountId, spaceId, roomId, envelope(100), TIMESTAMP, TIMESTAMP)
+    .bind(accountId, spaceId, roomId, spaceId, envelope(100), TIMESTAMP, TIMESTAMP)
     .run();
 }
 
@@ -215,6 +215,7 @@ describe("applyOperationRequest — create_room", () => {
     expect(room?.["created_at"]).toBe(TIMESTAMP);
     expect(room?.["updated_at"]).toBe(TIMESTAMP);
     expect(room?.["title_enc"]).toBeNull();
+    expect(room?.["origin_space_id"]).toBe(PHONE);
 
     expect(await nextSeq()).toBe(2);
     expect(await countOf("operation_log")).toBe(1);
@@ -305,16 +306,23 @@ describe("create_room — identity and authority", () => {
     expect(other?.revision).toBe(3);
   });
 
-  it("treats the same room UUID in another space as a separate room", async () => {
-    await applyOperationRequest(makeRequest(createRoomBody()), db);
-    const result = await applyOperationRequest(
+  it("stores a continuation shard separately under the same room UUID", async () => {
+    await applyOperationRequest(
       makeRequest(
         createRoomBody({
-          operation_id: OPERATION_2,
           device_id: DEVICE_MAC,
           target: { space_id: MAC, room_id: NEW_ROOM, worldline_id: null },
         }),
         TOKEN_MAC,
+      ),
+      db,
+    );
+    const result = await applyOperationRequest(
+      makeRequest(
+        createRoomBody({
+          operation_id: OPERATION_2,
+          metadata_set: { origin_space_id: MAC },
+        }),
       ),
       db,
     );

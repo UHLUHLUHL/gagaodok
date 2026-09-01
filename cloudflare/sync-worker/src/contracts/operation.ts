@@ -483,6 +483,11 @@ const CHECKPOINT_CLEARABLE = CHECKPOINT_PATCHABLE.filter(
 );
 
 const METADATA_RULES: Partial<Record<string, MetadataRule>> = {
+  create_room: {
+    required: [],
+    optional: ["origin_space_id"],
+    clearable: [],
+  },
   patch_room: {
     required: [],
     optional: ROOM_REFERENCE_FIELDS,
@@ -610,6 +615,16 @@ export interface OperationRequest {
   set: Record<string, string>;
   clear: string[];
   created_at: string;
+}
+
+export function normalizeRoomOrigin(targetSpace: SpaceId, supplied?: SpaceId): SpaceId {
+  return supplied ?? targetSpace;
+}
+
+export function roomOriginAllowsWriter(origin: SpaceId, writer: SpaceId): boolean {
+  if (origin === "PHONE_SPACE") return writer === "PHONE_SPACE";
+  if (origin === "MAC_SPACE") return writer === "MAC_SPACE" || writer === "PHONE_SPACE";
+  return writer === "TABLET_SPACE" || writer === "MAC_SPACE" || writer === "PHONE_SPACE";
 }
 
 /**
@@ -932,6 +947,16 @@ export function parseOperationRequest(value: unknown): OperationRequest {
   }
 
   const metadata = parseMetadata(value["metadata_set"], value["metadata_clear"], operation);
+  if (operation === "create_room") {
+    const origin = normalizeRoomOrigin(
+      target.space_id,
+      metadata.set.origin_space_id as SpaceId | undefined,
+    );
+    if (!roomOriginAllowsWriter(origin, target.space_id)) {
+      throw new ApiError("AUTH_INVALID");
+    }
+    metadata.set.origin_space_id = origin;
+  }
   const entityShape = ENTITY_SHAPES[spec.entityType];
   const rule = METADATA_RULES[operation] ?? EMPTY_METADATA_RULE;
   const plaintextNames: ReadonlySet<string> = new Set<string>([

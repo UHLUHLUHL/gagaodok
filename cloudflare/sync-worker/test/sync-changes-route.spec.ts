@@ -114,12 +114,13 @@ async function run(sql: string, ...values: (string | number | null)[]): Promise<
 async function seedRoom(accountId: string, roomId: string, revision = 0): Promise<void> {
   await run(
     `INSERT INTO room
-       (account_id, space_id, room_id, title_enc, status_message_enc, music_title_enc,
+       (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc, music_title_enc,
         music_artist_enc, revision, server_seq, created_at, updated_at)
-     VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, ?, ?)`,
     accountId,
     MAC,
     roomId,
+    MAC,
     envelope(1),
     revision,
     TIMESTAMP,

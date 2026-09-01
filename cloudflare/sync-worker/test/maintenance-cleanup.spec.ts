@@ -3,7 +3,7 @@ import type { D1Migration } from "cloudflare:test";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runMaintenance } from "../src/maintenance/cleanup";
 declare global { namespace Cloudflare { interface Env { DB:D1Database;ATTACHMENTS:R2Bucket;CURSOR_MAC_KEY:string;RATE_LIMIT_MAC_KEY:string;TEST_MIGRATIONS:D1Migration[]; } } }
-const ACCOUNT="A0000000-0000-4000-8000-00000000000A";const DEVICE="B0000000-0000-4000-8000-000000000001";const ATTACHMENT="70000000-0000-4000-8000-000000000001";const OLD="2026-08-20T00:00:00Z";const NOW=Date.parse("2026-08-29T12:00:00Z");
+const ACCOUNT="A0000000-0000-4000-8000-00000000000A";const DEVICE="B0000000-0000-4000-8000-000000000001";const ATTACHMENT="70000000-0000-4000-8000-000000000001";const OLD="2026-08-20T00:00:00Z";const NOW=Date.now()+3*86_400_000;
 beforeAll(async()=>{await applyD1Migrations(env.DB,env.TEST_MIGRATIONS);});
 beforeEach(async()=>{for(const table of ["pairing_claim","pairing_session","attachment","device","account"])await env.DB.prepare(`DELETE FROM ${table}`).run();const listed=await env.ATTACHMENTS.list();if(listed.objects.length)await env.ATTACHMENTS.delete(listed.objects.map(x=>x.key));await env.DB.prepare("INSERT INTO account(account_id,created_at)VALUES(?,?)").bind(ACCOUNT,OLD).run();await env.DB.prepare(`INSERT INTO device(account_id,device_id,space_id,platform,linked_at,key_generation)VALUES(?,?, 'MAC_SPACE','macos',?,1)`).bind(ACCOUNT,DEVICE,OLD).run();});
 describe("scheduled maintenance",()=>{

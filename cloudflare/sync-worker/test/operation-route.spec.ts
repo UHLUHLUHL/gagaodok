@@ -177,11 +177,11 @@ beforeEach(async () => {
   await db
     .prepare(
       `INSERT INTO room
-         (account_id, space_id, room_id, title_enc, status_message_enc, music_title_enc,
+         (account_id, space_id, room_id, origin_space_id, title_enc, status_message_enc, music_title_enc,
           music_artist_enc, revision, server_seq, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, NULL, NULL, NULL, 0, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, 0, NULL, ?, ?)`,
     )
-    .bind(ACCOUNT, SPACE, ROOM, TIMESTAMP, TIMESTAMP)
+    .bind(ACCOUNT, SPACE, ROOM, SPACE, TIMESTAMP, TIMESTAMP)
     .run();
 });
 
