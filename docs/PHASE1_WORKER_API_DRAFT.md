@@ -234,6 +234,7 @@ M04~M05 allowlist는 다음 표가 단일 계약이다. `필수 set`은 create r
 
 | operation | 필수 `metadata_set` | 선택 `metadata_set` | 허용 `metadata_clear` |
 | --- | --- | --- | --- |
+| `create_room` | 없음 | `origin_space_id` | 없음 (`[]`만 허용) |
 | `patch_room` | 없음 | `engine_profile_id` + `engine_profile_revision`; `persona_snapshot_id` + `persona_snapshot_revision` | 같은 두 pair만 pair 단위로 허용 |
 | `create_engine_profile` | 없음 | `compaction_compat_tag` | 없음 (`[]`만 허용) |
 | `create_persona_snapshot` | `owner_space_id`, `created_by_device_id`, `created_at`, `persona_schema_version` | 없음 | 없음 (`[]`만 허용) |
@@ -256,6 +257,8 @@ Create provenance는 인증 경계와 일치해야 한다. `owner_space_id`는 `
 Checkpoint의 `through_server_seq`는 null이거나 이 operation 직전에 이미 발급된 sequence여야 한다. Handler guard 기준으로 `through_server_seq < account.next_server_seq`를 강제한다. 새 checkpoint operation 자신에게 배정될 sequence나 미래 sequence를 coverage로 선언할 수 없으며, legacy unversioned checkpoint는 null을 유지할 수 있다.
 
 `compaction_compat_tag`는 문법을 해석하지 않는 opaque plaintext equality tag이며 UTF-16 code unit 기준 1~256자의 문자열만 받는다. 이 길이 제한은 transport/validator 경계일 뿐 hash·encoding 형식을 뜻하지 않는다.
+
+`create_room.metadata_set.origin_space_id`는 생략 가능한 호환 필드다. 생략하면 `target.space_id`로 정규화하며 이 형태는 origin shard 생성에만 쓸 수 있다. 다른 writer space에서 기존 방을 이어가는 create는 원래 방의 `origin_space_id`를 명시해야 한다. 서버 projection은 입력 생략 여부와 무관하게 정규화된 non-null 값을 항상 내보낸다. 허용 writer matrix는 `PHONE_SPACE→PHONE_SPACE`, `MAC_SPACE→MAC_SPACE|PHONE_SPACE`, `TABLET_SPACE→TABLET_SPACE|MAC_SPACE|PHONE_SPACE`이며, 인증 device는 여전히 자기 registered space에만 쓴다.
 
 Turn·bubble patch는 protocol operation으로 활성 상태를 유지하지만 초기 앱 UI에서 사용자 편집 기능을 연다는 뜻은 아니다. Patch는 해당 owner의 encrypted canonical field와 `extensions.*`만 set/clear할 수 있다. Identity, `bubble_order`, create provenance, timestamp, attachment reference와 tombstone columns는 patch로 변경할 수 없다. Delete/tombstone operation은 기존 feature gate를 유지한다.
 

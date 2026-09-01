@@ -299,6 +299,7 @@ describe("0002 starts enforcing the account reference", () => {
       "0008_atomic_write_ledger.sql",
       "0009_pairing_recovery.sql",
       "0010_rate_limit.sql",
+      "0011_room_origin_expand.sql",
     ]);
   });
 

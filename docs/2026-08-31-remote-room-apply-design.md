@@ -46,6 +46,20 @@ conversation_scope = (space_id, room_id, worldline_id?)
 > 한 방의 대화는 여러 공간에 걸친 행들의 **합집합**이며, 화면에서 시각 기준으로
 > 정렬해 하나의 대화로 보여준다.
 
+그 합집합의 canonical handle은 `(origin_space_id, room_id)`이다. 원래 방을 만든
+공간은 `origin_space_id`, 각 행을 실제로 쓴 공간은 `space_id`로 보존한다. 허용되는
+writer shard는 다음 세 줄뿐이다.
+
+| origin | 허용 writer shard |
+| --- | --- |
+| `PHONE_SPACE` | `PHONE_SPACE` |
+| `MAC_SPACE` | `MAC_SPACE`, `PHONE_SPACE` |
+| `TABLET_SPACE` | `TABLET_SPACE`, `MAC_SPACE`, `PHONE_SPACE` |
+
+기존 protocol v1 writer가 `origin_space_id`를 생략하면 Worker는 `target.space_id`로
+정규화하고 origin shard만 생성하게 한다. 이어쓰기 shard는 원래 방의 origin을
+명시해야 하며, projection은 항상 정규화된 값을 내보낸다.
+
 폰이 Mac 방 `R`에 답하면 그 말풍선은 `(PHONE_SPACE, R)`에 적힌다. Mac의 원래
 말풍선은 `(MAC_SPACE, R)`에 그대로 있다. 두 기기 모두 두 공간의 행을 받으므로
 같은 대화를 본다.
@@ -139,7 +153,7 @@ canonical scope가 `(space_id, room_id, worldline_id?)`이므로 원격 저장�
 | 원자적 교체 | 위 단위 하나씩 |
 | 개수·내용 hash | 위 단위 하나씩 계산한다 |
 
-화면에 보이는 "한 방"은 같은 `room_id`를 가진 여러 저장 단위의 합집합이며,
+화면에 보이는 "한 방"은 같은 `(origin_space_id, room_id)`를 가진 여러 저장 단위의 합집합이며,
 합치는 일은 화면 계층에서만 한다. 저장 계층은 공간을 절대 합치지 않는다.
 
 **G1·G2 fixture에 같은 `room_id`가 서로 다른 공간에 있는 경우를 반드시 넣는다.**

@@ -166,6 +166,16 @@ describe("M00 — local migration harness", () => {
       expect(names).not.toContain(later);
     }
   });
+
+  it("includes the nullable room origin compatibility column", async () => {
+    const columns = await db.prepare("PRAGMA table_info(room)").all<{
+      name: string;
+      notnull: number;
+    }>();
+    const origin = columns.results.find((column) => column.name === "origin_space_id");
+    expect(origin).toBeDefined();
+    expect(origin?.notnull).toBe(0);
+  });
 });
 
 describe("M01 — schema objects exist", () => {

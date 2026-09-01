@@ -159,7 +159,8 @@ E2EE AAD에는 이 값을 UInt64BE로 인코딩하지만 v1의 유효 범위는 
 
 | 필드 | 구분 | 근거 |
 | --- | --- | --- |
-| `room_id`, `space_id`, `worldline_id` | ⬜ canonical | identity |
+| `room_id`, `space_id`, `worldline_id` | ⬜ canonical | writer-shard identity |
+| `origin_space_id` | ⬜ canonical metadata | visible room family identity |
 | `title` | 🔒 canonical | 방 이름 |
 | `status_message` | 🔒 canonical | |
 | `music_title`, `music_artist` | 🔒 canonical | |
@@ -174,7 +175,7 @@ E2EE AAD에는 이 값을 UInt64BE로 인코딩하지만 v1의 유효 범위는 
 | render·search·object cache | **local-only** | |
 | `avatar_image_file_name` | **local-only** | 파일 payload 없는 local pointer |
 
-Room row의 물리 identity는 `(account_id, space_id, room_id)`이며 worldline 축이 없다. Wire object는 `worldline_id: null` 키를 유지하지만 `create_room`·`patch_room` target에서 non-null 값은 금지한다. `avatar_ref`는 canonical 장기 필드이나 v1 Worker의 D1 projection/write 경로는 아직 열지 않으며, 별도 schema·operation 계약 전에는 handler가 이를 받지 않는다.
+Room row의 물리 identity는 `(account_id, space_id, room_id)`이며 worldline 축이 없다. 화면에 보이는 room family의 canonical handle은 `(origin_space_id, room_id)`이고, 한 family 안의 각 writer shard는 자기 `space_id`에만 쓴다. 허용 shard는 `PHONE→PHONE`, `MAC→MAC·PHONE`, `TABLET→TABLET·MAC·PHONE`이다. `origin_space_id`가 없는 protocol v1 create는 `origin_space_id = target.space_id`로 정규화하며 origin shard만 만들 수 있다. 다른 기기에서 이어가는 shard는 원래 방의 `origin_space_id`를 명시해야 한다. Wire object는 `worldline_id: null` 키를 유지하지만 `create_room`·`patch_room` target에서 non-null 값은 금지한다. `avatar_ref`는 canonical 장기 필드이나 v1 Worker의 D1 projection/write 경로는 아직 열지 않으며, 별도 schema·operation 계약 전에는 handler가 이를 받지 않는다.
 
 `last_message_time`은 E2EE 제안서 §8.5에 따라 **평문 timestamp의 최대값으로 계산**하며 별도 평문 콘텐츠 필드를 만들지 않는다.
 
@@ -847,7 +848,7 @@ Phase 0 실측 규모: phone에서 group participant 참조 4개, `speakerRoomId
 | --- | --- | --- | --- |
 | `account` | `account_id` | — | |
 | `device` | `(account_id, device_id)` | — | `revoked_at`으로 무효화 |
-| `room` | `(account_id, space_id, room_id)` | — | `space_id`를 키에 넣어 space 간 UUID 충돌을 막는다 |
+| `room` | `(account_id, space_id, room_id)` | — | writer shard key. 별도 평문 `origin_space_id`와 `room_id`가 visible family를 식별한다 |
 | `group_state` | `(account_id, space_id, room_id)` | — | v1은 `PHONE_SPACE`만 허용 |
 | `worldline` | `(account_id, space_id, room_id, worldline_key)` | — | `worldline_key` 규칙은 §14.2 |
 | `turn` | `(account_id, space_id, room_id, worldline_key, turn_id)` | — | `is_tombstoned` soft-delete; v1 물리 삭제 금지 |
