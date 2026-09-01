@@ -1,0 +1,33 @@
+{
+  "classification": "SYNTHETIC_ONLY",
+  "schema_version": 1,
+  "note": "완전 동기화 로컬 수용 시나리오의 합성 fixture. 실제 대화·token·복구 문구·production endpoint를 담지 않는다.",
+  "account_id": "A0000000-0000-4000-8000-000000000001",
+  "devices": {
+    "mac": { "device_id": "80000000-0000-4000-8000-000000000001", "space_id": "MAC_SPACE" },
+    "phone": { "device_id": "80000000-0000-4000-8000-000000000002", "space_id": "PHONE_SPACE" },
+    "tablet": { "device_id": "80000000-0000-4000-8000-000000000003", "space_id": "TABLET_SPACE" }
+  },
+  "rooms": {
+    "mac_origin": { "room_id": "10000000-0000-4000-8000-000000000001", "origin_space_id": "MAC_SPACE" },
+    "phone_origin": { "room_id": "10000000-0000-4000-8000-000000000002", "origin_space_id": "PHONE_SPACE" },
+    "tablet_origin": { "room_id": "10000000-0000-4000-8000-000000000003", "origin_space_id": "TABLET_SPACE" }
+  },
+  "exposure_policy": {
+    "PHONE_SPACE": [],
+    "MAC_SPACE": ["PHONE_SPACE"],
+    "TABLET_SPACE": ["MAC_SPACE", "PHONE_SPACE"]
+  },
+  "attachment": {
+    "attachment_id": "70000000-0000-4000-8000-000000000001",
+    "kind": "attachment",
+    "source_byte_size": 96,
+    "ciphertext_byte_size": 130,
+    "envelope_overhead_bytes": 34,
+    "note": "ciphertext_byte_size는 source + 34와 정확히 같아야 한다. 부등식이 아니다."
+  },
+  "limits": {
+    "max_attachment_source_bytes": 12582912,
+    "max_encrypted_object_bytes": 12582946
+  }
+}

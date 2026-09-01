@@ -187,3 +187,101 @@ UI는 Mac host와 Android 앱 내부 QR scanner의 원격 합성 실기기 pairi
 - [Worker scaffold Codex 검토](2026-08-28-phase1-worker-scaffold-codex-review.md)
 - [Worker validator Codex 통합 검토](2026-08-28-phase1-worker-validator-codex-review.md)
 - [D1 migration 선행 계획](PHASE1_D1_MIGRATION_PLAN.md)
+
+---
+
+## 🧾 완전 동기화 Task 11–14 로컬 수용 (2026-09-01)
+
+계획: [Task 11–15 구현 계획](superpowers/plans/2026-09-01-complete-sync-task11-15.md) ·
+설계: [Task 11–15 설계](superpowers/specs/2026-09-01-complete-sync-task11-15-design.md)
+
+커밋 `71db244`(첨부), `a2ba232`(방 가족), `bdcd5f9`(runtime)에서 멈춘 상태로 잰 값이다.
+**여기 적힌 것은 전부 실제로 실행한 명령의 결과다.**
+
+### 실행한 검사
+
+| 대상 | 명령 | 결과 |
+| --- | --- | --- |
+| Worker · D1 | `npm test -- --run` | **45개 파일 922개 통과, 실패 0** |
+| Worker 타입 | `npm run typecheck` | 통과 (출력 없음) |
+| Android | `./gradlew :app:testPhoneDebugUnitTest` | **375개 통과, 실패 0** |
+| Android 컴파일 | `:app:compilePhoneDebugKotlin`, `:app:compileTabletMentorDebugKotlin` | 통과 |
+| Swift 빌드 | `swift build` | 통과 |
+| Swift 테스트 | `./tools/run-swift-sync-tests.sh` | **37 통과 / 41, build_failed=2, run_failed=2** |
+
+Gradle이 보고한 JVM: **17.0.20.1 (Homebrew)**. 저장소 규칙이 요구하는 JDK 17과 일치한다.
+
+전부 로컬 workerd/Miniflare에서 돌았다. `--remote` 명령을 쓰지 않았다.
+
+### Swift 러너의 4개 실패 — 회귀가 아니다
+
+`Package.swift`에 test target이 없어 `swift test`를 쓸 수 없다. `Tests/` 41개 파일이
+각각 `@main` 실행파일이라 `tools/run-swift-sync-tests.sh`가 하나씩 컴파일·실행한다.
+
+| 실패 | 종류 | 판정 |
+| --- | --- | --- |
+| `SyncPairingHostUIModelTests` | build | **러너의 한계.** `SyncPairingQRCodeRenderer`가 `Views/`에 있다 |
+| `BubbleSnapshotKeyTests` | build | **러너의 한계.** `BubbleSnapshotKey`가 `Views/`에 있다 |
+| `RecoveryMnemonicTests` | run | **기존 실패.** 기준 커밋 `aaa70a0`에서도 동일하게 실패함을 확인 |
+| `SyncEnrollmentBuilderTests` | run | **기존 실패.** 기준 커밋 `aaa70a0`에서도 동일하게 실패함을 확인 |
+
+러너는 `Views/`와 `App/`을 제외한다. `Bundle.module`이 SwiftPM이 만들어 주는
+심볼이라 맨 `swiftc`로는 컴파일되지 않고, 앱의 `@main`이 테스트의 `@main`과
+충돌하기 때문이다. **빌드 실패를 조용히 건너뛰지 않고 `FAILED`로 세어 보고한다.**
+
+두 실행 실패는 이번 작업 이전부터 있던 것이다. `aaa70a0`을 checkout해 같은 명령으로
+재현했다. 이번 변경이 만든 것이 아니다.
+
+### 새로 추가한 검사
+
+| 검사 | 개수 |
+| --- | --- |
+| 첨부 암호 계약 벡터 (Swift / Kotlin) | 12 / 4 |
+| 첨부 Worker 클라이언트 (Swift / Kotlin) | 12 / 2 |
+| 첨부 전송 코디네이터 (Swift / Kotlin) | 11 / 2 |
+| 첨부 표시 상태 (Swift / Kotlin) | 11 / 1 |
+| 방 가족 완결성 (Swift / Kotlin) | 14 / 8 |
+| runtime 스위치 (Swift / Kotlin) | 22 / 5 |
+| Worker 완전 동기화 E2E | 6 |
+
+암호 벡터는 Swift가 만들고 Kotlin이 재현하며, HKDF 사슬을 **node의 독립 구현으로
+교차 확인**했다. 두 플랫폼이 같은 버그를 공유하는 경우를 막기 위한 것이다.
+
+### 실측값
+
+| 항목 | 값 |
+| --- | --- |
+| 12MB 첨부 단일 호출 최고 메모리 (`/usr/bin/time -l`) | **69,419,008 bytes** |
+| 12MB 봉투 크기 | 12,582,946 bytes (원본 + 34) |
+
+최고 메모리가 원본의 약 5.5배다. 원본·암호문·복호문 버퍼가 동시에 살아 있기
+때문이다. 암호 규격 §9.2가 "아직 측정하지 않았다"고 남긴 자리를 채운 값이다.
+**chunked AEAD는 v1 범위 밖이므로 이 값을 근거로 임의 도입하지 않는다.**
+
+### 비노출 점검
+
+- 추적되는 작업 파일에서 개인키·복구 문구·Bearer token 패턴이 발견되지 않았다.
+- `tools/fixtures/complete-sync-room-v1.json`은 `classification: SYNTHETIC_ONLY`이며
+  합성 접두사(`A0000000-…`, `70000000-…`)만 쓴다. 실제 대화·token·복구 문구·
+  production endpoint가 없다.
+- 실제 대화·첨부·복구 문구 접근 **0건**.
+
+### 미검증 — 반드시 확인해야 할 것
+
+**앱을 설치하지 않았다.** `/Applications/가가오독.app`은 바뀌지 않았고 안드로이드
+APK도 설치하지 않았다. 아래는 빌드가 통과했을 뿐 화면에서 확인하지 않았다.
+
+| 미검증 항목 | 확인해야 할 흐름 |
+| --- | --- |
+| 첨부 4상태 표시 | 원격 방에서 첨부가 pending → ready로 바뀌는지 |
+| 12MB 초과 안내 | 상한 초과 파일이 조용히 누락되지 않고 안내가 뜨는지 |
+| 긴 방 스크롤 | 스크롤 중 첨부 상태 표시가 다른 말풍선과 어긋나지 않는지 |
+| 이어쓰기 차단 | `unsupportedReason`이 있는 방이 읽기 전용으로 보이는지 |
+| 동기화 상태 표시 | `syncEnabled=false`에서 "동기화 중"이라고 말하지 않는지 |
+| lifecycle 계기 | 앱 시작·foreground 복귀가 실제로 runtime을 부르는지 |
+
+### 다음 gate
+
+Task 15(격리된 합성 Cloudflare 자원 검증)는 **사용자 승인 전까지 시작하지 않는다.**
+승인은 합성 Worker 배포, 원격 D1 migration `0011`·`0012`, 합성 smoke를 이름으로
+지목해야 한다. Cloudflare 로그인은 사용자가 직접 한다.
