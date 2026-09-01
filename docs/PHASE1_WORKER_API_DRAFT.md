@@ -697,6 +697,10 @@ secret·claim redeem auth는 저장하지 않는다. expired pairing session·cl
 
 ## 9. Phase 1 API acceptance
 
+### 8.4 원격 방 답장 재시도
+
+클라이언트는 원격 방 답장을 여러 operation으로 나누더라도 각 operation id에 처음 작성한 raw body를 그대로 재전송한다. 충돌 복구에서 새 operation id를 만들 때만 새 ciphertext를 만들며, 이미 성공한 operation의 raw body를 수정하거나 재직렬화하지 않는다.
+
 - 같은 operation 재시도는 동일 결과, 다른 payload는 mismatch
 - CAS 실패 시 canonical row·sequence·operation/change log가 모두 불변
 - concurrent identical operation은 하나만 적용

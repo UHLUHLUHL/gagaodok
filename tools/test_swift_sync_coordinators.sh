@@ -189,3 +189,11 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncRoomExposurePolicyTests.swift" \
   -o "$exposure_binary"
 "$exposure_binary"
+
+remote_reply_journal_binary="${TMPDIR:-/tmp}/gagaodok-sync-remote-reply-journal-tests"
+swiftc \
+  "$services/SyncRemoteRoomTypes.swift" \
+  "$services/SyncRemoteReplyJournal.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncRemoteReplyJournalTests.swift" \
+  -o "$remote_reply_journal_binary"
+"$remote_reply_journal_binary"

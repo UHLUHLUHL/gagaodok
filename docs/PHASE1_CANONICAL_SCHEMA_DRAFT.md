@@ -996,6 +996,10 @@ Phase 0 보고서는 민감한 본문을 남기지 않기 위해 **암호화 fie
 
 ## 16. Phase 1 완료 조건
 
+### 15.3 원격 방 이어쓰기의 로컬 durable journal
+
+원격 방에서 새 답장을 만들 때 기기는 원격 canonical row를 직접 수정하지 않는다. 로컬 journal은 생성할 operation의 정확한 raw bytes, 단계, acknowledgement를 원자적으로 보관한다. `BUBBLE_ORDER_CONFLICT` 전에는 아직 반영되지 않은 두 bubble만 새 order·ciphertext·operation id로 재생성하며, 이미 반영된 사용자 bubble은 보존한다. `complete` journal은 관련 projection을 관측한 뒤에만 제거한다. 이 journal은 기기 로컬 상태이고 Worker/D1 schema나 원격 payload가 아니다.
+
 이 초안이 계약으로 확정되려면 다음이 필요하다.
 
 1. 각 entity의 fixture와 acceptance test 작성
