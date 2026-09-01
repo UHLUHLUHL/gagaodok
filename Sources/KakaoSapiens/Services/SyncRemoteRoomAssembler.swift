@@ -18,15 +18,37 @@ public struct SyncRemoteRoomAssembler {
 
     public func assemble(_ entries: [SyncReplicaEntry]) -> [SyncRemoteRoomSnapshot] {
         guard Self.spaces.contains(registeredSpaceID), masterKey.count == 32 else { return [] }
+        // 예전에는 여기서 room·turn·bubble만 통과시켰다. 나머지 6종은 분기에 닿기
+        // 전에 걸러져 조용히 버려졌고, "지원하지 않음" 표시조차 뜨지 않았다.
+        let (pools, poolsHadUnknown) = SyncCanonicalRoomSnapshotBuilder.pools(entries)
         var families: [String: [SyncReplicaEntry]] = [:]
-        for entry in entries where entry.entityType == "room" || entry.entityType == "turn" || entry.entityType == "bubble" {
+        var strayUnknown = poolsHadUnknown
+        for entry in entries {
+            if SyncCanonicalRoomSnapshotBuilder.poolTypes.contains(entry.entityType) { continue }
+            guard SyncCanonicalRoomSnapshotBuilder.roomScopedTypes.contains(entry.entityType) else {
+                strayUnknown = true; continue
+            }
             guard let identity = object(entry.identityJSON),
                   let rawRoom = identity["room_id"] as? String,
                   let room = canonicalUUID(rawRoom)
-            else { continue }
+            else { strayUnknown = true; continue }
             families[room, default: []].append(entry)
         }
-        return families.keys.sorted().compactMap { assembleFamily(families[$0] ?? [], roomID: $0) }
+        let builder = SyncCanonicalRoomSnapshotBuilder()
+        return families.keys.sorted().compactMap { roomID in
+            let entries = families[roomID] ?? []
+            guard let snapshot = assembleFamily(entries, roomID: roomID, pools: pools) else { return nil }
+            // 한 가족의 결손은 그 가족만 막는다. 다른 방으로 번지지 않는다.
+            let gaps = builder.gaps(
+                roomEntries: entries, pools: pools, poolsHadUnknown: strayUnknown)
+            guard !gaps.isEmpty else { return snapshot }
+            return SyncRemoteRoomSnapshot(
+                handle: snapshot.handle, title: snapshot.title,
+                writerSpaces: snapshot.writerSpaces, messages: snapshot.messages,
+                contentHash: snapshot.contentHash,
+                continuationCapability: snapshot.continuationCapability,
+                unsupportedReason: gaps.map(\.rawValue).joined(separator: ","))
+        }
     }
 
     private struct RoomRow {
@@ -50,9 +72,12 @@ public struct SyncRemoteRoomAssembler {
         let timestampDate: Date
         let projection: [String: Any]
         let tombstoned: Bool
+        let attachmentID: String?
     }
 
-    private func assembleFamily(_ entries: [SyncReplicaEntry], roomID: String) -> SyncRemoteRoomSnapshot? {
+    private func assembleFamily(
+        _ entries: [SyncReplicaEntry], roomID: String, pools: SyncRoomFamilyPools
+    ) -> SyncRemoteRoomSnapshot? {
         var rooms: [RoomRow] = []
         var turns: [TurnKey: Bool] = [:]
         var bubbles: [BubbleRow] = []
@@ -96,8 +121,12 @@ public struct SyncRemoteRoomAssembler {
                 bubbles.append(BubbleRow(
                     space: space, turn: turn, message: message, order: order,
                     timestamp: timestamp, timestampDate: timestampDate,
-                    projection: projection, tombstoned: tombstoned
+                    projection: projection, tombstoned: tombstoned,
+                    attachmentID: (projection["attachment_ref_attachment_id"] as? String)?.uppercased()
                 ))
+            case "group_state", "worldline", "checkpoint":
+                // 렌더링에는 쓰지 않는다. 완결성 판정은 builder가 따로 한다.
+                break
             default:
                 return nil
             }
@@ -156,7 +185,9 @@ public struct SyncRemoteRoomAssembler {
                 turnID: UUID(uuidString: bubble.turn)!, messageID: UUID(uuidString: bubble.message)!,
                 bubbleOrder: bubble.order, timestamp: bubble.timestamp,
                 sender: sender, kind: kind, text: text,
-                speakerRef: speaker.value, reactions: reactions.value
+                speakerRef: speaker.value, reactions: reactions.value,
+                attachmentID: bubble.attachmentID,
+                attachmentState: bubble.attachmentID.flatMap { pools.attachmentStates[$0] }
             ))
         }
 

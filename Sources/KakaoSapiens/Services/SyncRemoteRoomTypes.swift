@@ -31,6 +31,10 @@ public struct SyncRemoteBubble: Codable, Equatable {
     public let text: String
     public let speakerRef: String?
     public let reactions: String?
+    /// 첨부 참조. 없으면 nil이다.
+    public let attachmentID: String?
+    /// 첨부의 서버 상태. `SyncAttachmentDisplayState`가 이것으로 화면 상태를 정한다.
+    public let attachmentState: String?
 
     public init(
         writerSpaceID: String,
@@ -42,7 +46,9 @@ public struct SyncRemoteBubble: Codable, Equatable {
         kind: String,
         text: String,
         speakerRef: String? = nil,
-        reactions: String? = nil
+        reactions: String? = nil,
+        attachmentID: String? = nil,
+        attachmentState: String? = nil
     ) {
         self.writerSpaceID = writerSpaceID
         self.turnID = turnID
@@ -54,6 +60,8 @@ public struct SyncRemoteBubble: Codable, Equatable {
         self.text = text
         self.speakerRef = speakerRef
         self.reactions = reactions
+        self.attachmentID = attachmentID
+        self.attachmentState = attachmentState
     }
 
     enum CodingKeys: String, CodingKey {
@@ -64,6 +72,8 @@ public struct SyncRemoteBubble: Codable, Equatable {
         case timestamp, sender, kind, text
         case speakerRef = "speaker_ref"
         case reactions
+        case attachmentID = "attachment_id"
+        case attachmentState = "attachment_state"
     }
 }
 
@@ -75,6 +85,8 @@ public struct SyncRemoteRoomSnapshot: Codable, Equatable {
     public let contentHash: String
     /// Missing on legacy projections: those rooms remain read-only.
     public let continuationCapability: SyncRemoteContinuationCapability?
+    /// 비어 있지 않으면 이어쓰기가 막힌다. 옛 projection에는 없다.
+    public let unsupportedReason: String?
 
     public init(
         handle: SyncRoomHandle,
@@ -82,7 +94,8 @@ public struct SyncRemoteRoomSnapshot: Codable, Equatable {
         writerSpaces: [String],
         messages: [SyncRemoteBubble],
         contentHash: String,
-        continuationCapability: SyncRemoteContinuationCapability? = nil
+        continuationCapability: SyncRemoteContinuationCapability? = nil,
+        unsupportedReason: String? = nil
     ) {
         self.handle = handle
         self.title = title
@@ -90,10 +103,11 @@ public struct SyncRemoteRoomSnapshot: Codable, Equatable {
         self.messages = messages
         self.contentHash = contentHash
         self.continuationCapability = continuationCapability
+        self.unsupportedReason = unsupportedReason
     }
 
     enum CodingKeys: String, CodingKey {
-        case handle, title, messages, continuationCapability
+        case handle, title, messages, continuationCapability, unsupportedReason
         case writerSpaces = "writer_spaces"
         case contentHash = "content_hash"
     }
@@ -106,5 +120,6 @@ public struct SyncRemoteRoomSnapshot: Codable, Equatable {
         messages = try values.decode([SyncRemoteBubble].self, forKey: .messages)
         contentHash = try values.decode(String.self, forKey: .contentHash)
         continuationCapability = try values.decodeIfPresent(SyncRemoteContinuationCapability.self, forKey: .continuationCapability)
+        unsupportedReason = try values.decodeIfPresent(String.self, forKey: .unsupportedReason)
     }
 }

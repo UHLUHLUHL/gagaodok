@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.sapiens.gagaodok.sync.SyncRemoteRoomSnapshot
+import com.sapiens.gagaodok.sync.SyncAttachmentDisplayState
 import com.sapiens.gagaodok.sync.SyncRemoteContinuationCapability
 import com.sapiens.gagaodok.sync.SyncRemoteReplyCoordinator
 import com.sapiens.gagaodok.sync.SyncRemoteReplyJournal
@@ -92,6 +93,13 @@ fun RemoteChatRoomScreen(snapshot: SyncRemoteRoomSnapshot, onClose: () -> Unit) 
                         Column(Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
                             Text(message.sender, style = KakaoText.listPreview, color = colors.textSecondary)
                             Text(message.text, style = KakaoText.listName, color = colors.textPrimary)
+                            message.attachmentState?.let {
+                                Text(
+                                    attachmentLabel(it),
+                                    style = KakaoText.listPreview,
+                                    color = colors.textSecondary,
+                                )
+                            }
                         }
                     }
                 }
@@ -172,3 +180,17 @@ private suspend fun prepareRemoteReply(
         true
     }.getOrDefault(false)
 }
+
+/**
+ * 서버 상태를 사용자 문구로 옮긴다.
+ *
+ * 판단은 [SyncAttachmentDisplayState]가 하고 여기서는 옮기기만 한다. 그래야 앱을
+ * 설치하지 않는 동안에도 규칙이 테스트로 고정된다.
+ */
+private fun attachmentLabel(remoteState: String): String =
+    when (SyncAttachmentDisplayState.state(remoteState, null)) {
+        SyncAttachmentDisplayState.PENDING -> "첨부를 준비하고 있습니다."
+        SyncAttachmentDisplayState.READY -> "첨부 있음"
+        SyncAttachmentDisplayState.RETRYABLE -> "첨부를 받지 못했습니다. 다시 시도하세요."
+        SyncAttachmentDisplayState.UNAVAILABLE -> "이 첨부는 열 수 없습니다."
+    }

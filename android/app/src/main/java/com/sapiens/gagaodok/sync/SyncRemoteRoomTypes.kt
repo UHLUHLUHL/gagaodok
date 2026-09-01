@@ -24,6 +24,10 @@ data class SyncRemoteBubble(
     val text: String,
     @SerialName("speaker_ref") val speakerRef: String? = null,
     val reactions: String? = null,
+    /** 첨부 참조. 없으면 null이다. */
+    @SerialName("attachment_id") val attachmentId: String? = null,
+    /** 첨부의 서버 상태. SyncAttachmentDisplayState가 이것으로 화면 상태를 정한다. */
+    @SerialName("attachment_state") val attachmentState: String? = null,
 )
 
 @Serializable
@@ -34,4 +38,6 @@ data class SyncRemoteRoomSnapshot(
     val messages: List<SyncRemoteBubble>,
     @SerialName("content_hash") val contentHash: String,
     @SerialName("continuation_capability") val continuationCapability: SyncRemoteContinuationCapability? = null,
+    /** 비어 있지 않으면 이어쓰기가 막힌다. 옛 projection에는 없다. */
+    @SerialName("unsupported_reason") val unsupportedReason: String? = null,
 )

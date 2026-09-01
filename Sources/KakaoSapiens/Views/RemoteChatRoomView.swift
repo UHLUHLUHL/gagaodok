@@ -16,6 +16,19 @@ public struct RemoteChatRoomView: View {
         self.onClose = onClose
     }
 
+    /// 서버 상태를 사용자 문구로 옮긴다.
+    ///
+    /// 판단은 `SyncAttachmentDisplayState`가 하고 여기서는 옮기기만 한다.
+    /// 그래야 앱을 설치하지 않는 동안에도 규칙이 테스트로 고정된다.
+    static func attachmentLabel(_ remoteState: String) -> String {
+        switch SyncAttachmentDisplayState.state(remoteState: remoteState, lastError: nil) {
+        case .pending: return "첨부를 준비하고 있습니다."
+        case .ready: return "첨부 있음"
+        case .retryable: return "첨부를 받지 못했습니다. 다시 시도하세요."
+        case .unavailable: return "이 첨부는 열 수 없습니다."
+        }
+    }
+
     public var body: some View {
         ZStack {
             Color.black.opacity(0.18).ignoresSafeArea()
@@ -58,6 +71,11 @@ public struct RemoteChatRoomView: View {
                                     .foregroundColor(KakaoTheme.textPrimary)
                                     .padding(.horizontal, 10).padding(.vertical, 7)
                                     .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+                                if let state = message.attachmentState {
+                                    Text(Self.attachmentLabel(state))
+                                        .font(.system(size: 10))
+                                        .foregroundColor(KakaoTheme.textSecondary)
+                                }
                             }
                         }
                     }

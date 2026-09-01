@@ -33,22 +33,41 @@ class SyncRemoteRoomAssembler(
         val instant: Instant,
         val projection: JsonObject,
         val tombstoned: Boolean,
+        val attachmentId: String?,
     )
 
     fun assemble(entries: List<SyncReplicaEntry>): List<SyncRemoteRoomSnapshot> {
         if (registeredSpaceId !in SPACES || masterKey.size != 32) return emptyList()
-        return entries
-            .filter { it.entityType in RELEVANT }
-            .mapNotNull { entry ->
-                val identity = parseObject(entry.identityJson) ?: return@mapNotNull null
-                canonicalUuid(identity["room_id"]?.jsonPrimitive?.contentOrNull)?.let { it to entry }
+        // 예전에는 여기서 room·turn·bubble만 통과시켰다. 나머지 6종은 분기에 닿기
+        // 전에 걸러져 조용히 버려졌고, "지원하지 않음" 표시조차 뜨지 않았다.
+        val (pools, poolsHadUnknown) = SyncCanonicalRoomSnapshotBuilder.pools(entries)
+        var strayUnknown = poolsHadUnknown
+        val families = sortedMapOf<String, MutableList<SyncReplicaEntry>>()
+        for (entry in entries) {
+            if (entry.entityType in SyncCanonicalRoomSnapshotBuilder.POOL_TYPES) continue
+            if (entry.entityType !in SyncCanonicalRoomSnapshotBuilder.ROOM_SCOPED_TYPES) {
+                strayUnknown = true; continue
             }
-            .groupBy({ it.first }, { it.second })
-            .toSortedMap()
-            .mapNotNull { (room, family) -> assembleFamily(room, family) }
+            val identity = parseObject(entry.identityJson)
+            val room = identity?.let { canonicalUuid(it["room_id"]?.jsonPrimitive?.contentOrNull) }
+            if (room == null) { strayUnknown = true; continue }
+            families.getOrPut(room) { mutableListOf() } += entry
+        }
+        val builder = SyncCanonicalRoomSnapshotBuilder()
+        return families.mapNotNull { (room, family) ->
+            val snapshot = assembleFamily(room, family, pools) ?: return@mapNotNull null
+            // 한 가족의 결손은 그 가족만 막는다. 다른 방으로 번지지 않는다.
+            val gaps = builder.gaps(family, pools, strayUnknown)
+            if (gaps.isEmpty()) snapshot
+            else snapshot.copy(unsupportedReason = gaps.joinToString(",") { it.wire })
+        }
     }
 
-    private fun assembleFamily(roomId: String, entries: List<SyncReplicaEntry>): SyncRemoteRoomSnapshot? {
+    private fun assembleFamily(
+        roomId: String,
+        entries: List<SyncReplicaEntry>,
+        pools: SyncRoomFamilyPools,
+    ): SyncRemoteRoomSnapshot? {
         val rooms = mutableListOf<RoomRow>()
         val turns = mutableMapOf<TurnKey, Boolean>()
         val bubbles = mutableListOf<BubbleRow>()
@@ -84,8 +103,13 @@ class SyncRemoteRoomAssembler(
                     val instant = try { Instant.parse(timestamp) } catch (_: DateTimeParseException) { return null }
                     val tombstoned = projection["is_tombstoned"]?.jsonPrimitive?.booleanOrNull ?: return null
                     if (space !in SPACES || identity.uuid("room_id") != roomId || identity["worldline_id"] !is JsonNull) return null
-                    bubbles += BubbleRow(space, turn, message, order, timestamp, instant, projection, tombstoned)
+                    bubbles += BubbleRow(
+                        space, turn, message, order, timestamp, instant, projection, tombstoned,
+                        projection.text("attachment_ref_attachment_id")?.uppercase(),
+                    )
                 }
+                // 렌더링에는 쓰지 않는다. 완결성 판정은 builder가 따로 한다.
+                "group_state", "worldline", "checkpoint" -> Unit
                 else -> return null
             }
         }
@@ -114,6 +138,8 @@ class SyncRemoteRoomAssembler(
             dated += bubble.instant to SyncRemoteBubble(
                 bubble.space, bubble.turn, bubble.message, bubble.order, bubble.timestamp,
                 sender, kind, text, speaker.second, reactions.second,
+                bubble.attachmentId,
+                bubble.attachmentId?.let { pools.attachmentStates[it] },
             )
         }
         val messages = dated.sortedWith(
@@ -206,7 +232,7 @@ class SyncRemoteRoomAssembler(
 
     companion object {
         private val SPACES = setOf("MAC_SPACE", "PHONE_SPACE", "TABLET_SPACE")
-        private val RELEVANT = setOf("room", "turn", "bubble")
+        private val RELEVANT = SyncCanonicalRoomSnapshotBuilder.ROOM_SCOPED_TYPES
         private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
     }
 }

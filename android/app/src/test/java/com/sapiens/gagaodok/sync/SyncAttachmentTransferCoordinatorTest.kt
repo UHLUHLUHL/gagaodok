@@ -47,7 +47,7 @@ class SyncAttachmentTransferCoordinatorTest {
         try {
             val order = mutableListOf<String>()
             val plan = coordinator(root, transport(order)).prepare(
-                source, attachment, SyncE2EE.AttachmentKind.ATTACHMENT,
+                source, attachment, SyncAttachmentKind.ATTACHMENT,
                 "note.pdf", "application/pdf", fixedRandom,
             )
             // 1. 봉투 크기가 정확히 원본 + 34다.
@@ -68,7 +68,7 @@ class SyncAttachmentTransferCoordinatorTest {
             // 4. 크기가 다르면 거부한다.
             assertThrows(SyncAttachmentException::class.java) {
                 coordinator(root, transport(mutableListOf())).download(
-                    attachment, SyncE2EE.AttachmentKind.ATTACHMENT, 96, 999,
+                    attachment, SyncAttachmentKind.ATTACHMENT, 96, 999,
                     plan.ciphertextHashHex, plan.wrappedFileKeyBase64,
                 )
             }
@@ -78,14 +78,14 @@ class SyncAttachmentTransferCoordinatorTest {
             val real = coordinator(root, transport(mutableListOf(), downloadBody = plan.ciphertext))
             assertThrows(SyncAttachmentException::class.java) {
                 real.download(
-                    attachment, SyncE2EE.AttachmentKind.ATTACHMENT, 96, plan.ciphertextByteSize,
+                    attachment, SyncAttachmentKind.ATTACHMENT, 96, plan.ciphertextByteSize,
                     "0".repeat(64), plan.wrappedFileKeyBase64,
                 )
             }
 
             // 5b. 올바른 해시와 바이트면 왕복한다. 위 거부가 우연이 아님을 확인한다.
             val restored = real.download(
-                attachment, SyncE2EE.AttachmentKind.ATTACHMENT, 96, plan.ciphertextByteSize,
+                attachment, SyncAttachmentKind.ATTACHMENT, 96, plan.ciphertextByteSize,
                 plan.ciphertextHashHex, plan.wrappedFileKeyBase64,
             )
             assertArrayEquals(source, restored.readBytes())
@@ -106,7 +106,7 @@ class SyncAttachmentTransferCoordinatorTest {
             val error = assertThrows(SyncAttachmentException::class.java) {
                 coordinator(root, transport(mutableListOf())).prepare(
                     ByteArray((SyncAttachmentTransferCoordinator.MAX_SOURCE_BYTES + 1).toInt()),
-                    attachment, SyncE2EE.AttachmentKind.ATTACHMENT,
+                    attachment, SyncAttachmentKind.ATTACHMENT,
                     "big.bin", "application/octet-stream", fixedRandom,
                 )
             }

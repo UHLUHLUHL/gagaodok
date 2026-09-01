@@ -52,7 +52,7 @@ class AttachmentContractVectorTest {
         val aad = SyncE2EE.attachmentContentAad(
             str("account_id"),
             str("attachment_id"),
-            SyncE2EE.AttachmentKind.ATTACHMENT,
+            SyncAttachmentKind.ATTACHMENT,
             int("source_byte_size").toLong(),
         )
         assertArrayEquals(unhex(str("content_aad_hex")), aad)
@@ -72,7 +72,7 @@ class AttachmentContractVectorTest {
         assertArrayEquals(unhex(str("ciphertext_hash_hex")), hash)
 
         val aad = SyncE2EE.attachmentWrapAad(
-            str("account_id"), str("attachment_id"), SyncE2EE.AttachmentKind.ATTACHMENT, hash,
+            str("account_id"), str("attachment_id"), SyncAttachmentKind.ATTACHMENT, hash,
         )
         assertArrayEquals(unhex(str("wrap_aad_hex")), aad)
         assertArrayEquals(
@@ -83,7 +83,7 @@ class AttachmentContractVectorTest {
         val tampered = hash.copyOf()
         tampered[0] = (tampered[0].toInt() xor 1).toByte()
         val tamperedAad = SyncE2EE.attachmentWrapAad(
-            str("account_id"), str("attachment_id"), SyncE2EE.AttachmentKind.ATTACHMENT, tampered,
+            str("account_id"), str("attachment_id"), SyncAttachmentKind.ATTACHMENT, tampered,
         )
         var rejected = false
         try {
@@ -100,11 +100,11 @@ class AttachmentContractVectorTest {
     fun separatesFileNameAndMimeTypeAad() {
         val name = SyncE2EE.attachmentFieldAad(
             str("account_id"), str("attachment_id"),
-            SyncE2EE.AttachmentKind.ATTACHMENT, SyncE2EE.AttachmentField.FILE_NAME,
+            SyncAttachmentKind.ATTACHMENT, SyncAttachmentField.FILE_NAME,
         )
         val mime = SyncE2EE.attachmentFieldAad(
             str("account_id"), str("attachment_id"),
-            SyncE2EE.AttachmentKind.ATTACHMENT, SyncE2EE.AttachmentField.MIME_TYPE,
+            SyncAttachmentKind.ATTACHMENT, SyncAttachmentField.MIME_TYPE,
         )
         assertArrayEquals(unhex(str("file_name_aad_hex")), name)
         assertFalse(name.contentEquals(mime))

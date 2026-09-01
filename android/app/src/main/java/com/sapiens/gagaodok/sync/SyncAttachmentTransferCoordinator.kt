@@ -6,7 +6,7 @@ import java.util.UUID
 
 data class SyncAttachmentPlan(
     val attachmentId: String,
-    val kind: SyncE2EE.AttachmentKind,
+    val kind: SyncAttachmentKind,
     val sourceByteSize: Long,
     val ciphertextByteSize: Long,
     val ciphertextHashHex: String,
@@ -47,7 +47,7 @@ class SyncAttachmentTransferCoordinator(
     fun prepare(
         bytes: ByteArray,
         attachmentId: String,
-        kind: SyncE2EE.AttachmentKind,
+        kind: SyncAttachmentKind,
         fileName: String,
         mimeType: String,
         randomBytes: (Int) -> ByteArray,
@@ -68,11 +68,11 @@ class SyncAttachmentTransferCoordinator(
         val wrapped = SyncE2EE.sealAttachment(fileKey, keys.attachmentWrapKey, randomBytes(12), wrapAad)
         val name = SyncE2EE.sealAttachment(
             fileName.toByteArray(Charsets.UTF_8), keys.attachmentFieldAeadKey, randomBytes(12),
-            SyncE2EE.attachmentFieldAad(accountId, attachmentId, kind, SyncE2EE.AttachmentField.FILE_NAME),
+            SyncE2EE.attachmentFieldAad(accountId, attachmentId, kind, SyncAttachmentField.FILE_NAME),
         )
         val mime = SyncE2EE.sealAttachment(
             mimeType.toByteArray(Charsets.UTF_8), keys.attachmentFieldAeadKey, randomBytes(12),
-            SyncE2EE.attachmentFieldAad(accountId, attachmentId, kind, SyncE2EE.AttachmentField.MIME_TYPE),
+            SyncE2EE.attachmentFieldAad(accountId, attachmentId, kind, SyncAttachmentField.MIME_TYPE),
         )
         return SyncAttachmentPlan(
             attachmentId = attachmentId,
@@ -99,7 +99,7 @@ class SyncAttachmentTransferCoordinator(
 
     fun download(
         attachmentId: String,
-        kind: SyncE2EE.AttachmentKind,
+        kind: SyncAttachmentKind,
         sourceByteSize: Long,
         ciphertextByteSize: Long,
         ciphertextHashHex: String,

@@ -15,6 +15,14 @@ import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/**
+ * 첨부 종류. public API가 노출하므로 internal한 SyncE2EE 안이 아니라 최상위에 둔다.
+ * Swift의 `SyncAttachmentKind`와 같은 자리다.
+ */
+enum class SyncAttachmentKind(val wire: String) { ATTACHMENT("attachment"), AVATAR("avatar") }
+
+enum class SyncAttachmentField(val wire: String) { FILE_NAME("file_name"), MIME_TYPE("mime_type") }
+
 internal object SyncE2EE {
     private const val PROTOCOL_VERSION = 1
     private const val ALGORITHM = 1
@@ -58,9 +66,6 @@ internal object SyncE2EE {
         val attachmentFieldAeadKey: ByteArray,
         val attachmentWrapKey: ByteArray,
     )
-
-    enum class AttachmentKind(val wire: String) { ATTACHMENT("attachment"), AVATAR("avatar") }
-    enum class AttachmentField(val wire: String) { FILE_NAME("file_name"), MIME_TYPE("mime_type") }
 
     data class RecoveryMaterial(
         val recoveryLookup: ByteArray,
@@ -139,7 +144,7 @@ internal object SyncE2EE {
     private fun attachmentAad(
         accountId: String,
         attachmentId: String,
-        kind: AttachmentKind,
+        kind: SyncAttachmentKind,
         purpose: String,
         binding: ByteArray?,
     ): ByteArray = encodeLP(
@@ -159,7 +164,7 @@ internal object SyncE2EE {
     fun attachmentContentAad(
         accountId: String,
         attachmentId: String,
-        kind: AttachmentKind,
+        kind: SyncAttachmentKind,
         sourceByteSize: Long,
     ): ByteArray = attachmentAad(accountId, attachmentId, kind, "attachment_content", uint64(sourceByteSize))
 
@@ -170,7 +175,7 @@ internal object SyncE2EE {
     fun attachmentWrapAad(
         accountId: String,
         attachmentId: String,
-        kind: AttachmentKind,
+        kind: SyncAttachmentKind,
         ciphertextHash: ByteArray,
     ): ByteArray {
         requireContract(ciphertextHash.size == 32, ContractError.INVALID_IDENTITY)
@@ -180,8 +185,8 @@ internal object SyncE2EE {
     fun attachmentFieldAad(
         accountId: String,
         attachmentId: String,
-        kind: AttachmentKind,
-        field: AttachmentField,
+        kind: SyncAttachmentKind,
+        field: SyncAttachmentField,
     ): ByteArray = attachmentAad(accountId, attachmentId, kind, field.wire, null)
 
     fun sealAttachment(plaintext: ByteArray, key: ByteArray, nonce: ByteArray, aad: ByteArray): ByteArray =
