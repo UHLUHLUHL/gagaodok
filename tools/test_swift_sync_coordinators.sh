@@ -169,3 +169,14 @@ swiftc \
   "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncShadowReaderTests.swift" \
   -o "$shadow_reader_binary"
 "$shadow_reader_binary"
+
+remote_room_binary="${TMPDIR:-/tmp}/gagaodok-sync-remote-room-tests"
+swiftc \
+  "$services/SyncE2EE.swift" \
+  "$services/SyncReplicaStore.swift" \
+  "$services/SyncRemoteRoomTypes.swift" \
+  "$services/SyncRemoteRoomAssembler.swift" \
+  "$services/SyncRemoteRoomRepository.swift" \
+  "$repo_root/Tests/KakaoSapiensSyncOutboxTests/SyncRemoteRoomAssemblerTests.swift" \
+  -o "$remote_room_binary"
+"$remote_room_binary"
