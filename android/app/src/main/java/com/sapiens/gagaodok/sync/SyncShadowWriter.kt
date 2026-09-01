@@ -48,7 +48,8 @@ data class SyncShadowWriteManifest(
 class SyncShadowWriter(
     private val accountId: String,
     private val deviceId: String,
-    private val spaceId: String,
+    private val originSpaceId: String,
+    private val writerSpaceId: String,
     private val masterKey: ByteArray,
     private val randomBytes: (Int) -> ByteArray = { count ->
         ByteArray(count).also { SecureRandom().nextBytes(it) }
@@ -83,13 +84,13 @@ class SyncShadowWriter(
     ): SyncShadowWriteManifest {
         val room = roomId.uppercase(Locale.ROOT)
         val worldline = worldlineId?.uppercase(Locale.ROOT)
-        val scope = SyncE2EE.Scope(accountId, spaceId, room, worldline)
+        val scope = SyncE2EE.Scope(accountId, writerSpaceId, room, worldline)
         val keys = SyncE2EE.deriveScopeKeys(masterKey, scope)
         // A room row carries no worldline in its identity, so every reader
         // derives its key with null. Sealing the title under the worldline
         // scope would produce a title nobody — including this device after a
         // reinstall — could ever open.
-        val roomScope = SyncE2EE.Scope(accountId, spaceId, room, null)
+        val roomScope = SyncE2EE.Scope(accountId, writerSpaceId, room, null)
         val roomKeys =
             if (worldline == null) keys else SyncE2EE.deriveScopeKeys(masterKey, roomScope)
 
@@ -118,7 +119,7 @@ class SyncShadowWriter(
 
         return SyncShadowWriteManifest(
             roomId = room,
-            spaceId = spaceId,
+            spaceId = writerSpaceId,
             turnCount = seenTurns.size,
             bubbleCount = bubbles.size,
             contentHash = digest.digest().joinToString("") { "%02x".format(it) },
@@ -134,7 +135,7 @@ class SyncShadowWriter(
         keys: SyncE2EE.ScopeKeys,
     ): JsonObject = body("create_room", "room") {
         put("target", target(room))
-        put("metadata_set", buildJsonObject { })
+        put("metadata_set", buildJsonObject { put("origin_space_id", originSpaceId) })
         put(
             "set",
             buildJsonObject {
@@ -214,7 +215,7 @@ class SyncShadowWriter(
         worldline: String? = null,
         extra: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit = {},
     ) = buildJsonObject {
-        put("space_id", spaceId)
+        put("space_id", writerSpaceId)
         put("room_id", room)
         if (worldline == null) put("worldline_id", JsonNull) else put("worldline_id", worldline)
         extra()

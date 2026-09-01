@@ -82,25 +82,31 @@ public struct SyncShadowRoomInput {
 public struct SyncShadowImporter {
     private let accountID: String
     private let deviceID: String
-    private let spaceID: String
+    private let originSpaceID: String
+    private let writerSpaceID: String
     private let masterKey: Data
     private let randomBytes: (Int) -> Data
     private let identifier: () -> String
+    private let now: () -> Date
 
     public init(
         accountID: String,
         deviceID: String,
-        spaceID: String = "MAC_SPACE",
+        originSpaceID: String? = nil,
+        writerSpaceID: String = "MAC_SPACE",
         masterKey: Data,
         randomBytes: @escaping (Int) -> Data = SyncShadowImporter.systemRandom,
-        identifier: @escaping () -> String = { UUID().uuidString.uppercased() }
+        identifier: @escaping () -> String = { UUID().uuidString.uppercased() },
+        now: @escaping () -> Date = Date.init
     ) {
         self.accountID = accountID
         self.deviceID = deviceID
-        self.spaceID = spaceID
+        self.originSpaceID = originSpaceID ?? writerSpaceID
+        self.writerSpaceID = writerSpaceID
         self.masterKey = masterKey
         self.randomBytes = randomBytes
         self.identifier = identifier
+        self.now = now
     }
 
     public static func systemRandom(_ count: Int) -> Data {
@@ -128,7 +134,7 @@ public struct SyncShadowImporter {
             let roomID = room.roomID.uuidString.uppercased()
             let scope = SyncE2EE.Scope(
                 accountID: accountID,
-                spaceID: spaceID,
+                spaceID: writerSpaceID,
                 roomID: roomID,
                 worldlineID: nil
             )
@@ -212,8 +218,8 @@ public struct SyncShadowImporter {
         return try body([
             "op": "create_room",
             "entity_type": "room",
-            "target": ["space_id": spaceID, "room_id": roomID, "worldline_id": NSNull()],
-            "metadata_set": [:],
+            "target": ["space_id": writerSpaceID, "room_id": roomID, "worldline_id": NSNull()],
+            "metadata_set": ["origin_space_id": originSpaceID],
             "set": ["title": sealed],
         ])
     }
@@ -229,7 +235,7 @@ public struct SyncShadowImporter {
             "op": "create_turn",
             "entity_type": "turn",
             "target": [
-                "space_id": spaceID, "room_id": roomID,
+                "space_id": writerSpaceID, "room_id": roomID,
                 "worldline_id": NSNull(), "turn_id": turnID,
             ],
             // The device that produced the turn and when. Both are NOT NULL in
@@ -263,7 +269,7 @@ public struct SyncShadowImporter {
             "op": "create_bubble",
             "entity_type": "bubble",
             "target": [
-                "space_id": spaceID, "room_id": roomID, "worldline_id": NSNull(),
+                "space_id": writerSpaceID, "room_id": roomID, "worldline_id": NSNull(),
                 "turn_id": bubble.turnID.uuidString.uppercased(), "message_id": messageID,
             ],
             "bubble_order": bubbleOrder,
@@ -283,7 +289,7 @@ public struct SyncShadowImporter {
             "device_id": deviceID,
             "metadata_clear": [],
             "clear": [],
-            "created_at": Self.rfc3339(Date()),
+            "created_at": Self.rfc3339(now()),
         ]
         for (key, value) in parts { json[key] = value }
         guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]) else {

@@ -1,13 +1,38 @@
 {
   "account_id" : "A0000000-0000-4000-8000-000000000001",
+  "continuation_room_operation" : {
+    "clear" : [
+
+    ],
+    "created_at" : "2027-01-15T08:00:00Z",
+    "device_id" : "B0000000-0000-4000-8000-000000000001",
+    "entity_type" : "room",
+    "metadata_clear" : [
+
+    ],
+    "metadata_set" : {
+      "origin_space_id" : "MAC_SPACE"
+    },
+    "op" : "create_room",
+    "operation_id" : "F0000000-0000-4000-8000-000000000002",
+    "protocol_version" : 1,
+    "set" : {
+      "title" : "AQEAAAABDBMaISgvNj1ES1JZ8AtAJ9ZtwNHcqIccQMT9TOIQoO3q+Jj5V42Oww=="
+    },
+    "target" : {
+      "room_id" : "C0000000-0000-4000-8000-00000000000A",
+      "space_id" : "PHONE_SPACE",
+      "worldline_id" : null
+    }
+  },
   "device_id" : "B0000000-0000-4000-8000-000000000001",
   "manifest" : {
     "rooms" : [
       {
-        "bubble_count" : 2,
-        "content_hash" : "c5e4ba69b8c7e79a0d633ccf1514cb437e4d3d654678b6ecef1067c3367d6ef8",
+        "bubble_count" : 3,
+        "content_hash" : "627becacc9d8fccf63c3092b8decb97ad5f2b97a3e11305982b17083fc9c048a",
         "room_id" : "C0000000-0000-4000-8000-00000000000A",
-        "turn_count" : 1
+        "turn_count" : 2
       }
     ]
   },
@@ -16,14 +41,14 @@
       "clear" : [
 
       ],
-      "created_at" : "2026-08-31T05:22:29Z",
+      "created_at" : "2027-01-15T08:00:00Z",
       "device_id" : "B0000000-0000-4000-8000-000000000001",
       "entity_type" : "room",
       "metadata_clear" : [
 
       ],
       "metadata_set" : {
-
+        "origin_space_id" : "MAC_SPACE"
       },
       "op" : "create_room",
       "operation_id" : "F0000000-0000-4000-8000-000000000002",
@@ -41,7 +66,7 @@
       "clear" : [
 
       ],
-      "created_at" : "2026-08-31T05:22:29Z",
+      "created_at" : "2027-01-15T08:00:00Z",
       "device_id" : "B0000000-0000-4000-8000-000000000001",
       "entity_type" : "turn",
       "metadata_clear" : [
@@ -69,7 +94,7 @@
       "clear" : [
 
       ],
-      "created_at" : "2026-08-31T05:22:29Z",
+      "created_at" : "2027-01-15T08:00:00Z",
       "device_id" : "B0000000-0000-4000-8000-000000000001",
       "entity_type" : "bubble",
       "metadata_clear" : [
@@ -99,7 +124,7 @@
       "clear" : [
 
       ],
-      "created_at" : "2026-08-31T05:22:29Z",
+      "created_at" : "2027-01-15T08:00:00Z",
       "device_id" : "B0000000-0000-4000-8000-000000000001",
       "entity_type" : "bubble",
       "metadata_clear" : [
@@ -123,7 +148,63 @@
         "turn_id" : "D0000000-0000-4000-8000-00000000000A",
         "worldline_id" : null
       }
+    },
+    {
+      "clear" : [
+
+      ],
+      "created_at" : "2027-01-15T08:00:00Z",
+      "device_id" : "B0000000-0000-4000-8000-000000000001",
+      "entity_type" : "turn",
+      "metadata_clear" : [
+
+      ],
+      "metadata_set" : {
+        "created_at" : "2027-01-15T08:00:02Z",
+        "created_by_device_id" : "B0000000-0000-4000-8000-000000000001"
+      },
+      "op" : "create_turn",
+      "operation_id" : "F0000000-0000-4000-8000-000000000006",
+      "protocol_version" : 1,
+      "set" : {
+
+      },
+      "target" : {
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000B",
+        "worldline_id" : null
+      }
+    },
+    {
+      "bubble_order" : 2,
+      "clear" : [
+
+      ],
+      "created_at" : "2027-01-15T08:00:00Z",
+      "device_id" : "B0000000-0000-4000-8000-000000000001",
+      "entity_type" : "bubble",
+      "metadata_clear" : [
+
+      ],
+      "metadata_set" : {
+        "timestamp" : "2027-01-15T08:00:02Z"
+      },
+      "op" : "create_bubble",
+      "operation_id" : "F0000000-0000-4000-8000-000000000007",
+      "protocol_version" : 1,
+      "set" : {
+        "kind" : "AQEAAAABDBMaISgvNj1ES1JZCugt2DIIUDxhKALMwB0A2ATh822\/mGkYNg==",
+        "sender" : "AQEAAAABDBMaISgvNj1ES1JZEfo62OGaWN9TTv\/+4xW8KLhMd5E=",
+        "text" : "AQEAAAABDBMaISgvNj1ES1JZjxjPirjOsb+oRAPIV1a9Js4391yryq9WPxRSdYooNQ=="
+      },
+      "target" : {
+        "message_id" : "E0000000-0000-4000-8000-000000000003",
+        "room_id" : "C0000000-0000-4000-8000-00000000000A",
+        "space_id" : "MAC_SPACE",
+        "turn_id" : "D0000000-0000-4000-8000-00000000000B",
+        "worldline_id" : null
+      }
     }
-  ],
-  "room_id" : "C0000000-0000-4000-8000-00000000000A"
+  ]
 }

@@ -49,13 +49,20 @@ private func sampleRoom() -> SyncShadowRoomInput {
     )
 }
 
-private func makeImporter(counter: Counter) -> SyncShadowImporter {
+private func makeImporter(
+    counter: Counter,
+    originSpaceID: String = "MAC_SPACE",
+    writerSpaceID: String = "MAC_SPACE"
+) -> SyncShadowImporter {
     SyncShadowImporter(
         accountID: ACCOUNT,
         deviceID: DEVICE,
+        originSpaceID: originSpaceID,
+        writerSpaceID: writerSpaceID,
         masterKey: MASTER_KEY,
         randomBytes: fixedRandom,
-        identifier: { counter.next() }
+        identifier: { counter.next() },
+        now: { Date(timeIntervalSince1970: 1_800_000_000) }
     )
 }
 
@@ -245,6 +252,65 @@ private func testEmptyRoomStillCopiesTheRoomItself() throws {
     try check(manifest.rooms[0].turnCount == 0, "no turns counted")
 }
 
+private func testCarriesOriginSeparatelyFromTheWriterSpace() throws {
+    let (outbox, directory) = try makeOutbox()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    _ = try makeImporter(
+        counter: Counter(), originSpaceID: "MAC_SPACE", writerSpaceID: "PHONE_SPACE"
+    ).importRooms(
+        [SyncShadowRoomInput(roomID: ROOM, title: "이어쓰기", bubbles: [])],
+        into: outbox
+    )
+    let room = try bodies(outbox)[0]
+    let target = room["target"] as! [String: Any]
+    let metadata = room["metadata_set"] as! [String: Any]
+    try check(target["space_id"] as? String == "PHONE_SPACE", "the writer owns the target shard")
+    try check(metadata["origin_space_id"] as? String == "MAC_SPACE", "the family keeps its origin")
+}
+
+private func testEmitsTheFixtureTheWorkerPinsAgainst() throws {
+    let (outbox, directory) = try makeOutbox()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let manifest = try makeImporter(counter: Counter()).importRooms([sampleRoom()], into: outbox)
+
+    let (continuationOutbox, continuationDirectory) = try makeOutbox()
+    defer { try? FileManager.default.removeItem(at: continuationDirectory) }
+    _ = try makeImporter(
+        counter: Counter(), originSpaceID: "MAC_SPACE", writerSpaceID: "PHONE_SPACE"
+    ).importRooms(
+        [SyncShadowRoomInput(roomID: ROOM, title: "이어쓰기", bubbles: [])],
+        into: continuationOutbox
+    )
+
+    let room = manifest.rooms[0]
+    let payload: [String: Any] = [
+        "account_id": ACCOUNT,
+        "device_id": DEVICE,
+        "manifest": [
+            "rooms": [[
+                "room_id": room.roomID,
+                "turn_count": room.turnCount,
+                "bubble_count": room.bubbleCount,
+                "content_hash": room.contentHash,
+            ]],
+        ],
+        "operations": try bodies(outbox),
+        "continuation_room_operation": try bodies(continuationOutbox)[0],
+    ]
+    let data = try JSONSerialization.data(
+        withJSONObject: payload,
+        options: [.prettyPrinted, .sortedKeys]
+    )
+    let repository = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let target = repository
+        .appendingPathComponent("cloudflare/sync-worker/test/fixtures/swift-shadow-operations.json")
+    try data.write(to: target, options: .atomic)
+    try check(!data.isEmpty, "the emitted fixture is not empty")
+}
+
 // MARK: - Runner
 
 @main
@@ -257,6 +323,8 @@ struct Runner {
             ("sealed fields open back", testSealedFieldsOpenBackToTheOriginal),
             ("manifest is counts only", testManifestIsCountsAndIdentityOnly),
             ("an empty room still copies", testEmptyRoomStillCopiesTheRoomItself),
+            ("origin and writer space stay separate", testCarriesOriginSeparatelyFromTheWriterSpace),
+            ("emits the Worker fixture", testEmitsTheFixtureTheWorkerPinsAgainst),
         ]
         for (name, test) in tests {
             do {

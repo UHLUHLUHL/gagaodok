@@ -38,8 +38,8 @@ type WorkerRequest = Parameters<NonNullable<ExportedHandler["fetch"]>>[0];
 interface Fixture {
   account_id: string;
   device_id: string;
-  room_id: string;
   operations: Array<Record<string, unknown>>;
+  continuation_room_operation: Record<string, unknown>;
   manifest: {
     rooms: Array<{
       room_id: string;
@@ -109,6 +109,14 @@ beforeEach(async () => {
 });
 
 describe("macOS shadow importer output against the canonical contract", () => {
+  it("pins origin and writer space separately for continuation", () => {
+    const operation = data.continuation_room_operation;
+    expect((operation["target"] as Record<string, unknown>)["space_id"]).toBe("PHONE_SPACE");
+    expect((operation["metadata_set"] as Record<string, unknown>)["origin_space_id"]).toBe(
+      "MAC_SPACE",
+    );
+  });
+
   it("is accepted operation for operation", async () => {
     for (const operation of data.operations) {
       const response = await post(operation);
@@ -143,7 +151,9 @@ describe("macOS shadow importer output against the canonical contract", () => {
     ).all<{ sender_enc: string | null; kind_enc: string | null; text_enc: string | null; bubble_order: number }>();
 
     expect(bubbles.results).toHaveLength(expected(data).bubble_count);
-    expect(bubbles.results.map((row) => row.bubble_order)).toEqual([0, 1]);
+    expect(bubbles.results.map((row) => row.bubble_order)).toEqual(
+      Array.from({ length: expected(data).bubble_count }, (_, index) => index),
+    );
     for (const row of bubbles.results) {
       for (const value of [row.sender_enc, row.kind_enc, row.text_enc]) {
         expect(value).not.toBeNull();

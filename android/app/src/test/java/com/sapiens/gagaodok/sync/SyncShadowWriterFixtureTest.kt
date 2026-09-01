@@ -43,10 +43,14 @@ class SyncShadowWriterFixtureTest {
         return { value += 1; String.format("F1000000-0000-4000-8000-%012X", value) }
     }
 
-    private fun writer() = SyncShadowWriter(
+    private fun writer(
+        originSpaceId: String = "PHONE_SPACE",
+        writerSpaceId: String = "PHONE_SPACE",
+    ) = SyncShadowWriter(
         accountId = account,
         deviceId = device,
-        spaceId = "PHONE_SPACE",
+        originSpaceId = originSpaceId,
+        writerSpaceId = writerSpaceId,
         masterKey = masterKey,
         randomBytes = { count -> ByteArray(count) { index -> ((index * 7 + count) and 0xff).toByte() } },
         newOperationId = counter(),
@@ -91,6 +95,25 @@ class SyncShadowWriterFixtureTest {
             // by the Worker, so sending it would be a bug, not a negotiation.
             assertEquals("PHONE_SPACE", target.getValue("space_id").jsonPrimitive.content)
         }
+    }
+
+    @Test
+    fun `carries a MAC origin while writing a phone continuation shard`() {
+        val outbox = SyncOutbox(File(folder.newFolder(), "outbox.bin"))
+        writer(originSpaceId = "MAC_SPACE", writerSpaceId = "PHONE_SPACE")
+            .write(room, "이어쓰기", emptyList(), outbox)
+        val operation = Json.parseToJsonElement(
+            outbox.pending().single().rawBody.toString(Charsets.UTF_8),
+        ).jsonObject
+        assertEquals(
+            "PHONE_SPACE",
+            operation.getValue("target").jsonObject.getValue("space_id").jsonPrimitive.content,
+        )
+        assertEquals(
+            "MAC_SPACE",
+            operation.getValue("metadata_set").jsonObject
+                .getValue("origin_space_id").jsonPrimitive.content,
+        )
     }
 
     @Test
@@ -191,6 +214,12 @@ class SyncShadowWriterFixtureTest {
     @Test
     fun `emits the fixture the worker suite pins against`() {
         val (manifest, queued) = run()
+        val continuationOutbox = SyncOutbox(File(folder.newFolder(), "continuation-outbox.bin"))
+        writer(originSpaceId = "MAC_SPACE", writerSpaceId = "PHONE_SPACE")
+            .write(room, "이어쓰기", emptyList(), continuationOutbox)
+        val continuation = Json.parseToJsonElement(
+            continuationOutbox.pending().single().rawBody.toString(Charsets.UTF_8),
+        )
         val payload = buildJsonObject {
             put("account_id", account)
             put("device_id", device)
@@ -206,6 +235,7 @@ class SyncShadowWriterFixtureTest {
                 },
             )
             put("operations", queued)
+            put("continuation_room_operation", continuation)
         }
         // Written into the repository, next to the Swift-produced fixture, so
         // the Worker suite and the macOS reader both consume real writer output.

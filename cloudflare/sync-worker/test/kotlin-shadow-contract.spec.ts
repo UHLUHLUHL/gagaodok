@@ -38,6 +38,7 @@ interface Fixture {
   space_id: string;
   room_id: string;
   operations: Array<Record<string, unknown>>;
+  continuation_room_operation: Record<string, unknown>;
   expected: { turn_count: number; bubble_count: number; content_hash: string };
 }
 
@@ -114,6 +115,14 @@ beforeEach(async () => {
 });
 
 describe("Android writer output against the canonical contract", () => {
+  it("pins origin and writer space separately for continuation", () => {
+    const operation = data.continuation_room_operation;
+    expect((operation["target"] as Record<string, unknown>)["space_id"]).toBe("PHONE_SPACE");
+    expect((operation["metadata_set"] as Record<string, unknown>)["origin_space_id"]).toBe(
+      "MAC_SPACE",
+    );
+  });
+
   it("is accepted operation for operation", async () => {
     for (const operation of data.operations) {
       const response = await send("/v1/sync/operations", "POST", PHONE_TOKEN, operation);

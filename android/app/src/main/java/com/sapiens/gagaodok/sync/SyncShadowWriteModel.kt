@@ -126,7 +126,8 @@ class SyncShadowWriteModel(
         val writer = SyncShadowWriter(
             accountId = accountId,
             deviceId = deviceId,
-            spaceId = spaceId,
+            originSpaceId = spaceId,
+            writerSpaceId = spaceId,
             masterKey = secrets.secrets.accountMasterKey,
         )
         val manifest = writer.write(
