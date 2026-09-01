@@ -8,6 +8,7 @@ import java.time.format.DateTimeParseException
 import java.util.Locale
 import java.util.UUID
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -21,7 +22,7 @@ class SyncRemoteRoomAssembler(
     private val registeredSpaceId: String,
     private val masterKey: ByteArray,
 ) {
-    private data class RoomRow(val space: String, val origin: String, val projection: JsonObject)
+    private data class RoomRow(val space: String, val origin: String, val projection: JsonObject, val extensions: JsonArray)
     private data class TurnKey(val space: String, val turn: String)
     private data class BubbleRow(
         val space: String,
@@ -61,7 +62,7 @@ class SyncRemoteRoomAssembler(
                     val origin = projection.text("origin_space_id") ?: return null
                     if (space !in SPACES || origin !in SPACES || identity.uuid("room_id") != roomId) return null
                     if (projection.text("title") == null) return null
-                    rooms += RoomRow(space, origin, projection)
+                    rooms += RoomRow(space, origin, projection, projection["extensions"] as? JsonArray ?: JsonArray(emptyList()))
                 }
                 "turn" -> {
                     if (identity.keys != setOf("space_id", "room_id", "worldline_id", "turn_id")) return null
@@ -120,10 +121,22 @@ class SyncRemoteRoomAssembler(
                 .thenBy { it.second.writerSpaceId }
                 .thenBy { it.second.bubbleOrder },
         ).map { it.second }
+        val capabilities = rooms.mapNotNull { continuationCapability(it, roomId) }.toSet()
+        if (capabilities.size > 1) return null
         return SyncRemoteRoomSnapshot(
             SyncRoomHandle(origin, roomId), title, writerSpaces.sorted(), messages,
-            contentHash(roomId, messages),
+            contentHash(roomId, messages), capabilities.singleOrNull(),
         )
+    }
+
+    private fun continuationCapability(room: RoomRow, roomId: String): SyncRemoteContinuationCapability? {
+        val matches = room.extensions.filter { (it as? JsonObject)?.text("key") == "gagaodok.room.continuation_capability" }
+        if (matches.size > 1) return SyncRemoteContinuationCapability.UNSUPPORTED
+        val value = (matches.singleOrNull() as? JsonObject)?.get("value") ?: return null
+        return when (open(value, room.space, roomId, "room", roomId, "extensions.gagaodok.room.continuation_capability", null)) {
+            "chatbot" -> SyncRemoteContinuationCapability.CHATBOT
+            else -> SyncRemoteContinuationCapability.UNSUPPORTED
+        }
     }
 
     private fun open(

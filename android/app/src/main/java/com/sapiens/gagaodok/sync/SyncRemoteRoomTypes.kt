@@ -4,6 +4,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
+enum class SyncRemoteContinuationCapability { CHATBOT, UNSUPPORTED }
+
+@Serializable
 data class SyncRoomHandle(
     @SerialName("origin_space_id") val originSpaceId: String,
     @SerialName("room_id") val roomId: String,
@@ -30,4 +33,5 @@ data class SyncRemoteRoomSnapshot(
     @SerialName("writer_spaces") val writerSpaces: List<String>,
     val messages: List<SyncRemoteBubble>,
     @SerialName("content_hash") val contentHash: String,
+    @SerialName("continuation_capability") val continuationCapability: SyncRemoteContinuationCapability? = null,
 )
