@@ -11,6 +11,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.sapiens.gagaodok.sync.SyncRuntimeHost
+import com.sapiens.gagaodok.sync.SyncRuntimeTrigger
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -36,6 +40,17 @@ class MainActivity : ComponentActivity() {
         // targetSdk 35에서는 어차피 기본값이지만, 명시해 두면 구형 기기에서도 같게 동작합니다.
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        // 기본값이 전부 꺼짐이므로 이 연결만으로는 요청이 한 건도 나가지 않는다.
+        // 화면을 열었다는 이유만으로 동기화가 시작되지 않는다.
+        SyncRuntimeHost.run(SyncRuntimeTrigger.LAUNCH)
+        lifecycle.addObserver(
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    SyncRuntimeHost.run(SyncRuntimeTrigger.FOREGROUND)
+                }
+            },
+        )
 
         val app = applicationContext as GagaodokApp
 

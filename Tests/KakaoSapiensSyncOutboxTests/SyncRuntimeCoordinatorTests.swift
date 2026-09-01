@@ -1,22 +1,83 @@
 import Foundation
 
 private struct Failure: Error { let message: String }
-private func check(_ value: @autoclosure () -> Bool, _ message: String) throws { if !value() { throw Failure(message: message) } }
+private func check(_ value: @autoclosure () -> Bool, _ message: String) throws {
+    if !value() { throw Failure(message: message) }
+}
 
-private actor Counter { var value = 0; func increment() { value += 1 } }
+private actor Counter {
+    var value = 0
+    func increment() { value += 1 }
+}
+
 @main private struct Runner {
     static func main() async throws {
-        let counter = Counter()
-        let disabled = SyncRuntimeCoordinator(switches: .init(syncEnabled: false, remoteReadEnabled: true, remoteReplyEnabled: true), pull: { await counter.increment() })
-        await disabled.foreground()
-        let disabledCount = await counter.value
-        try check(disabledCount == 0, "disabled sync made a request")
-        let enabled = SyncRuntimeCoordinator(switches: .init(syncEnabled: true, remoteReadEnabled: false, remoteReplyEnabled: false), pull: { await counter.increment() })
-        await enabled.foreground()
-        let enabledCount = await counter.value
-        let canReadRemote = enabled.canReadRemote
-        let canReplyRemote = enabled.canReplyRemote
-        try check(enabledCount == 1 && !canReadRemote && !canReplyRemote, "switches are not independent")
-        print("2 runtime switch tests passed")
+        let all: [SyncRuntimeTrigger] = [.launch, .foreground, .manual, .afterSend]
+
+        // 1. syncEnabled=false면 어떤 계기로도 요청이 나가지 않는다.
+        //    설정 화면이나 원격 방 화면을 열었다는 이유만으로도 나가지 않는다.
+        for trigger in all {
+            let counter = Counter()
+            let off = await SyncRuntimeCoordinator(
+                switches: .init(syncEnabled: false, remoteReadEnabled: true, remoteReplyEnabled: true),
+                pull: { await counter.increment() })
+            await off.run(trigger)
+            let count = await counter.value
+            try check(count == 0, "trigger \(trigger.rawValue) made a request while sync was disabled")
+            let status = await off.status
+            try check(status == .disabled, "status is not disabled")
+        }
+
+        // 2. 네 계기 전부에서 돈다.
+        for trigger in all {
+            let counter = Counter()
+            let on = await SyncRuntimeCoordinator(
+                switches: .init(syncEnabled: true, remoteReadEnabled: true, remoteReplyEnabled: true),
+                pull: { await counter.increment() })
+            await on.run(trigger)
+            let count = await counter.value
+            try check(count == 1, "trigger \(trigger.rawValue) did not run")
+            let status = await on.status
+            try check(status == .idle, "status did not return to idle after \(trigger.rawValue)")
+        }
+
+        // 3. 단일 실행 잠금 — 겹쳐 부르면 한 번만 돈다.
+        let slow = Counter()
+        let single = await SyncRuntimeCoordinator(
+            switches: .init(syncEnabled: true, remoteReadEnabled: true, remoteReplyEnabled: true),
+            pull: {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                await slow.increment()
+            })
+        async let first: Void = single.run(.foreground)
+        async let second: Void = single.run(.foreground)
+        _ = await (first, second)
+        let slowCount = await slow.value
+        try check(slowCount == 1, "single-flight lock did not hold, ran \(slowCount) times")
+
+        // 4. 스위치는 서로 독립이다. 하나를 꺼도 다른 하나가 꺼지지 않는다.
+        let readOff = await SyncRuntimeCoordinator(
+            switches: .init(syncEnabled: true, remoteReadEnabled: false, remoteReplyEnabled: true),
+            pull: {})
+        let cannotRead = await readOff.canReadRemote
+        let canReply = await readOff.canReplyRemote
+        try check(!cannotRead && canReply, "disabling remote read also disabled reply")
+
+        // 5. token 폐기는 멈추되 스위치 자체는 건드리지 않는다.
+        let afterRevoke = Counter()
+        let revoked = await SyncRuntimeCoordinator(
+            switches: .init(syncEnabled: true, remoteReadEnabled: true, remoteReplyEnabled: true),
+            pull: { await afterRevoke.increment() })
+        await revoked.pauseForRevokedToken()
+        for trigger in all { await revoked.run(trigger) }
+        let revokedCount = await afterRevoke.value
+        try check(revokedCount == 0, "a revoked runtime still ran")
+        let revokedStatus = await revoked.status
+        try check(revokedStatus == .pausedRevoked, "status is not pausedRevoked")
+        let revokedRead = await revoked.canReadRemote
+        let revokedReply = await revoked.canReplyRemote
+        try check(!revokedRead && !revokedReply, "a revoked runtime still permits remote work")
+
+        print("22 runtime switch checks passed")
     }
 }

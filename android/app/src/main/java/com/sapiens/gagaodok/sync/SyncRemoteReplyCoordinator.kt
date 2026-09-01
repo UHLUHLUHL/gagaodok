@@ -9,7 +9,13 @@ class SyncRemoteReplyCoordinator(
     private val accountId: String,
     private val deviceId: String,
     private val masterKey: ByteArray,
-    private val journal: SyncRemoteReplyJournal? = null,
+    /**
+     * journal은 선택이 아니다.
+     *
+     * "기록 먼저, 발송 나중"이 durable 계약인데 기본값이 있으면 그 계약이 호출
+     * 규약이 아니라 관행이 된다. 새 호출부가 생기는 순간 조용히 깨진다.
+     */
+    private val journal: SyncRemoteReplyJournal,
 ) {
     fun prepare(room: SyncRemoteRoomSnapshot, writerSpaceId: String, userText: String, assistantText: String, model: AIModel, outbox: SyncOutbox): String {
         require(room.continuationCapability == SyncRemoteContinuationCapability.CHATBOT) { "unsupported room" }
@@ -28,7 +34,7 @@ class SyncRemoteReplyCoordinator(
             continuationCapability = if (writerSpaceId !in room.writerSpaces) "chatbot" else null,
         )
         val replyId = UUID.randomUUID().toString().uppercase()
-        journal?.prepare(
+        journal.prepare(
             replyId, room.handle, writerSpaceId, userText,
             plan.operations.map { SyncRemoteReplyOperation(it.operationId, it.rawBody) },
         )

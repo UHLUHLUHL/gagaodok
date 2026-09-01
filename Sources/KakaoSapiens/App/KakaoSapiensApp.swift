@@ -26,6 +26,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 게다가 목록은 고정한 방을 위로 올려 보여주므로 화면 맨 위에 있는 방과
         // 열리는 방이 서로 다릅니다. 원본 카카오톡도 켤 때 목록만 띄웁니다.
         WindowManager.shared.openMainWindow()
+
+        // 기본값이 전부 꺼짐이므로 이 호출은 스위치가 켜지기 전까지 요청을
+        // 만들지 않는다. 창을 띄웠다는 이유만으로 동기화가 시작되지 않는다.
+        Task { await SyncRuntimeHost.shared.run(.launch) }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Task { await SyncRuntimeHost.shared.run(.foreground) }
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
