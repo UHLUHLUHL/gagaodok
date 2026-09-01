@@ -80,4 +80,45 @@ class SyncWorkerClientTest {
         assertNull(requests.single().url.query)
         assertTrue(requests.single().header("Authorization")!!.startsWith("Device gdt1_"))
     }
+
+    @Test fun `attachment routes use the exact worker paths and send no complete body`() {
+        val sent = mutableListOf<Request>()
+        val client = SyncWorkerClient(
+            "https://sync.invalid",
+            ByteArray(32) { 0x11 },
+            SyncHttpTransport { request -> sent += request; SyncHttpResponse(204, ByteArray(0)) },
+        )
+        val id = "70000000-0000-4000-8000-000000000001"
+
+        client.putAttachmentContent(id, ByteArray(130) { 0x5A })
+        assertEquals("PUT", sent[0].method)
+        assertEquals("/v1/attachments/$id/content", sent[0].url.encodedPath)
+        assertEquals(130L, sent[0].body!!.contentLength())
+
+        // 원격에서 한 번 물렸던 자리다. body를 붙이면 complete가 거부한다.
+        client.completeAttachment(id)
+        assertEquals("POST", sent[1].method)
+        assertEquals("/v1/attachments/$id/complete", sent[1].url.encodedPath)
+        assertEquals(0L, sent[1].body!!.contentLength())
+
+        client.getAttachmentContent(id)
+        assertEquals("GET", sent[2].method)
+        assertEquals("/v1/attachments/$id/content", sent[2].url.encodedPath)
+    }
+
+    @Test fun `attachment routes reject a non canonical id`() {
+        val client = SyncWorkerClient(
+            "https://sync.invalid",
+            ByteArray(32) { 0x11 },
+            SyncHttpTransport { SyncHttpResponse(204, ByteArray(0)) },
+        )
+        // 글자가 들어간 ID여야 대소문자 차이가 실제로 생긴다.
+        val lettered = "7000000A-0000-4000-8000-00000000000B"
+        assertTrue(lettered.lowercase() != lettered)
+        assertThrows(IllegalArgumentException::class.java) {
+            client.completeAttachment(lettered.lowercase())
+        }
+        // 같은 ID의 정규 형태는 받아들여야 한다.
+        client.completeAttachment(lettered)
+    }
 }

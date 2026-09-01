@@ -1,6 +1,18 @@
 import CryptoKit
 import Foundation
 
+/// 첨부 종류. `SyncAttachmentPlan` 같은 public API가 노출하므로 internal한
+/// `SyncE2EE` 안이 아니라 파일 최상위에 둔다.
+public enum SyncAttachmentKind: String {
+    case attachment
+    case avatar
+}
+
+public enum SyncAttachmentField: String {
+    case fileName = "file_name"
+    case mimeType = "mime_type"
+}
+
 enum SyncE2EE {
     static let protocolVersion: UInt16 = 1
     static let algorithm: UInt8 = 1
@@ -26,8 +38,26 @@ enum SyncE2EE {
         let scopeRootKey: Data
         let fieldAEADKey: Data
         let checkpointAEADKey: Data
+        /// v1 미사용. 첨부는 방이 아니라 계정 scope다 — `deriveAttachmentKeys`를 쓴다.
+        /// 공표된 계약 벡터를 유지하려고 유도만 남겨 둔다.
         let attachmentWrapKey: Data
         let compatTagKey: Data
+    }
+
+    /// 첨부는 방에 속하지 않는다.
+    ///
+    /// 정본 identity가 `(account_id, attachment_id)`이고 `create_attachment`가
+    /// `room_id`를 금지하므로, 방 scope로는 받는 기기가 열쇠를 재현할 수 없다.
+    /// recovery·pairing이 쓰는 계정 단위 유도와 같은 모양이다.
+    struct AttachmentKeys: Equatable {
+        let attachmentRootKey: Data
+        let attachmentFieldAEADKey: Data
+        let attachmentWrapKey: Data
+    }
+
+    private enum AttachmentPurpose: String {
+        case content = "attachment_content"
+        case wrappedFileKey = "wrapped_file_key"
     }
 
     struct RecoveryMaterial: Equatable {
@@ -88,6 +118,76 @@ enum SyncE2EE {
             attachmentWrapKey: try derivedKey(label: "gagaodok/e2ee/v1/attachment-wrap", scopeRoot: scopeRoot),
             compatTagKey: try derivedKey(label: "gagaodok/e2ee/v1/compat-tag", scopeRoot: scopeRoot)
         )
+    }
+
+    static func deriveAttachmentKeys(accountMasterKey: Data) throws -> AttachmentKeys {
+        guard accountMasterKey.count == 32 else { throw ContractError.invalidAccountMasterKey }
+        let root = try hkdfSHA256(ikm: accountMasterKey, label: "gagaodok/e2ee/v1/attachment-root")
+        return AttachmentKeys(
+            attachmentRootKey: root,
+            attachmentFieldAEADKey: try derivedKey(label: "gagaodok/e2ee/v1/attachment-field-aead", scopeRoot: root),
+            attachmentWrapKey: try derivedKey(label: "gagaodok/e2ee/v1/attachment-file-key-wrap", scopeRoot: root)
+        )
+    }
+
+    private static func encodeAttachmentAAD(
+        accountID: String, attachmentID: String, kind: SyncAttachmentKind,
+        purpose: String, binding: Data?
+    ) throws -> Data {
+        try encodeLP([
+            (1, Data(protocolVersion.bigEndianBytes)),
+            (2, Data(keyGeneration.bigEndianBytes)),
+            (3, canonicalUUID(accountID)),
+            (4, canonicalUUID(attachmentID)),
+            (5, try ascii(kind.rawValue)),
+            (6, try ascii(purpose)),
+            (7, binding),
+            (8, Data([algorithm])),
+        ])
+    }
+
+    /// 원본 크기를 묶으므로 잘린 파일은 인증을 통과하지 못한다.
+    static func attachmentContentAAD(
+        accountID: String, attachmentID: String,
+        kind: SyncAttachmentKind, sourceByteSize: UInt64
+    ) throws -> Data {
+        try encodeAttachmentAAD(
+            accountID: accountID, attachmentID: attachmentID, kind: kind,
+            purpose: AttachmentPurpose.content.rawValue,
+            binding: Data(sourceByteSize.bigEndianBytes)
+        )
+    }
+
+    /// 암호문 해시를 묶으므로 이 열쇠는 그 object 하나에만 맞는다. 서버가 같은
+    /// attachment_id 아래 다른 object를 갈아끼워도 열리지 않는다.
+    static func attachmentWrapAAD(
+        accountID: String, attachmentID: String,
+        kind: SyncAttachmentKind, ciphertextHash: Data
+    ) throws -> Data {
+        guard ciphertextHash.count == 32 else { throw ContractError.invalidIdentity }
+        return try encodeAttachmentAAD(
+            accountID: accountID, attachmentID: attachmentID, kind: kind,
+            purpose: AttachmentPurpose.wrappedFileKey.rawValue,
+            binding: ciphertextHash
+        )
+    }
+
+    static func attachmentFieldAAD(
+        accountID: String, attachmentID: String,
+        kind: SyncAttachmentKind, field: SyncAttachmentField
+    ) throws -> Data {
+        try encodeAttachmentAAD(
+            accountID: accountID, attachmentID: attachmentID, kind: kind,
+            purpose: field.rawValue, binding: nil
+        )
+    }
+
+    static func sealAttachment(plaintext: Data, key: Data, nonce: Data, aad: Data) throws -> Data {
+        try sealEnvelope(plaintext: plaintext, key: key, nonce: nonce, aad: aad)
+    }
+
+    static func openAttachment(envelope: Data, key: Data, aad: Data) throws -> Data {
+        try openEnvelope(envelope: envelope, key: key, aad: aad)
     }
 
     static func deriveRecoveryMaterial(recoveryEntropy: Data) throws -> RecoveryMaterial {

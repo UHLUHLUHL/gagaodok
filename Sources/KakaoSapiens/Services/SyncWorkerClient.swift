@@ -109,6 +109,38 @@ public final class SyncWorkerClient {
         return try await get(path: path)
     }
 
+    public func putAttachmentContent(attachmentID: String, body: Data) async throws -> SyncHTTPResponse {
+        var request = try authorizedRequest(
+            path: "/v1/attachments/\(try Self.canonicalAttachmentID(attachmentID))/content", method: "PUT")
+        request.httpBody = body
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        return try await transport.send(request)
+    }
+
+    /// Body 없는 POST다.
+    ///
+    /// 예전에 body를 실었더니 원격 `complete`가 거부해 첨부가 `ready`가 되지
+    /// 못했다. local suite 877개가 모두 통과하는 상태였는데도 그랬다.
+    public func completeAttachment(attachmentID: String) async throws -> SyncHTTPResponse {
+        let request = try authorizedRequest(
+            path: "/v1/attachments/\(try Self.canonicalAttachmentID(attachmentID))/complete", method: "POST")
+        return try await transport.send(request)
+    }
+
+    public func getAttachmentContent(attachmentID: String) async throws -> SyncHTTPResponse {
+        let request = try authorizedRequest(
+            path: "/v1/attachments/\(try Self.canonicalAttachmentID(attachmentID))/content", method: "GET")
+        return try await transport.send(request)
+    }
+
+    /// Worker의 경로 매칭이 정규 대문자 UUID만 받는다.
+    private static func canonicalAttachmentID(_ value: String) throws -> String {
+        guard let uuid = UUID(uuidString: value), uuid.uuidString == value else {
+            throw SyncWorkerClientError.invalidResponse
+        }
+        return value
+    }
+
     private func get(path: String) async throws -> SyncHTTPResponse {
         let response = try await transport.send(try authorizedRequest(path: path, method: "GET"))
         guard (200..<300).contains(response.statusCode) else { throw SyncWorkerClientError.httpStatus(response.statusCode) }

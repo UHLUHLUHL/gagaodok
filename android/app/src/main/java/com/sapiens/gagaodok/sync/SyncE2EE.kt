@@ -42,9 +42,25 @@ internal object SyncE2EE {
         val scopeRootKey: ByteArray,
         val fieldAEADKey: ByteArray,
         val checkpointAEADKey: ByteArray,
+        /** v1 미사용. 첨부는 방이 아니라 계정 scope다 — deriveAttachmentKeys를 쓴다. */
         val attachmentWrapKey: ByteArray,
         val compatTagKey: ByteArray,
     )
+
+    /**
+     * 첨부는 방에 속하지 않는다.
+     *
+     * 정본 identity가 (account_id, attachment_id)이고 create_attachment가 room_id를
+     * 금지하므로, 방 scope로는 받는 기기가 열쇠를 재현할 수 없다.
+     */
+    data class AttachmentKeys(
+        val attachmentRootKey: ByteArray,
+        val attachmentFieldAeadKey: ByteArray,
+        val attachmentWrapKey: ByteArray,
+    )
+
+    enum class AttachmentKind(val wire: String) { ATTACHMENT("attachment"), AVATAR("avatar") }
+    enum class AttachmentField(val wire: String) { FILE_NAME("file_name"), MIME_TYPE("mime_type") }
 
     data class RecoveryMaterial(
         val recoveryLookup: ByteArray,
@@ -109,6 +125,70 @@ internal object SyncE2EE {
             compatTagKey = derivedKey("gagaodok/e2ee/v1/compat-tag", scopeRoot),
         )
     }
+
+    fun deriveAttachmentKeys(accountMasterKey: ByteArray): AttachmentKeys {
+        requireContract(accountMasterKey.size == 32, ContractError.INVALID_ACCOUNT_MASTER_KEY)
+        val root = hkdfSha256(accountMasterKey, "gagaodok/e2ee/v1/attachment-root")
+        return AttachmentKeys(
+            attachmentRootKey = root,
+            attachmentFieldAeadKey = derivedKey("gagaodok/e2ee/v1/attachment-field-aead", root),
+            attachmentWrapKey = derivedKey("gagaodok/e2ee/v1/attachment-file-key-wrap", root),
+        )
+    }
+
+    private fun attachmentAad(
+        accountId: String,
+        attachmentId: String,
+        kind: AttachmentKind,
+        purpose: String,
+        binding: ByteArray?,
+    ): ByteArray = encodeLP(
+        listOf(
+            1 to uint16(PROTOCOL_VERSION),
+            2 to uint32(KEY_GENERATION),
+            3 to canonicalUuid(accountId),
+            4 to canonicalUuid(attachmentId),
+            5 to ascii(kind.wire),
+            6 to ascii(purpose),
+            7 to binding,
+            8 to byteArrayOf(ALGORITHM.toByte()),
+        ),
+    )
+
+    /** 원본 크기를 묶으므로 잘린 파일은 인증을 통과하지 못한다. */
+    fun attachmentContentAad(
+        accountId: String,
+        attachmentId: String,
+        kind: AttachmentKind,
+        sourceByteSize: Long,
+    ): ByteArray = attachmentAad(accountId, attachmentId, kind, "attachment_content", uint64(sourceByteSize))
+
+    /**
+     * 암호문 해시를 묶으므로 이 열쇠는 그 object 하나에만 맞는다. 서버가 같은
+     * attachment_id 아래 다른 object를 갈아끼워도 열리지 않는다.
+     */
+    fun attachmentWrapAad(
+        accountId: String,
+        attachmentId: String,
+        kind: AttachmentKind,
+        ciphertextHash: ByteArray,
+    ): ByteArray {
+        requireContract(ciphertextHash.size == 32, ContractError.INVALID_IDENTITY)
+        return attachmentAad(accountId, attachmentId, kind, "wrapped_file_key", ciphertextHash)
+    }
+
+    fun attachmentFieldAad(
+        accountId: String,
+        attachmentId: String,
+        kind: AttachmentKind,
+        field: AttachmentField,
+    ): ByteArray = attachmentAad(accountId, attachmentId, kind, field.wire, null)
+
+    fun sealAttachment(plaintext: ByteArray, key: ByteArray, nonce: ByteArray, aad: ByteArray): ByteArray =
+        sealEnvelope(plaintext, key, nonce, aad)
+
+    fun openAttachment(envelope: ByteArray, key: ByteArray, aad: ByteArray): ByteArray =
+        openEnvelope(envelope, key, aad)
 
     fun deriveRecoveryMaterial(recoveryEntropy: ByteArray): RecoveryMaterial {
         requireContract(recoveryEntropy.size == 16, ContractError.INVALID_KEY)
