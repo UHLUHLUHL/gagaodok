@@ -22,6 +22,7 @@ class SyncShadowVerifyModel(
     private val pull: SyncPullCoordinator,
     private val replica: SyncReplicaStore,
     private val accountId: String,
+    private val writerSpaceId: String = "MAC_SPACE",
     private val roomId: String,
     private val loadSecrets: () -> SyncSecretLoadResult,
 ) {
@@ -35,7 +36,7 @@ class SyncShadowVerifyModel(
         _state.value = runCatching {
             drain()
             SyncShadowVerifyState.Finished(
-                SyncShadowVerifier.verify(replica, accountId, roomId, loadSecrets)
+                SyncShadowVerifier.verify(replica, accountId, writerSpaceId, roomId, loadSecrets)
             )
         }.getOrElse { error ->
             SyncShadowVerifyState.Failed(

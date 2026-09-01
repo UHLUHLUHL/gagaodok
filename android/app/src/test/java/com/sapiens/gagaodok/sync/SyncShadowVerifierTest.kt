@@ -59,7 +59,7 @@ class SyncShadowVerifierTest {
 
     @Test
     fun `opens every bubble the mac wrote and agrees on the digest`() {
-        val result = SyncShadowVerifier.verify(replica(), accountId, roomId, secrets())
+        val result = SyncShadowVerifier.verify(replica(), accountId, "MAC_SPACE", roomId, secrets())
 
         assertEquals(expected.getValue("bubble_count").jsonPrimitive.content.toInt(), result.bubbleCount)
         assertEquals(expected.getValue("turn_count").jsonPrimitive.content.toInt(), result.turnCount)
@@ -74,9 +74,37 @@ class SyncShadowVerifierTest {
     }
 
     @Test
+    fun `separates the same room id by writer space`() {
+        val duplicated = buildJsonArray {
+            fixture.getValue("entries").jsonArray.forEach { add(it) }
+            for (element in fixture.getValue("entries").jsonArray) {
+                val item = element.jsonObject
+                val identity = item.getValue("identity").jsonObject
+                add(buildJsonObject {
+                    item.forEach { (key, value) ->
+                        if (key != "identity") put(key, value)
+                    }
+                    put("identity", buildJsonObject {
+                        identity.forEach { (key, value) ->
+                            if (key == "space_id") put(key, "PHONE_SPACE") else put(key, value)
+                        }
+                    })
+                })
+            }
+        }
+
+        val result = SyncShadowVerifier.verify(
+            replica(duplicated), accountId, "MAC_SPACE", roomId, secrets()
+        )
+
+        assertEquals(expected.getValue("bubble_count").jsonPrimitive.content.toInt(), result.bubbleCount)
+        assertEquals(expected.getValue("turn_count").jsonPrimitive.content.toInt(), result.turnCount)
+    }
+
+    @Test
     fun `refuses to open under a different account key`() {
         val other = ByteArray(32) { index -> (index * 5 + 1).toByte() }
-        val result = SyncShadowVerifier.verify(replica(), accountId, roomId, secrets(other))
+        val result = SyncShadowVerifier.verify(replica(), accountId, "MAC_SPACE", roomId, secrets(other))
 
         // The rows are all there and the digest still matches — identity and
         // order do not depend on the key. What fails is reading them.
@@ -114,14 +142,14 @@ class SyncShadowVerifierTest {
                 )
             }
         }
-        val result = SyncShadowVerifier.verify(replica(tampered), accountId, roomId, secrets())
+        val result = SyncShadowVerifier.verify(replica(tampered), accountId, "MAC_SPACE", roomId, secrets())
         assertEquals(0, result.decryptedCount)
     }
 
     @Test
     fun `refuses a bubble re-attributed to another account`() {
         val stranger = "A0000000-0000-4000-8000-0000000000FF"
-        val result = SyncShadowVerifier.verify(replica(), stranger, roomId, secrets())
+        val result = SyncShadowVerifier.verify(replica(), stranger, "MAC_SPACE", roomId, secrets())
         // The scope root is derived from the account, so a row claimed by
         // another account cannot be opened even with the right master key.
         assertEquals(0, result.decryptedCount)
@@ -131,7 +159,7 @@ class SyncShadowVerifierTest {
     fun `reports an absent room rather than an empty success`() {
         val missing = "C0000000-0000-4000-8000-0000000000FF"
         try {
-            SyncShadowVerifier.verify(replica(), accountId, missing, secrets())
+            SyncShadowVerifier.verify(replica(), accountId, "MAC_SPACE", missing, secrets())
             throw AssertionError("a room that is not there was reported as verified")
         } catch (error: SyncShadowVerifyException) {
             assertEquals(SyncShadowVerifyException.Reason.ROOM_ABSENT, error.reason)
@@ -141,7 +169,9 @@ class SyncShadowVerifierTest {
     @Test
     fun `refuses to run without secrets`() {
         try {
-            SyncShadowVerifier.verify(replica(), accountId, roomId) { SyncSecretLoadResult.Absent }
+            SyncShadowVerifier.verify(replica(), accountId, "MAC_SPACE", roomId) {
+                SyncSecretLoadResult.Absent
+            }
             throw AssertionError("ran without an account key")
         } catch (error: SyncShadowVerifyException) {
             assertEquals(SyncShadowVerifyException.Reason.SECRETS_UNAVAILABLE, error.reason)

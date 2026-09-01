@@ -154,7 +154,10 @@ private func makeReader(
 private func testOpensEveryBubbleThePhoneWrote() async throws {
     let fixture = try loadFixture()
     let reader = try makeReader(fixture, transport: ChangeFeedTransport(operations: fixture.operations))
-    let result = try await reader.read(roomID: UUID(uuidString: fixture.roomID)!)
+    let result = try await reader.read(
+        writerSpaceID: fixture.spaceID,
+        roomID: UUID(uuidString: fixture.roomID)!
+    )
 
     try check(result.bubbleCount == fixture.expectedBubbles, "every bubble arrived")
     try check(result.turnCount == fixture.expectedTurns, "every turn arrived")
@@ -167,6 +170,32 @@ private func testOpensEveryBubbleThePhoneWrote() async throws {
 }
 
 @MainActor
+private func testSeparatesTheSameRoomIDByWriterSpace() async throws {
+    let fixture = try loadFixture()
+    let otherSpace = fixture.spaceID == "PHONE_SPACE" ? "MAC_SPACE" : "PHONE_SPACE"
+    let otherOperations = fixture.operations.map { operation -> [String: Any] in
+        var changed = operation
+        var target = (operation["target"] as? [String: Any]) ?? [:]
+        target["space_id"] = otherSpace
+        changed["target"] = target
+        return changed
+    }
+    let reader = try makeReader(
+        fixture,
+        transport: ChangeFeedTransport(operations: fixture.operations + otherOperations)
+    )
+
+    let result = try await reader.read(
+        writerSpaceID: fixture.spaceID,
+        roomID: UUID(uuidString: fixture.roomID)!
+    )
+
+    try check(result.spaceID == fixture.spaceID, "the requested writer space wins")
+    try check(result.bubbleCount == fixture.expectedBubbles, "other-space bubbles stay separate")
+    try check(result.turnCount == fixture.expectedTurns, "other-space turns stay separate")
+}
+
+@MainActor
 private func testRefusesUnderTheWrongAccountOrKey() async throws {
     let fixture = try loadFixture()
 
@@ -175,7 +204,10 @@ private func testRefusesUnderTheWrongAccountOrKey() async throws {
         transport: ChangeFeedTransport(operations: fixture.operations),
         accountID: "A0000000-0000-4000-8000-0000000000FF"
     )
-    let wrongAccount = try await stranger.read(roomID: UUID(uuidString: fixture.roomID)!)
+    let wrongAccount = try await stranger.read(
+        writerSpaceID: fixture.spaceID,
+        roomID: UUID(uuidString: fixture.roomID)!
+    )
     // Identity and order do not depend on the key, so the digest still matches.
     // Only reading fails — which is exactly how this failure looks in the wild.
     try check(wrongAccount.contentHash == fixture.expectedHash, "the digest is key-independent")
@@ -186,7 +218,10 @@ private func testRefusesUnderTheWrongAccountOrKey() async throws {
         transport: ChangeFeedTransport(operations: fixture.operations),
         masterKey: Data((0..<32).map { UInt8(($0 * 11 + 3) & 0xff) })
     )
-    let result = try await wrongKey.read(roomID: UUID(uuidString: fixture.roomID)!)
+    let result = try await wrongKey.read(
+        writerSpaceID: fixture.spaceID,
+        roomID: UUID(uuidString: fixture.roomID)!
+    )
     try check(result.decryptedCount == 0, "another key cannot open these rows")
     try check(result.diagnostic.contains("fail=open"), "the reason names the failed open")
 }
@@ -197,7 +232,7 @@ private func testNoticesARowThatNeverArrived() async throws {
     let transport = ChangeFeedTransport(operations: fixture.operations)
     transport.dropBubbles = 1
     let result = try await makeReader(fixture, transport: transport)
-        .read(roomID: UUID(uuidString: fixture.roomID)!)
+        .read(writerSpaceID: fixture.spaceID, roomID: UUID(uuidString: fixture.roomID)!)
 
     try check(result.bubbleCount == fixture.expectedBubbles - 1, "one bubble is missing")
     // A missing row changes the digest, so the two sides disagree rather than
@@ -210,7 +245,10 @@ private func testReportsAnAbsentRoom() async throws {
     let fixture = try loadFixture()
     let reader = try makeReader(fixture, transport: ChangeFeedTransport(operations: fixture.operations))
     do {
-        _ = try await reader.read(roomID: UUID(uuidString: "C0000000-0000-4000-8000-0000000000FF")!)
+        _ = try await reader.read(
+            writerSpaceID: fixture.spaceID,
+            roomID: UUID(uuidString: "C0000000-0000-4000-8000-0000000000FF")!
+        )
         throw Failure(what: "a room that is not there was reported as read")
     } catch SyncShadowReadError.roomAbsent {}
 }
@@ -227,7 +265,10 @@ private func testRefusesWithoutSecrets() async throws {
         accountID: fixture.accountID, client: client, loadSecrets: { .absent }
     )
     do {
-        _ = try await reader.read(roomID: UUID(uuidString: fixture.roomID)!)
+        _ = try await reader.read(
+            writerSpaceID: fixture.spaceID,
+            roomID: UUID(uuidString: fixture.roomID)!
+        )
         throw Failure(what: "read without an account key")
     } catch SyncShadowReadError.secretsUnavailable {}
 }
@@ -239,6 +280,7 @@ struct Runner {
     static func main() async {
         let tests: [(String, @MainActor () async throws -> Void)] = [
             ("opens every bubble the phone wrote", testOpensEveryBubbleThePhoneWrote),
+            ("separates one room id by writer space", testSeparatesTheSameRoomIDByWriterSpace),
             ("refuses under the wrong account or key", testRefusesUnderTheWrongAccountOrKey),
             ("notices a row that never arrived", testNoticesARowThatNeverArrived),
             ("reports an absent room", testReportsAnAbsentRoom),

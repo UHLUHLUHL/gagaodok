@@ -19,8 +19,12 @@ public final class SyncShadowReadModel: ObservableObject {
     @Published public var roomIDText: String = ""
 
     private let reader: SyncShadowReader
+    private let writerSpaceID: String
 
-    public init(reader: SyncShadowReader) { self.reader = reader }
+    public init(reader: SyncShadowReader, writerSpaceID: String = "PHONE_SPACE") {
+        self.reader = reader
+        self.writerSpaceID = writerSpaceID
+    }
 
     public var canRun: Bool {
         switch stage {
@@ -35,7 +39,9 @@ public final class SyncShadowReadModel: ObservableObject {
         else { return }
         stage = .running
         do {
-            stage = .finished(try await reader.read(roomID: roomID))
+            stage = .finished(
+                try await reader.read(writerSpaceID: writerSpaceID, roomID: roomID)
+            )
         } catch let error as SyncShadowReadError {
             stage = .failed(error)
         } catch {

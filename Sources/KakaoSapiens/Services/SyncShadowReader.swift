@@ -65,7 +65,7 @@ public final class SyncShadowReader {
         let sealed: [(String, String)]
     }
 
-    public func read(roomID: UUID) async throws -> SyncShadowReadResult {
+    public func read(writerSpaceID: String, roomID: UUID) async throws -> SyncShadowReadResult {
         guard case .available(let secrets) = loadSecrets() else {
             throw SyncShadowReadError.secretsUnavailable
         }
@@ -99,7 +99,8 @@ public final class SyncShadowReader {
                 }
                 guard
                     let identity = row["identity"] as? [String: Any],
-                    (identity["room_id"] as? String)?.uppercased() == wanted
+                    (identity["room_id"] as? String)?.uppercased() == wanted,
+                    identity["space_id"] as? String == writerSpaceID
                 else { continue }
                 switch row["entity_type"] as? String {
                 case "turn":

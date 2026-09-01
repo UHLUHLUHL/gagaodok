@@ -60,6 +60,7 @@ object SyncShadowVerifier {
     fun verify(
         replica: SyncReplicaStore,
         accountId: String,
+        writerSpaceId: String,
         roomId: String,
         loadSecrets: () -> SyncSecretLoadResult,
     ): SyncShadowVerification {
@@ -73,7 +74,9 @@ object SyncShadowVerifier {
 
         for (entry in replica.snapshot()) {
             val identity = decode(entry.identityJson)
-            if (text(identity, "room_id")?.uppercase() != wanted) continue
+            if (text(identity, "room_id")?.uppercase() != wanted ||
+                text(identity, "space_id") != writerSpaceId
+            ) continue
             when (entry.entityType) {
                 "turn" -> text(identity, "turn_id")?.let { turns.add(it.uppercase()) }
                 "bubble" -> bubbles.add(readBubble(identity, decode(entry.projectionJson), wanted))
