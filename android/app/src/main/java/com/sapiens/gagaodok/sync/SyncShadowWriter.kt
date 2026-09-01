@@ -81,6 +81,8 @@ class SyncShadowWriter(
          * null for a row that has one decrypts nothing.
          */
         worldlineId: String? = null,
+        includeRoom: Boolean = true,
+        continuationCapability: String? = null,
     ): SyncShadowWriteManifest {
         val room = roomId.uppercase(Locale.ROOT)
         val worldline = worldlineId?.uppercase(Locale.ROOT)
@@ -97,7 +99,9 @@ class SyncShadowWriter(
         var operations = 0
         // A room row has no worldline component in its identity — its
         // worldline-scoped rows do — so the room is written once either way.
-        enqueue(outbox, roomOperation(room, title, roomScope, roomKeys)); operations += 1
+        if (includeRoom) {
+            enqueue(outbox, roomOperation(room, title, roomScope, roomKeys, continuationCapability)); operations += 1
+        }
 
         val seenTurns = LinkedHashSet<String>()
         var order = startingBubbleOrder
@@ -133,6 +137,7 @@ class SyncShadowWriter(
         title: String,
         scope: SyncE2EE.Scope,
         keys: SyncE2EE.ScopeKeys,
+        continuationCapability: String?,
     ): JsonObject = body("create_room", "room") {
         put("target", target(room))
         put("metadata_set", buildJsonObject { put("origin_space_id", originSpaceId) })
@@ -140,6 +145,9 @@ class SyncShadowWriter(
             "set",
             buildJsonObject {
                 put("title", seal(title, keys, aad(scope, "room", room, "title", null)))
+                if (continuationCapability != null) {
+                    put("extensions.gagaodok.room.continuation_capability", seal(continuationCapability, keys, aad(scope, "room", room, "extensions.gagaodok.room.continuation_capability", null)))
+                }
             },
         )
     }
