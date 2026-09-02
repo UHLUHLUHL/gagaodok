@@ -25,8 +25,11 @@ import {
   CIPHERTEXT_BYTES,
   DEVICE_B_MAC,
   DEVICE_MAC,
+  DEVICE_PHONE,
   DEVICE_TABLET,
   MAC,
+  PHONE,
+  TABLET,
   ROOM_SHARED,
   TIMESTAMP,
   TURN_MAIN,
@@ -49,6 +52,7 @@ import {
 const TOKEN_SEED_MAC = 1;
 const TOKEN_SEED_TABLET = 65;
 const TOKEN_SEED_B = 97;
+const TOKEN_SEED_PHONE = 129;
 const ENROLLMENT_A = "B0000000-0000-4000-8000-0000000000E1";
 
 const checks = [];
@@ -74,10 +78,14 @@ function expect(name, condition, detail = "") {
 async function printSeedSql() {
   const tablet = await syntheticToken(TOKEN_SEED_TABLET);
   const accountB = await syntheticToken(TOKEN_SEED_B);
+  const phone = await syntheticToken(TOKEN_SEED_PHONE);
   const rows = [
     `INSERT OR IGNORE INTO account (account_id, created_at) VALUES ('${ACCOUNT_B}', '${TIMESTAMP}');`,
     `INSERT OR IGNORE INTO device (account_id, device_id, space_id, platform, display_name_enc, linked_at, revoked_at, key_generation, token_hash) VALUES ('${ACCOUNT_B}', '${DEVICE_B_MAC}', 'MAC_SPACE', 'macos', NULL, '${TIMESTAMP}', NULL, 1, '${accountB.tokenHash}');`,
     `INSERT OR IGNORE INTO device (account_id, device_id, space_id, platform, display_name_enc, linked_at, revoked_at, key_generation, token_hash) VALUES ('${ACCOUNT_A}', '${DEVICE_TABLET}', 'TABLET_SPACE', 'android_tablet', NULL, '${TIMESTAMP}', '${TIMESTAMP}', 1, '${tablet.tokenHash}');`,
+    // 두 번째 활성 기기. origin 노출 matrix와 답장 수렴은 한 계정에 기기가
+    // 둘 있어야 시험할 수 있고, enrollment는 시간당 다섯 번으로 묶여 있다.
+    `INSERT OR IGNORE INTO device (account_id, device_id, space_id, platform, display_name_enc, linked_at, revoked_at, key_generation, token_hash) VALUES ('${ACCOUNT_A}', '${DEVICE_PHONE}', 'PHONE_SPACE', 'android_phone', NULL, '${TIMESTAMP}', NULL, 1, '${phone.tokenHash}');`,
   ];
   process.stdout.write(`${rows.join("\n")}\n`);
 }
@@ -535,14 +543,121 @@ async function main() {
     `${settledMismatch} disagreed`,
   );
 
+  // ── 9b. room family origin과 답장 수렴 ───────────────────────────────────
+  //
+  // 0011·0012가 강제하는 규칙이 배포본에서 실제로 도는지 본다. 강제 migration을
+  // 넣고 강제를 확인하지 않을 수는 없다.
+  const phone = await syntheticToken(TOKEN_SEED_PHONE);
+  const ROOM_ORIGIN_MAC = "10000000-0000-4000-8000-000000000011";
+  const ROOM_PHONE_ORIGIN = "10000000-0000-4000-8000-000000000012";
+
+  const macOrigin = await call(baseUrl, "/v1/sync/operations", {
+    method: "POST",
+    token: mac.token,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(createRoom(operationId(70), MAC, ROOM_ORIGIN_MAC, DEVICE_MAC)),
+  });
+  expect(
+    "a MAC-origin room is created by the MAC device",
+    macOrigin.json?.result?.status === "applied",
+    `status ${macOrigin.status} ${errorCode(macOrigin) ?? ""}`,
+  );
+
+  const phoneOrigin = await call(baseUrl, "/v1/sync/operations", {
+    method: "POST",
+    token: phone.token,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(createRoom(operationId(71), PHONE, ROOM_PHONE_ORIGIN, DEVICE_PHONE)),
+  });
+  expect(
+    "a PHONE-origin room is created by the PHONE device",
+    phoneOrigin.json?.result?.status === "applied",
+    `status ${phoneOrigin.status} ${errorCode(phoneOrigin) ?? ""}`,
+  );
+
+  // 자기 space가 아닌 origin을 주장하면 거부해야 한다. 0012의 트리거 자리다.
+  const forged = await call(baseUrl, "/v1/sync/operations", {
+    method: "POST",
+    token: phone.token,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...createRoom(operationId(72), PHONE, "10000000-0000-4000-8000-000000000013", DEVICE_PHONE),
+      metadata_set: { origin_space_id: TABLET },
+    }),
+  });
+  expect(
+    "a room claiming another space as its origin is refused",
+    forged.json?.result?.status !== "applied",
+    `status ${forged.status} ${errorCode(forged) ?? ""}`,
+  );
+  // 거부 자체는 body가 깨져도 일어난다. 잘 만든 요청이 통과하는 것을 함께
+  // 확인해야 이 거부가 origin 때문임이 증명된다.
+  const honest = await call(baseUrl, "/v1/sync/operations", {
+    method: "POST",
+    token: phone.token,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(
+      createRoom(operationId(73), PHONE, "10000000-0000-4000-8000-000000000014", DEVICE_PHONE),
+    ),
+  });
+  expect(
+    "the same shape without a forged origin is accepted",
+    honest.json?.result?.status === "applied",
+    `status ${honest.status} ${errorCode(honest) ?? ""}`,
+  );
+
+  // 두 기기가 각자 쓴 뒤 서로의 change feed가 같은 identity 집합을 본다.
+  // 어긋나면 기기마다 다른 대화를 보게 된다.
+  const macFeed = await call(baseUrl, "/v1/sync/changes?after_seq=0&limit=500", { token: mac.token });
+  const phoneFeed = await call(baseUrl, "/v1/sync/changes?after_seq=0&limit=500", { token: phone.token });
+  const identitySet = (response) =>
+    new Set(
+      (response.json?.result?.changes ?? []).map(
+        (change) => `${change.entity_type}|${JSON.stringify(change.identity)}`,
+      ),
+    );
+  const macIdentities = identitySet(macFeed);
+  const phoneIdentities = identitySet(phoneFeed);
+  const onlyMac = [...macIdentities].filter((identity) => !phoneIdentities.has(identity));
+  const onlyPhone = [...phoneIdentities].filter((identity) => !macIdentities.has(identity));
+  expect(
+    "both devices converge on the same identities",
+    onlyMac.length === 0 && onlyPhone.length === 0,
+    `${onlyMac.length} mac-only, ${onlyPhone.length} phone-only`,
+  );
+  expect("the converged feed is not empty", macIdentities.size > 0, `${macIdentities.size} identities`);
+
+  const originRows = (macFeed.json?.result?.changes ?? []).filter(
+    (change) => change.entity_type === "room",
+  );
+  const originOf = (roomId) =>
+    originRows.find((row) => row.identity?.room_id === roomId)?.projection?.origin_space_id;
+  expect("the MAC-origin room reports MAC_SPACE", originOf(ROOM_ORIGIN_MAC) === MAC, String(originOf(ROOM_ORIGIN_MAC)));
+  expect("the PHONE-origin room reports PHONE_SPACE", originOf(ROOM_PHONE_ORIGIN) === PHONE, String(originOf(ROOM_PHONE_ORIGIN)));
+
   // ── 10. summary ────────────────────────────────────────────────────────────
   process.stdout.write(`\n${checks.length - failures}/${checks.length} checks passed\n`);
   if (failures > 0) process.exitCode = 1;
 }
 
+/**
+ * 운영 데이터만 지우고 account·device·enrollment_log·rate_limit_bucket을 남긴다.
+ *
+ * 전체 초기화 뒤에는 seed가 걸린다. 폐기된 태블릿이 account A에 속하는데 그
+ * account를 만드는 것이 enrollment이기 때문이다. 다시 돌릴 때는 계정과 기기를
+ * 남기고 대화만 지우는 이 모드를 쓰고 SMOKE_SKIP_ENROLLMENT=1로 실행한다.
+ */
+function printPartialResetSql() {
+  const keep = new Set(["account", "device", "enrollment_log", "rate_limit_bucket"]);
+  const tables = RESET_TABLES.filter((table) => !keep.has(table));
+  process.stdout.write(`${tables.map((table) => `DELETE FROM ${table};`).join("\n")}\n`);
+}
+
 const mode = process.argv[2];
 if (mode === "--reset") {
   printResetSql();
+} else if (mode === "--partial-reset") {
+  printPartialResetSql();
 } else if (mode === "--seed") {
   await printSeedSql();
 } else if (mode === "--race") {
