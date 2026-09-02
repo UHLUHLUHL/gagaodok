@@ -115,19 +115,73 @@ SMOKE_SKIP_ENROLLMENT=1 node scripts/remote-smoke.mjs
 | `ready` 행이 그대로인가 | ✅ 건드리지 않음 |
 | **참조된 R2 객체가 살아 있는가** | ✅ Worker 다운로드 경로로 `200`, **130 bytes**(96 + 34) |
 
-### 확인하지 못한 것 — 고아 R2 객체 삭제
+### 고아 R2 객체 삭제 — 절반 확인, 나머지는 2026-09-03에 닫는다
 
-**이 항목은 원격에서 검증하지 못했다.** 실패한 것이 아니라 **잴 수 없었다.**
+`deleteOrphanObjects`가 "오래된"을 판정하는 방식을 읽고 레버를 정리했다.
 
-- 이 wrangler 버전에는 `r2 object list`가 없다
-- `r2 bucket info`의 수치가 정체돼 있다 — 5개에 458 B이면 평균 92 B인데 우리가 올린
-  객체는 130 B다. 현재 상태를 반영하지 않는다
-- R2 객체의 업로드 시각을 과거로 조작할 수 없어, 24시간 유예를 넘긴 고아를 만들 수 없다
+```ts
+const old = page.objects.filter((object) => object.uploaded.getTime() < cutoff);
+// cutoff = now - GRACE_MS(24h),  now = Date.now()
+```
+
+| 레버 | 조작 가능한가 |
+| --- | --- |
+| 객체의 `uploaded` | **불가.** R2가 서버에서 찍는다 |
+| `now` | 코드상 주입 가능하지만 `/__scheduled`로는 넘길 수 없다 |
+| 참조 여부 | **가능.** `attachment`·`recovery_record`의 `r2_object_key` 유무가 전부다 |
+
+접두사는 `obj/`와 `recovery/` 둘이고, 참조 판정은 두 테이블을 함께 본다.
+
+**관찰 수단이 없던 문제는 키를 알면 사라진다.** 이 wrangler에 `r2 object list`가 없고
+`bucket info` 수치가 정체돼 있어 목록으로는 볼 수 없지만, **키를 아는 객체는
+`r2 object get`으로 개별 확인할 수 있다.** 그래서 고아를 직접 심었다.
+
+#### 심어 둔 fixture (2026-09-02 실행 시각 기준)
+
+| 역할 | 키 | 상태 |
+| --- | --- | --- |
+| 고아 (지워져야 함) | `obj/00000000-DEAD-4BEE-8000-000000000001` | 53 B, 두 테이블 어디에도 참조 없음 |
+| 대조군 (남아야 함) | `obj/46BA6731-5613-443E-ABA4-1548CBC7FFF0` | `ready` 첨부가 참조 중 |
+
+#### 2026-09-02에 확인한 것
+
+유지보수를 `wrangler dev --remote --test-scheduled`로 실행한 뒤:
+
+- **어린 고아는 지워지지 않았다** (53 B 그대로 읽힘). 나이 필터가 실제 R2의
+  `uploaded` 값으로 동작한다는 뜻이다
+- 참조된 객체도 그대로였고 Worker 다운로드로 130 B가 나왔다
+
+즉 `list()`가 실제 R2에서 돌고 `uploaded` 비교가 작동하는 것까지는 증명됐다.
+**아직 증명되지 않은 것은 `delete()`가 실제로 고아를 지우는 부분 하나다.**
+
+#### 남은 절반을 닫는 방법 — 기다린다
+
+심은 고아는 2026-09-02 약 02:00 UTC에 올라갔으므로 **2026-09-03 02:00 UTC 이후**
+24시간 유예를 넘는다. cron이 매시 17분에 돌므로 그 뒤 첫 정시에 판정된다.
+
+배포된 Worker와 실제 cron 그대로 확인하는 방법이라 증거가 가장 강하다. 코드를
+고치지 않고, 대기는 유휴 시간이다.
+
+```bash
+cd cloudflare/sync-worker
+# 고아는 사라져야 한다 → "The specified key does not exist."
+npx wrangler r2 object get "gagaodok-sync-synthetic-attachments/obj/00000000-DEAD-4BEE-8000-000000000001" --file /tmp/orphan.bin
+# 대조군은 남아야 한다 → 정상 다운로드
+npx wrangler r2 object get "gagaodok-sync-synthetic-attachments/obj/46BA6731-5613-443E-ABA4-1548CBC7FFF0" --file /tmp/referenced.bin
+```
+
+대조군이 함께 살아 있어야 "지웠다"가 아니라 "고아만 지웠다"가 증명된다.
+
+#### 기각한 방법
+
+| 방법 | 기각 이유 |
+| --- | --- |
+| Worker에 진단용 목록 endpoint 배포 | 정본 스키마 §7.1이 `r2_object_key`는 **클라이언트에 절대 가지 않는다**고 못박았다. 검증을 위해 그 불변식을 깨지 않는다 |
+| `wrangler dev --remote`에 `now` 주입하도록 코드 임시 개조 | 오늘 답이 나오지만 진입점이 배포본과 달라진다. 기다리면 배포본 그대로 증명되므로 굳이 쓸 이유가 없다. 급할 때의 대안으로만 남긴다 |
+| `bucket info` 수치로 판정 | 정체돼 있다. 5개에 458 B이면 평균 92 B인데 올린 객체는 130 B다 |
 
 고아 삭제 로직 자체는 로컬 `test/maintenance-cleanup.spec.ts`가 덮는다
-("deletes only old unreferenced R2 objects and abandons missing allocations" —
-참조된 객체는 남기고 고아만 지우는 것을 확인한다). **원격에서 이 경로가 실제로 도는
-것은 아직 증명되지 않았다.**
+("deletes only old unreferenced R2 objects and abandons missing allocations").
 
 ## 로컬 회귀
 
@@ -152,7 +206,7 @@ Task 16(실제 방 rollout·앱 설치), Task 17(production 자원 생성), Task
 
 Task 16 전에 정리할 것:
 
-1. 원격 고아 R2 삭제를 증명할 방법을 정한다(객체 목록 조회 수단 확보, 또는 Worker에
-   진단 경로 추가 여부 결정)
+1. **2026-09-03 02:00 UTC 이후** 심어 둔 고아 fixture를 확인해 원격 고아 삭제를
+   닫는다. 명령과 기대값은 위 「남은 절반을 닫는 방법」에 있다
 2. 첨부 UI 4상태와 `unsupportedReason` 읽기 전용 표시는 실제 원격 방이 있어야
    확인된다. 여전히 미검증이다
