@@ -51,6 +51,7 @@ import com.sapiens.gagaodok.sync.SyncShadowVerifyModel
 import com.sapiens.gagaodok.sync.SyncShadowVerifyState
 import com.sapiens.gagaodok.sync.SyncSecretLoadResult
 import com.sapiens.gagaodok.sync.SyncSecretStore
+import com.sapiens.gagaodok.sync.SyncRuntimeHost
 import com.sapiens.gagaodok.sync.SyncSyntheticEnvironment
 import com.sapiens.gagaodok.sync.SyncTransitionFiles
 import com.sapiens.gagaodok.sync.SyncTransitionAvailability
@@ -97,6 +98,14 @@ fun SyncSettingsSection() {
             "시험용 합성 계정만 연결합니다. 이 화면은 실제 대화를 읽거나 올리지 않습니다.",
             style = KakaoText.caption,
             color = colors.textSecondary,
+        )
+        // 지금 동기화가 실제로 무엇을 하고 있는지 한 줄로 말한다. 설정 파일이
+        // 없어도 보인다. 꺼져 있는 것과 설정이 없는 것은 다른 상태다.
+        Text(
+            SyncRuntimeHost.statusLabel,
+            style = KakaoText.caption,
+            color = colors.textSecondary,
+            modifier = Modifier.padding(top = 6.dp),
         )
 
         if (model == null || environment == null) {

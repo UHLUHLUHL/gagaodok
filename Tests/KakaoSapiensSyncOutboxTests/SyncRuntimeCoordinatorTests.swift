@@ -78,6 +78,21 @@ private actor Counter {
         let revokedReply = await revoked.canReplyRemote
         try check(!revokedRead && !revokedReply, "a revoked runtime still permits remote work")
 
-        print("22 runtime switch checks passed")
+        // 6. 화면 문구가 상태를 잘못 말하지 않는다.
+        //    꺼져 있는데 "동기화 중"이라고 말하는 것이 가장 나쁜 거짓말이다.
+        let busyWords = ["확인하는 중", "동기화 중"]
+        for quiet in [SyncRuntimeStatus.disabled, .pausedRevoked, .offline] {
+            for word in busyWords {
+                try check(!quiet.label.contains(word),
+                          "\(quiet.rawValue) label claims work is happening: \(quiet.label)")
+            }
+        }
+        try check(SyncRuntimeStatus.disabled.label == "동기화가 꺼져 있습니다.", "disabled label drifted")
+        try check(SyncRuntimeStatus.running.label == "확인하는 중", "running label drifted")
+        // 다섯 상태가 서로 다른 문구를 갖는다. 두 상태가 같은 말을 하면 구분이 안 된다.
+        let labels = Set([SyncRuntimeStatus.disabled, .idle, .running, .pausedRevoked, .offline].map(\.label))
+        try check(labels.count == 5, "two statuses share a label")
+
+        print("33 runtime switch checks passed")
     }
 }

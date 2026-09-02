@@ -68,4 +68,20 @@ class SyncRuntimeCoordinatorTest {
         assertFalse(revoked.canReadRemote)
         assertFalse(revoked.canReplyRemote)
     }
+
+    @Test fun `the status label never claims work while nothing is running`() {
+        // 꺼져 있는데 "동기화 중"이라고 말하는 것이 가장 나쁜 거짓말이다.
+        val busy = listOf("확인하는 중", "동기화 중")
+        for (quiet in listOf(
+            SyncRuntimeStatus.DISABLED, SyncRuntimeStatus.PAUSED_REVOKED, SyncRuntimeStatus.OFFLINE,
+        )) {
+            for (word in busy) {
+                assertFalse("$quiet claims work: ${quiet.label}", quiet.label.contains(word))
+            }
+        }
+        assertEquals("동기화가 꺼져 있습니다.", SyncRuntimeStatus.DISABLED.label)
+        assertEquals("확인하는 중", SyncRuntimeStatus.RUNNING.label)
+        // 다섯 상태가 서로 다른 문구를 갖는다. 두 상태가 같은 말을 하면 구분이 안 된다.
+        assertEquals(5, SyncRuntimeStatus.entries.map { it.label }.toSet().size)
+    }
 }

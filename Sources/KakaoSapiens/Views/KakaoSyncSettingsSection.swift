@@ -12,10 +12,12 @@ import SwiftUI
 /// fills is the opaque shadow replica, which no conversation screen consults.
 struct KakaoSyncSettingsSection: View {
     @StateObject private var host = SyncSettingsHost()
+    @ObservedObject private var runtime = SyncRuntimeHost.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             header
+            runtimeStatus
 
             if let model = host.model {
                 SyncSettingsBody(
@@ -47,6 +49,21 @@ struct KakaoSyncSettingsSection: View {
                 .font(.custom("Pretendard-Regular", size: 11))
                 .foregroundColor(KakaoTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 지금 동기화가 실제로 무엇을 하고 있는지 한 줄로 말한다.
+    ///
+    /// 설정 파일이 없어도 보인다. 꺼져 있는 것과 설정이 없는 것은 다른 상태이고,
+    /// 사용자는 둘 다 알아야 한다.
+    private var runtimeStatus: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(runtime.status == .running ? Color.green : KakaoTheme.textSecondary.opacity(0.5))
+                .frame(width: 6, height: 6)
+            Text(runtime.statusLabel)
+                .font(.custom("Pretendard-Regular", size: 11))
+                .foregroundColor(KakaoTheme.textSecondary)
         }
     }
 

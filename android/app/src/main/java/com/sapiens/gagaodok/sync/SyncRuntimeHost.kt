@@ -25,12 +25,5 @@ object SyncRuntimeHost {
     fun run(trigger: SyncRuntimeTrigger) = coordinator.run(trigger)
 
     /** 상태 표시 문구. syncEnabled=false인 동안 "동기화 중"이라고 말하지 않는다. */
-    val statusLabel: String
-        get() = when (coordinator.status) {
-            SyncRuntimeStatus.DISABLED -> "동기화가 꺼져 있습니다."
-            SyncRuntimeStatus.IDLE -> "마지막으로 확인함"
-            SyncRuntimeStatus.RUNNING -> "확인하는 중"
-            SyncRuntimeStatus.PAUSED_REVOKED -> "이 기기의 연결이 해제되었습니다."
-            SyncRuntimeStatus.OFFLINE -> "연결할 수 없습니다."
-        }
+    val statusLabel: String get() = coordinator.status.label
 }

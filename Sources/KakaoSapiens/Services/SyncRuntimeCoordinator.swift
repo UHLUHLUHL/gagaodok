@@ -16,6 +16,20 @@ public enum SyncRuntimeStatus: String, Equatable {
     case running
     case pausedRevoked
     case offline
+
+    /// 화면에 그대로 쓰는 문구.
+    ///
+    /// `disabled`에서 "동기화 중"이라고 말하지 않는 것이 이 매핑의 핵심이다.
+    /// 순수 함수로 둔 이유는 앱을 띄우지 않고도 그 불변식을 시험하기 위해서다.
+    public var label: String {
+        switch self {
+        case .disabled: return "동기화가 꺼져 있습니다."
+        case .idle: return "마지막으로 확인함"
+        case .running: return "확인하는 중"
+        case .pausedRevoked: return "이 기기의 연결이 해제되었습니다."
+        case .offline: return "연결할 수 없습니다."
+        }
+    }
 }
 
 public struct SyncRuntimeSwitches: Equatable {

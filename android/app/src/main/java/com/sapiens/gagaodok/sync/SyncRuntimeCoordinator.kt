@@ -7,7 +7,29 @@ package com.sapiens.gagaodok.sync
  */
 enum class SyncRuntimeTrigger { LAUNCH, FOREGROUND, MANUAL, AFTER_SEND }
 
-enum class SyncRuntimeStatus { DISABLED, IDLE, RUNNING, PAUSED_REVOKED, OFFLINE }
+enum class SyncRuntimeStatus {
+    DISABLED,
+    IDLE,
+    RUNNING,
+    PAUSED_REVOKED,
+    OFFLINE,
+    ;
+
+    /**
+     * 화면에 그대로 쓰는 문구.
+     *
+     * DISABLED에서 "동기화 중"이라고 말하지 않는 것이 이 매핑의 핵심이다.
+     * 순수 함수로 둔 이유는 앱을 띄우지 않고도 그 불변식을 시험하기 위해서다.
+     */
+    val label: String
+        get() = when (this) {
+            DISABLED -> "동기화가 꺼져 있습니다."
+            IDLE -> "마지막으로 확인함"
+            RUNNING -> "확인하는 중"
+            PAUSED_REVOKED -> "이 기기의 연결이 해제되었습니다."
+            OFFLINE -> "연결할 수 없습니다."
+        }
+}
 
 /** Independent gates: a connected account does nothing until sync is enabled. */
 data class SyncRuntimeSwitches(
