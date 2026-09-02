@@ -16,6 +16,15 @@ enum class SyncRuntimeStatus {
     ;
 
     /**
+     * 동기화가 켜져 있고 정상인가.
+     *
+     * 표시등 색이 이걸 따른다. RUNNING만 초록으로 두면 대부분의 시간에 꺼진
+     * 것과 구별되지 않는다 — 실제로 도는 순간은 아주 짧다.
+     */
+    val isActive: Boolean
+        get() = this == IDLE || this == RUNNING
+
+    /**
      * 화면에 그대로 쓰는 문구.
      *
      * DISABLED에서 "동기화 중"이라고 말하지 않는 것이 이 매핑의 핵심이다.

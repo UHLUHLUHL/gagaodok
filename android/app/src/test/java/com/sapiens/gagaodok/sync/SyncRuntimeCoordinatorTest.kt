@@ -84,4 +84,15 @@ class SyncRuntimeCoordinatorTest {
         // 다섯 상태가 서로 다른 문구를 갖는다. 두 상태가 같은 말을 하면 구분이 안 된다.
         assertEquals(5, SyncRuntimeStatus.entries.map { it.label }.toSet().size)
     }
+
+    @Test fun `the indicator is green only while sync is on`() {
+        // RUNNING만 초록으로 두면 실제로 도는 순간이 아주 짧아 대부분의 시간에
+        // 꺼진 것과 구별되지 않는다.
+        assertTrue(SyncRuntimeStatus.IDLE.isActive)
+        assertTrue(SyncRuntimeStatus.RUNNING.isActive)
+        assertFalse(SyncRuntimeStatus.DISABLED.isActive)
+        assertFalse(SyncRuntimeStatus.PAUSED_REVOKED.isActive)
+        assertFalse(SyncRuntimeStatus.OFFLINE.isActive)
+        assertTrue(SyncRuntimeStatus.DISABLED.label.contains("꺼져"))
+    }
 }

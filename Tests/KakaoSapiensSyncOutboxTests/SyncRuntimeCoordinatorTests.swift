@@ -93,6 +93,18 @@ private actor Counter {
         let labels = Set([SyncRuntimeStatus.disabled, .idle, .running, .pausedRevoked, .offline].map(\.label))
         try check(labels.count == 5, "two statuses share a label")
 
-        print("33 runtime switch checks passed")
+        // 7. 표시등 색. 켜져 있으면 초록, 아니면 회색이다.
+        //    running만 초록으로 두면 실제로 도는 순간이 아주 짧아 대부분의 시간에
+        //    꺼진 것과 구별되지 않는다.
+        try check(SyncRuntimeStatus.idle.isActive, "idle is not active")
+        try check(SyncRuntimeStatus.running.isActive, "running is not active")
+        try check(!SyncRuntimeStatus.disabled.isActive, "disabled is active")
+        try check(!SyncRuntimeStatus.pausedRevoked.isActive, "pausedRevoked is active")
+        try check(!SyncRuntimeStatus.offline.isActive, "offline is active")
+        // 활성으로 보이는데 진행 중이 아니라고 말하거나 그 반대가 되면 안 된다.
+        try check(SyncRuntimeStatus.disabled.label.contains("꺼져"),
+                  "the inactive default does not say it is off")
+
+        print("39 runtime switch checks passed")
     }
 }

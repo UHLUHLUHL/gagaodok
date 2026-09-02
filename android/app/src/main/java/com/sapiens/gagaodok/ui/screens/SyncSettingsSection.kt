@@ -51,6 +51,11 @@ import com.sapiens.gagaodok.sync.SyncShadowVerifyModel
 import com.sapiens.gagaodok.sync.SyncShadowVerifyState
 import com.sapiens.gagaodok.sync.SyncSecretLoadResult
 import com.sapiens.gagaodok.sync.SyncSecretStore
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import com.sapiens.gagaodok.sync.SyncRuntimeHost
 import com.sapiens.gagaodok.sync.SyncSyntheticEnvironment
 import com.sapiens.gagaodok.sync.SyncTransitionFiles
@@ -101,12 +106,26 @@ fun SyncSettingsSection() {
         )
         // 지금 동기화가 실제로 무엇을 하고 있는지 한 줄로 말한다. 설정 파일이
         // 없어도 보인다. 꺼져 있는 것과 설정이 없는 것은 다른 상태다.
-        Text(
-            SyncRuntimeHost.statusLabel,
-            style = KakaoText.caption,
-            color = colors.textSecondary,
+        Row(
             modifier = Modifier.padding(top = 6.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .background(
+                        if (SyncRuntimeHost.status.isActive) Color(0xFF34C759)
+                        else colors.textSecondary.copy(alpha = 0.5f),
+                        CircleShape,
+                    ),
+            )
+            Text(
+                SyncRuntimeHost.statusLabel,
+                style = KakaoText.caption,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
 
         if (model == null || environment == null) {
             Text(

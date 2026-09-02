@@ -59,7 +59,7 @@ struct KakaoSyncSettingsSection: View {
     private var runtimeStatus: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(runtime.status == .running ? Color.green : KakaoTheme.textSecondary.opacity(0.5))
+                .fill(runtime.status.isActive ? Color.green : KakaoTheme.textSecondary.opacity(0.5))
                 .frame(width: 6, height: 6)
             Text(runtime.statusLabel)
                 .font(.custom("Pretendard-Regular", size: 11))
