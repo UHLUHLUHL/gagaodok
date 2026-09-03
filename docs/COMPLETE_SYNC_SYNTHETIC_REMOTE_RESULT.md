@@ -115,7 +115,7 @@ SMOKE_SKIP_ENROLLMENT=1 node scripts/remote-smoke.mjs
 | `ready` 행이 그대로인가 | ✅ 건드리지 않음 |
 | **참조된 R2 객체가 살아 있는가** | ✅ Worker 다운로드 경로로 `200`, **130 bytes**(96 + 34) |
 
-### 고아 R2 객체 삭제 — 절반 확인, 나머지는 2026-09-03에 닫는다
+### 고아 R2 객체 삭제 — 2026-09-03에 닫혔다
 
 `deleteOrphanObjects`가 "오래된"을 판정하는 방식을 읽고 레버를 정리했다.
 
@@ -154,23 +154,26 @@ const old = page.objects.filter((object) => object.uploaded.getTime() < cutoff);
 즉 `list()`가 실제 R2에서 돌고 `uploaded` 비교가 작동하는 것까지는 증명됐다.
 **아직 증명되지 않은 것은 `delete()`가 실제로 고아를 지우는 부분 하나다.**
 
-#### 남은 절반을 닫는 방법 — 기다린다
+#### 2026-09-03에 닫았다 — 고아만 지운다
 
-심은 고아는 2026-09-02 약 02:00 UTC에 올라갔으므로 **2026-09-03 02:00 UTC 이후**
-24시간 유예를 넘는다. cron이 매시 17분에 돌므로 그 뒤 첫 정시에 판정된다.
+유예 24시간이 지난 뒤 배포된 Worker와 실제 cron이 판정했다. 코드를 고치지 않고
+`now`를 주입하지도 않았다.
 
-배포된 Worker와 실제 cron 그대로 확인하는 방법이라 증거가 가장 강하다. 코드를
-고치지 않고, 대기는 유휴 시간이다.
+| 확인 | 결과 |
+| --- | --- |
+| 오래된 고아가 지워졌는가 | ✅ `The specified key does not exist.` |
+| **참조된 객체가 살아남았는가** | ✅ 130 bytes 정상 다운로드 |
+| D1의 `ready` 행이 그대로인가 | ✅ `ready` 유지 |
+| 하루 전 `allocated`가 `abandoned`가 됐는가 | ✅ 전날 확인 |
 
-```bash
-cd cloudflare/sync-worker
-# 고아는 사라져야 한다 → "The specified key does not exist."
-npx wrangler r2 object get "gagaodok-sync-synthetic-attachments/obj/00000000-DEAD-4BEE-8000-000000000001" --file /tmp/orphan.bin
-# 대조군은 남아야 한다 → 정상 다운로드
-npx wrangler r2 object get "gagaodok-sync-synthetic-attachments/obj/46BA6731-5613-443E-ABA4-1548CBC7FFF0" --file /tmp/referenced.bin
-```
+대조군이 함께 살아 있으므로 "지웠다"가 아니라 **"고아만 지웠다"**가 증명됐다.
+그리고 이 시점의 대조군은 24시간을 넘긴 상태였다 — 즉 나이 필터가 아니라
+**참조 검사가 실제로 지켜준 것**이다. 데이터 손실 방향이 여기서 처음 시험됐다.
 
-대조군이 함께 살아 있어야 "지웠다"가 아니라 "고아만 지웠다"가 증명된다.
+**도중에 잡은 함정.** `wrangler r2 object get`은 `--remote` 없이 부르면 로컬 모의
+저장소를 본다. 전날 이 명령이 "키가 없다"고 답한 것도, 심어 둔 고아를 "살아 있다"고
+답한 것도 모두 로컬을 본 결과였다. `--remote`를 붙여 다시 확인했다. **R2 명령에는
+`--remote`를 반드시 붙인다.**
 
 #### 기각한 방법
 
@@ -206,7 +209,5 @@ Task 16(실제 방 rollout·앱 설치), Task 17(production 자원 생성), Task
 
 Task 16 전에 정리할 것:
 
-1. **2026-09-03 02:00 UTC 이후** 심어 둔 고아 fixture를 확인해 원격 고아 삭제를
-   닫는다. 명령과 기대값은 위 「남은 절반을 닫는 방법」에 있다
-2. 첨부 UI 4상태와 `unsupportedReason` 읽기 전용 표시는 실제 원격 방이 있어야
+1. 첨부 UI 4상태와 `unsupportedReason` 읽기 전용 표시는 실제 원격 방이 있어야
    확인된다. 여전히 미검증이다
