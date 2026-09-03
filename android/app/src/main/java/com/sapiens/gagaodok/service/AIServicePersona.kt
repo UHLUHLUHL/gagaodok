@@ -528,7 +528,8 @@ suspend fun AIService.analyzePersonaStyle(
             .put(
                 "generationConfig",
                 JSONObject().put("maxOutputTokens", 2048)
-                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
+                    // 설명과 예시에서 말투를 뽑아내는 분석 작업이다.
+                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "high"))
             )
 
         val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)
@@ -574,7 +575,8 @@ suspend fun AIService.refinePersonaStyle(
         .put(
             "generationConfig",
             JSONObject().put("maxOutputTokens", 2560)
-                .put("thinkingConfig", JSONObject().put("thinkingLevel", "low"))
+                // 말투를 다듬는 것은 판단이 들어가는 작업이다.
+                .put("thinkingConfig", JSONObject().put("thinkingLevel", "high"))
         )
 
     val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)

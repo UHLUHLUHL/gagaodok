@@ -25,15 +25,19 @@ class AppSettings private constructor(context: Context) {
         prefs.edit().putString(KEY_APPEARANCE, mode.rawValue).apply()
     }
 
+    // 저장해 둔 선택을 실제로 읽어 옵니다.
+    //
+    // 예전에는 이 자리에 3.7이 박혀 있었고 setter도 인자를 버린 채 3.7만 썼습니다.
+    // 대화 모델이 하나뿐이라 티가 나지 않았을 뿐, 저장은 하고 읽지는 않는 상태였습니다.
+    // 모델이 둘이 된 지금은 골라도 아무 일이 없는 것으로 드러납니다.
     private val _selectedModel = MutableStateFlow(
-        AIModel.GEMINI_37_FLASH
+        AIModel.fromStoredValue(prefs.getString(KEY_MODEL, null) ?: "") ?: AIModel.GEMINI_38_FLASH
     )
     val selectedModel: StateFlow<AIModel> = _selectedModel
 
     fun setSelectedModel(model: AIModel) {
-        // 대화 모델은 3.7 하나뿐이라 전역 기본값을 여기에 고정합니다.
-        _selectedModel.value = AIModel.GEMINI_37_FLASH
-        prefs.edit().putString(KEY_MODEL, AIModel.GEMINI_37_FLASH.rawValue).apply()
+        _selectedModel.value = model
+        prefs.edit().putString(KEY_MODEL, model.rawValue).apply()
     }
 
     private val _exchangeRate = MutableStateFlow(

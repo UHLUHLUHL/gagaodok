@@ -2,10 +2,23 @@ import Foundation
 import Security
 
 public enum AIModel: String, CaseIterable, Codable, Identifiable {
+    case gemini38Flash = "gemini-3.8-flash"
     case gemini37Flash = "gemini-3.7-flash"
     case gpt56Luna = "gpt-5.6-luna"
 
     public var id: String { rawValue }
+
+    /// 이 모델이 Gemini 계열인가.
+    ///
+    /// 예전에는 `model == .gemini37Flash`로 이걸 확인했습니다. Gemini가 하나뿐일
+    /// 때만 맞는 코드였고, 3.8이 들어오는 순간 3.8이 "Gemini가 아닌 것"으로
+    /// 취급됩니다. 판정을 여기 한 곳에 모아 다음 모델에서 같은 일이 없게 합니다.
+    public var isGemini: Bool {
+        switch self {
+        case .gemini38Flash, .gemini37Flash: return true
+        case .gpt56Luna: return false
+        }
+    }
 
     // 이전 버전이 저장한 모델 식별자를 현재 모델로 이어 붙입니다.
     // 선택 모델(UserDefaults)과 사용량 장부(token_usage.json)가 모두 rawValue를 키로 쓰기 때문에
@@ -38,6 +51,7 @@ public enum AIModel: String, CaseIterable, Codable, Identifiable {
 
     public var displayName: String {
         switch self {
+        case .gemini38Flash: return "Gemini 3.8 Flash"
         case .gemini37Flash: return "Gemini 3.7 Flash"
         case .gpt56Luna: return "GPT-5.6 Luna"
         }
@@ -45,19 +59,19 @@ public enum AIModel: String, CaseIterable, Codable, Identifiable {
 
     public var shortName: String {
         switch self {
-        case .gemini37Flash: return "Gemini"
+        case .gemini38Flash, .gemini37Flash: return "Gemini"
         case .gpt56Luna: return "Luna"
         }
     }
 
     public var providerName: String {
         switch self {
-        case .gemini37Flash: return "Google"
+        case .gemini38Flash, .gemini37Flash: return "Google"
         case .gpt56Luna: return "OpenAI"
         }
     }
 
-    // Gemini 3.7 Flash 도입 요금은 2026-12-31까지만 적용되고 2027-01-01부터 정가로 두 배가 됩니다.
+    // Gemini 3.8·3.7 Flash 도입 요금은 2026-12-31까지만 적용되고 2027-01-01부터 정가로 두 배가 됩니다.
     // 대시보드는 "지금 청구되는 금액"을 보여줘야 하므로 단가를 날짜에 따라 고릅니다.
     private static let standardPricingStart: Date = {
         var calendar = Calendar(identifier: .gregorian)
@@ -73,21 +87,21 @@ public enum AIModel: String, CaseIterable, Codable, Identifiable {
 
     public var inputPricePerMillion: Double {
         switch self {
-        case .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.75 : 1.50
+        case .gemini38Flash, .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.75 : 1.50
         case .gpt56Luna: return 1.00
         }
     }
 
     public var cachedInputPricePerMillion: Double {
         switch self {
-        case .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.075 : 0.15
+        case .gemini38Flash, .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.075 : 0.15
         case .gpt56Luna: return 0.10
         }
     }
 
     public var outputPricePerMillion: Double {
         switch self {
-        case .gemini37Flash: return Self.isIntroductoryPricingActive ? 3.75 : 7.50
+        case .gemini38Flash, .gemini37Flash: return Self.isIntroductoryPricingActive ? 3.75 : 7.50
         case .gpt56Luna: return 6.00
         }
     }
@@ -96,7 +110,7 @@ public enum AIModel: String, CaseIterable, Codable, Identifiable {
     /// Gemini는 캐시를 올려두는 동안 별도로 보관료가 붙습니다.
     public var cacheStoragePricePerMillionPerHour: Double {
         switch self {
-        case .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.50 : 1.00
+        case .gemini38Flash, .gemini37Flash: return Self.isIntroductoryPricingActive ? 0.50 : 1.00
         case .gpt56Luna: return 0  // OpenAI는 보관료 없이 캐시 쓰기 요금만 받습니다.
         }
     }
@@ -105,7 +119,7 @@ public enum AIModel: String, CaseIterable, Codable, Identifiable {
     /// OpenAI 계열에만 있는 개념이라 Gemini는 1.0으로 두고 대신 보관료로 계산합니다.
     public var cacheWriteMultiplier: Double {
         switch self {
-        case .gemini37Flash: return 1.0
+        case .gemini38Flash, .gemini37Flash: return 1.0
         case .gpt56Luna: return 1.25
         }
     }
@@ -123,7 +137,7 @@ public final class ModelSelectionManager: ObservableObject {
 
     private init() {
         let saved = UserDefaults.standard.string(forKey: Self.modelKey)
-        self.selectedModel = AIModel(storedValue: saved ?? "") ?? .gemini37Flash
+        self.selectedModel = AIModel(storedValue: saved ?? "") ?? .gemini38Flash
     }
 
     public var hasOpenAIKey: Bool { KeychainStore.openAIAPIKey != nil }

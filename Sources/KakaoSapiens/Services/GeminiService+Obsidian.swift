@@ -328,7 +328,7 @@ extension GeminiService {
         structuredOutput: ObsidianStructuredOutput
     ) async throws -> String {
         switch model {
-        case .gemini37Flash:
+        case .gemini38Flash, .gemini37Flash:
             guard let apiKey = KeychainStore.geminiAPIKey else {
                 throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
             }

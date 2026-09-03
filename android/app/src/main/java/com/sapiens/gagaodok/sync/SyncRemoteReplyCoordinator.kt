@@ -19,7 +19,7 @@ class SyncRemoteReplyCoordinator(
 ) {
     fun prepare(room: SyncRemoteRoomSnapshot, writerSpaceId: String, userText: String, assistantText: String, model: AIModel, outbox: SyncOutbox): String {
         require(room.continuationCapability == SyncRemoteContinuationCapability.CHATBOT) { "unsupported room" }
-        require(model == AIModel.GEMINI_37_FLASH) { "unsupported model" }
+        require(model.isGeminiConversationModel) { "unsupported model" }
         val turn = UUID.randomUUID().toString().uppercase()
         val time = Instant.now().toString()
         val writer = SyncShadowWriter(accountId, deviceId, room.handle.originSpaceId, writerSpaceId, masterKey)

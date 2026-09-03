@@ -409,11 +409,11 @@ public struct KakaoUsageSettingsView: View {
     }
 
     private func modelBadge(_ model: AIModel) -> some View {
-        Text(model == .gemini37Flash ? "G" : "L")
+        Text(model.isGemini ? "G" : "L")
             .font(.system(size: 12, weight: .bold, design: .rounded))
             .foregroundColor(.white)
             .frame(width: 29, height: 29)
-            .background(model == .gemini37Flash ? Color(red: 0.25, green: 0.52, blue: 0.94) : Color(red: 0.38, green: 0.25, blue: 0.75), in: RoundedRectangle(cornerRadius: 9))
+            .background(model.isGemini ? Color(red: 0.25, green: 0.52, blue: 0.94) : Color(red: 0.38, green: 0.25, blue: 0.75), in: RoundedRectangle(cornerRadius: 9))
     }
 
     private func metric(title: String, value: String) -> some View {

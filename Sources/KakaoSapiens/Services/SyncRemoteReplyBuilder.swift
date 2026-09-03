@@ -19,7 +19,7 @@ public final class SyncRemoteReplyBuilder {
 
     public func prepareReply(room: SyncRemoteRoomSnapshot, writerSpaceID: String, userText: String, assistantText: String, selectedGeminiModel: AIModel) throws -> SyncRemoteReplyPlan {
         guard room.continuationCapability == .chatbot else { throw SyncRemoteReplyBuilderError.unsupportedRoom }
-        guard selectedGeminiModel == .gemini37Flash else { throw SyncRemoteReplyBuilderError.unsupportedModel }
+        guard selectedGeminiModel.isGemini else { throw SyncRemoteReplyBuilderError.unsupportedModel }
         guard !userText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !assistantText.isEmpty else { throw SyncRemoteReplyBuilderError.invalidText }
         let roomID = room.handle.roomID.uuidString.uppercased(), turn = UUID(), user = UUID(), ai = UUID()
         let scope = SyncE2EE.Scope(accountID: accountID, spaceID: writerSpaceID, roomID: roomID, worldlineID: nil)

@@ -367,7 +367,8 @@ extension GeminiService {
             "contents": [["role": "user", "parts": [["text": userText]]]],
             "generationConfig": [
                 "maxOutputTokens": 2560,
-                "thinkingConfig": ["thinkingLevel": "low"]
+                // 말투를 다듬는 것은 판단이 들어가는 작업입니다.
+                "thinkingConfig": ["thinkingLevel": "high"]
             ]
         ]
         let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
@@ -421,7 +422,8 @@ extension GeminiService {
             "systemInstruction": ["parts": [["text": instruction]]],
             "generationConfig": [
                 "maxOutputTokens": 2048,
-                "thinkingConfig": ["thinkingLevel": "low"]
+                // 설명과 예시에서 말투를 뽑아내는 분석 작업입니다.
+                "thinkingConfig": ["thinkingLevel": "high"]
             ]
         ]
         var userText = ""

@@ -58,7 +58,7 @@ public actor GeminiService {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
         let rawText: String
         switch model {
-        case .gemini37Flash:
+        case .gemini38Flash, .gemini37Flash:
             rawText = try await sendGeminiRequest(
                 conversation: conversation, botName: botName, roomId: roomId, persona: persona, mode: mode
             )
@@ -95,7 +95,7 @@ public actor GeminiService {
         onBubble: @Sendable @escaping (GeneratedMessageBubble) async -> Void
     ) async throws -> String {
         let model = await MainActor.run { requestedModel ?? ModelSelectionManager.shared.selectedModel }
-        guard model == .gemini37Flash else {
+        guard model.isGemini else {
             let response = try await generateResponse(
                 conversation: conversation, botName: botName, roomId: roomId,
                 model: model, persona: persona, mode: mode, roleplayInProgress: roleplayInProgress

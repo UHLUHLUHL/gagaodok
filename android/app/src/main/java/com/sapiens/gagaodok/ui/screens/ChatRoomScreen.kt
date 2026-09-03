@@ -325,8 +325,10 @@ fun ChatRoomScreen(
             ),
             KakaoMenuSection(
                 title = "모델",
+                // 멘토도 Gemini 계열이면 모두 고를 수 있어야 합니다. 예전에는 3.7만
+                // 적혀 있었고, 그래서 새 모델이 들어와도 멘토 방에서는 안 보였습니다.
                 items = (if (activeMode == ChatMode.COMPANION) AIModel.personalCompanionModels
-                    else listOf(AIModel.GEMINI_37_FLASH)).map { model ->
+                    else AIModel.entries.filter { it.isGeminiConversationModel }).map { model ->
                     KakaoMenuItem(model.displayName, checked = model == activeModel) {
                         menu.dismiss(); app.chatStore.updateModel(room.id, model)
                     }

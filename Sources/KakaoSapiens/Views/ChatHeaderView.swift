@@ -136,7 +136,7 @@ public struct ChatHeaderView: View {
                             } label: {
                                 HStack(spacing: 3) {
                                     Circle()
-                                        .fill(activeModel == .gemini37Flash
+                                        .fill(activeModel.isGemini
                                               ? Color(red: 0.26, green: 0.53, blue: 0.95)
                                               : Color(red: 0.39, green: 0.26, blue: 0.76))
                                         .frame(width: 5, height: 5)
