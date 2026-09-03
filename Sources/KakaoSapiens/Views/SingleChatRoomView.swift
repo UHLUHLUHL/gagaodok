@@ -83,7 +83,17 @@ public struct SingleChatRoomView: View {
 
     /// 본문에서 떼어냈습니다. 한 덩어리로 두면 타입 검사가 시간 안에 끝나지 않습니다.
     private var messageList: some View {
-        LazyVStack(spacing: 0) {
+        // 방과 아바타를 목록 바깥에서 한 번만 꺼냅니다.
+        //
+        // 예전에는 말풍선마다 `room.profile.name`과 `currentAvatar`를 읽었고,
+        // `room`은 계산 속성이라 그때마다 방 목록을 처음부터 훑었습니다. 화면에
+        // 보이는 말풍선 수만큼, 매 프레임입니다. 실기기 sample에서 `room.getter`와
+        // 그 아래 `Sequence.first(where:)`가 상위에 잡혔습니다.
+        let currentRoom = room
+        let botName = currentRoom.profile.name
+        let avatar = currentAvatar
+
+        return LazyVStack(spacing: 0) {
             if !messages.isEmpty {
                 // 카카오톡 상단 날짜 구분선
                 KakaoDateDividerView(date: messages.first?.timestamp ?? Date())
@@ -96,8 +106,8 @@ public struct SingleChatRoomView: View {
                     message: msg,
                     isFirstInGroup: isFirstMessageInGroup(at: index),
                     isLastInGroup: isLastMessageInGroup(at: index),
-                    botName: room.profile.name,
-                    customAvatar: currentAvatar,
+                    botName: botName,
+                    customAvatar: avatar,
                     isEditingThisMessage: editingMessage?.id == msg.id,
                     isSelected: selection.isSelected(msg.id),
                     isRichContentActive: BubbleViewportRenderingPolicy.shouldRenderRichContent(
@@ -129,8 +139,8 @@ public struct SingleChatRoomView: View {
 
             if isTyping {
                 TypingIndicatorView(
-                    botName: room.profile.name,
-                    customAvatar: currentAvatar,
+                    botName: botName,
+                    customAvatar: avatar,
                     onCancel: { cancelResponse() }
                 )
                     .id("typingIndicator")

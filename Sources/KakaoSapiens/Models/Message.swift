@@ -227,12 +227,22 @@ public struct ChatMessage: Identifiable, Codable {
         kind = try c.decodeIfPresent(MessageKind.self, forKey: .kind) ?? .speech
     }
     
-    public var formattedTime: String {
+    /// 말풍선마다 매 프레임 불립니다.
+    ///
+    /// 예전에는 부를 때마다 `DateFormatter`를 새로 만들고 로케일까지 다시
+    /// 붙였습니다. 만드는 값이 비싸기로 유명한 물건인데 화면에 보이는 말풍선 수만큼
+    /// 프레임마다 만들고 있었습니다. 실기기 sample에서 이 속성이 상위에 잡혔습니다.
+    ///
+    /// 하나를 만들어 돌려 씁니다. 형식과 로케일이 고정이라 상태가 바뀌지 않고,
+    /// `string(from:)`은 포매터를 바꾸지 않으므로 여러 곳에서 읽어도 됩니다.
+    private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "ko_KR")
         formatter.dateFormat = "a h:mm"
-        return formatter.string(from: timestamp)
-    }
+        return formatter
+    }()
+
+    public var formattedTime: String { Self.timeFormatter.string(from: timestamp) }
     
     /// 이 말풍선을 웹뷰로 그려야 하는가.
     ///
@@ -289,17 +299,40 @@ public struct ChatMessage: Identifiable, Codable {
 
     // 수평선(---)이나 제목·목록처럼 줄 단위로만 의미를 갖는 문법은 위 검사에 걸리지 않습니다.
     // 그래서 "---" 한 줄짜리 말풍선이 웹뷰 대신 일반 Text로 그려져 원문 그대로 보였습니다.
-    private static func hasBlockMarkdown(_ text: String) -> Bool {
-        text.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.count >= 3 {
-                let characters = Set(trimmed)
-                if characters.count == 1, let mark = characters.first, mark == "-" || mark == "_" {
-                    return true
+    /// 줄 단위로만 의미를 갖는 문법(수평선, 제목·목록 접두사)을 찾습니다.
+    ///
+    /// 판정은 예전과 같고 할당만 없앴습니다. 예전에는 줄마다 `trimmingCharacters`로
+    /// 새 문자열을, `Set(trimmed)`로 새 집합을 만들었습니다. 평문 말풍선마다 매
+    /// 프레임 그렇게 했습니다. 지금은 자리만 옮겨 가며 셉니다.
+    static func hasBlockMarkdown(_ text: String) -> Bool {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            var start = line.startIndex
+            var end = line.endIndex
+            while start < end, isTrimmable(line[start]) { start = line.index(after: start) }
+            while start < end, isTrimmable(line[line.index(before: end)]) { end = line.index(before: end) }
+            let trimmed = line[start..<end]
+            if trimmed.isEmpty { continue }
+
+            // 수평선: 세 글자 이상이 전부 같은 '-' 또는 '_'
+            let first = trimmed[trimmed.startIndex]
+            if first == "-" || first == "_" {
+                var count = 0
+                var uniform = true
+                for character in trimmed {
+                    if character != first { uniform = false; break }
+                    count += 1
                 }
+                if uniform && count >= 3 { return true }
             }
-            return trimmed.hasPrefix("# ") || trimmed.hasPrefix("- ")
+
+            if trimmed.hasPrefix("# ") || trimmed.hasPrefix("- ") { return true }
         }
+        return false
+    }
+
+    /// `CharacterSet.whitespaces`와 같은 판정입니다. 줄바꿈은 이미 갈라낸 뒤라 없습니다.
+    private static func isTrimmable(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
     }
 }
 

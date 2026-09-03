@@ -59,6 +59,24 @@ private func message(_ text: String) -> ChatMessage {
         // 빈 글
         try check(!message("").containsLaTeXOrMarkdown, "빈 글이 마크업으로 잡혔다")
 
-        print("\(math.count + markdown.count + plain.count + 1) markup detection checks passed")
+        // 시각 표시 — DateFormatter를 재사용해도 글자가 달라지면 안 됩니다.
+        var components = DateComponents()
+        components.year = 2026; components.month = 9; components.day = 3
+        components.hour = 15; components.minute = 7
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        let afternoon = calendar.date(from: components)!
+        components.hour = 9; components.minute = 5
+        let morning = calendar.date(from: components)!
+
+        let pm = ChatMessage(sender: .user, text: "x", timestamp: afternoon).formattedTime
+        let am = ChatMessage(sender: .user, text: "x", timestamp: morning).formattedTime
+        try check(pm == "오후 3:07", "오후 시각 표시가 달라졌다: \(pm)")
+        try check(am == "오전 9:05", "오전 시각 표시가 달라졌다: \(am)")
+        // 같은 시각은 몇 번을 물어도 같아야 합니다(포매터를 공유해도).
+        try check(ChatMessage(sender: .user, text: "y", timestamp: afternoon).formattedTime == pm,
+                  "같은 시각이 두 번 다르게 나왔다")
+
+        print("\(math.count + markdown.count + plain.count + 4) markup and time checks passed")
     }
 }
