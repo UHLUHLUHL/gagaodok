@@ -78,6 +78,7 @@ import com.sapiens.gagaodok.ui.components.liquidGlassSupported
 import com.sapiens.gagaodok.ui.components.opaqueCardSurface
 import com.sapiens.gagaodok.ui.icons.MagnifierIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
+import com.sapiens.gagaodok.ui.components.ExpandMotion
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 
 internal object WorldlineTokens {
@@ -101,7 +102,9 @@ private object HeartGaugeTokens {
     val downPill = Color(0xFF26303D)
 }
 
-private val RelationshipMotionEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+// 호감도 카드가 처음 쓰던 곡선입니다. 대화 요약 화면도 같은 결을 써야 해서
+// 공용으로 옮겼고, 여기서는 그것을 가리키기만 합니다.
+private val RelationshipMotionEasing = ExpandMotion.Easing
 
 /// 호감도 카드의 치수입니다. 피그마 `02B · Group chat` 프레임에서 잰 값입니다.
 ///

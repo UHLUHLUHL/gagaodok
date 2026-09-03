@@ -82,6 +82,9 @@ import com.sapiens.gagaodok.ui.components.LiquidGlassRegion
 import com.sapiens.gagaodok.ui.components.LiquidGlassBackdrop
 import androidx.compose.ui.graphics.lerp
 import com.sapiens.gagaodok.ui.theme.KakaoText
+import com.sapiens.gagaodok.model.ConversationTurn
+import com.sapiens.gagaodok.service.ConversationCompactor
+import com.sapiens.gagaodok.service.ConversationDigestStatus
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 import java.text.SimpleDateFormat
 import java.io.File
@@ -299,6 +302,9 @@ fun ChatRoomScreen(
             }
     }
 
+    // 요약 시트가 떠 있는가. 열 때 그 시점의 상태를 한 번 계산해 넣습니다.
+    var digestStatus by remember { mutableStateOf<ConversationDigestStatus?>(null) }
+
     fun openNewInk() {
         InkDocument(roomId = room.id.toString(), coordinateSpaceVersion = 1).also {
             app.inkStore.save(it)
@@ -334,6 +340,15 @@ fun ChatRoomScreen(
                     }
                     add(KakaoMenuItem("프로필 보기") { menu.dismiss(); onOpenProfile() })
                     add(KakaoMenuItem("말투 편집") { menu.dismiss(); onEditPersona() })
+                    add(
+                        KakaoMenuItem("대화 요약") {
+                            menu.dismiss()
+                            digestStatus = ConversationDigestStatus.of(
+                                totalTurns = ConversationCompactor.turnCount(ConversationTurn.from(messages)),
+                                digest = app.chatStore.loadDigest(room.id),
+                            )
+                        },
+                    )
                 }
             )
         )
@@ -689,6 +704,10 @@ fun ChatRoomScreen(
                 modifier = Modifier.background(colors.surface, RoundedCornerShape(20.dp)).padding(horizontal = 18.dp, vertical = 10.dp))
         }
     }
+    digestStatus?.let { status ->
+        ConversationDigestSheet(status = status, onDismiss = { digestStatus = null })
+    }
+
     activeInkDocument?.let { document ->
         InkFloatingPanel(
             document = document,
