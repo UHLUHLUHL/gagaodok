@@ -234,11 +234,57 @@ public struct ChatMessage: Identifiable, Codable {
         return formatter.string(from: timestamp)
     }
     
+    /// 이 말풍선을 웹뷰로 그려야 하는가.
+    ///
+    /// **스트리밍 중에 말풍선마다 매 프레임 불립니다.** 예전에는 여기서
+    /// `text.contains(_:)`를 열한 번 불렀는데, 그것이 로케일을 보는 유니코드
+    /// 검색이라 `"$"` 하나 찾는 데도 대소문자 접기까지 돌았습니다. 실기기 sample에서
+    /// 메인 스레드 앱 심볼 1위가 이 속성이었고, 그 아래가 전부 문자열 검색이었습니다.
+    ///
+    /// 지금은 UTF-8 바이트를 **한 번만** 훑습니다. 찾는 표시가 전부 ASCII라
+    /// 결과는 예전과 같습니다 — ASCII에는 정규화로 갈라지는 표현이 없습니다.
     public var containsLaTeXOrMarkdown: Bool {
-        let hasMath = text.contains("$") || text.contains("\\(") || text.contains("\\[") || text.contains("\\frac") || text.contains("\\sqrt")
-        let hasInlineMarkdown = text.contains("```") || text.contains("**") || text.contains("*")
-            || text.contains("##") || text.contains("|") || text.contains("> ")
-        return hasMath || hasInlineMarkdown || Self.hasBlockMarkdown(text)
+        Self.hasInlineMarkup(text) || Self.hasBlockMarkdown(text)
+    }
+
+    /// `$ * | > # \` 같은 한 줄 안의 표시를 한 번의 순회로 찾습니다.
+    ///
+    /// 예전 판정과 짝이 맞습니다. `**`는 `*` 하나로 이미 걸리므로 따로 보지 않습니다.
+    static func hasInlineMarkup(_ text: String) -> Bool {
+        let bytes = Array(text.utf8)
+        var index = 0
+        while index < bytes.count {
+            let byte = bytes[index]
+            switch byte {
+            case UInt8(ascii: "$"), UInt8(ascii: "*"), UInt8(ascii: "|"):
+                return true
+            case UInt8(ascii: ">"):
+                // 인용은 "> " 입니다. 부등호로 쓴 ">" 는 아닙니다.
+                if index + 1 < bytes.count, bytes[index + 1] == UInt8(ascii: " ") { return true }
+            case UInt8(ascii: "#"):
+                if index + 1 < bytes.count, bytes[index + 1] == UInt8(ascii: "#") { return true }
+            case UInt8(ascii: "`"):
+                if index + 2 < bytes.count,
+                   bytes[index + 1] == UInt8(ascii: "`"), bytes[index + 2] == UInt8(ascii: "`") { return true }
+            case UInt8(ascii: "\\"):
+                if index + 1 < bytes.count {
+                    let next = bytes[index + 1]
+                    if next == UInt8(ascii: "(") || next == UInt8(ascii: "[") { return true }
+                    if matches(bytes, at: index + 1, "frac") || matches(bytes, at: index + 1, "sqrt") { return true }
+                }
+            default:
+                break
+            }
+            index += 1
+        }
+        return false
+    }
+
+    private static func matches(_ bytes: [UInt8], at start: Int, _ word: String) -> Bool {
+        let needle = Array(word.utf8)
+        guard start + needle.count <= bytes.count else { return false }
+        for offset in 0..<needle.count where bytes[start + offset] != needle[offset] { return false }
+        return true
     }
 
     // 수평선(---)이나 제목·목록처럼 줄 단위로만 의미를 갖는 문법은 위 검사에 걸리지 않습니다.
