@@ -1,10 +1,9 @@
 package com.sapiens.gagaodok.ui.screens
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,11 +29,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.sapiens.gagaodok.service.ConversationDigestStatus
 import com.sapiens.gagaodok.ui.Metrics
+import com.sapiens.gagaodok.ui.clickableNoRipple
+import com.sapiens.gagaodok.ui.components.ExpandChevron
 import com.sapiens.gagaodok.ui.components.ExpandMotion
 import com.sapiens.gagaodok.ui.theme.KakaoText
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
@@ -157,7 +157,14 @@ private fun EmptyDigestNotice(status: ConversationDigestStatus) {
     }
 }
 
-/** 한 구간. 누르면 요약 본문이 펼쳐집니다. */
+/**
+ * 한 구간. 누르면 요약 본문이 펼쳐집니다.
+ *
+ * 호감도 카드와 같은 결을 냅니다. **크기가 먼저 자라고 글이 뒤따라 옵니다.**
+ * 크기를 재우지 않으면 카드가 즉시 튀어 열린 뒤 글자만 서서히 나타나 어색합니다.
+ *
+ * 안드로이드 기본 물결은 끕니다. 카카오 목록에는 물결이 없습니다.
+ */
 @Composable
 private fun DigestSegmentRow(label: String, length: Int, body: String) {
     val colors = KakaoTheme.colors
@@ -166,27 +173,31 @@ private fun DigestSegmentRow(label: String, length: Int, body: String) {
     val bodyAlpha by transition.animateFloat(
         transitionSpec = { ExpandMotion.reveal(targetState) }, label = "본문",
     ) { if (it) 1f else 0f }
-    val chevron by animateFloatAsState(
-        targetValue = if (expanded) 90f else 0f,
-        animationSpec = ExpandMotion.shape(),
-        label = "화살표",
-    )
+    val chevron by transition.animateFloat(
+        transitionSpec = { ExpandMotion.shape() }, label = "화살표",
+    ) { if (it) 1f else 0f }
 
     Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(colors.chatBackground)
-            .clickable { expanded = !expanded }
+            .clickableNoRipple(onClickLabel = if (expanded) "요약 접기" else "요약 펼치기") {
+                expanded = !expanded
+            }
+            // 높이가 붙는 자리입니다. 이것이 없으면 모션이 아니라 점프가 됩니다.
+            .animateContentSize(animationSpec = ExpandMotion.shape())
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("›", style = KakaoText.listName, color = colors.textSecondary,
-                modifier = Modifier.rotate(chevron))
-            Text(label, style = KakaoText.listName, color = colors.textPrimary,
-                modifier = Modifier.padding(start = 8.dp).weight(1f))
+            ExpandChevron(chevron, colors.textSecondary, Modifier.size(14.dp))
+            Text(
+                label, style = KakaoText.listName, color = colors.textPrimary,
+                modifier = Modifier.padding(start = 8.dp).weight(1f),
+            )
             Text("${length}자", style = KakaoText.caption, color = colors.textSecondary)
         }
+        // 접히는 동안 글이 카드 밖으로 삐져나오지 않도록, 알파가 0이 되면 자리도 뺍니다.
         if (expanded || bodyAlpha > 0f) {
             Text(
                 body,

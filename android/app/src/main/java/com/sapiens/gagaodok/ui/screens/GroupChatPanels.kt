@@ -78,6 +78,7 @@ import com.sapiens.gagaodok.ui.components.liquidGlassSupported
 import com.sapiens.gagaodok.ui.components.opaqueCardSurface
 import com.sapiens.gagaodok.ui.icons.MagnifierIcon
 import com.sapiens.gagaodok.ui.theme.KakaoText
+import com.sapiens.gagaodok.ui.components.ExpandChevron
 import com.sapiens.gagaodok.ui.components.ExpandMotion
 import com.sapiens.gagaodok.ui.theme.KakaoTheme
 
@@ -437,7 +438,7 @@ internal fun HeartGaugePanel(
                 }
             }
             RelationshipHeart(Modifier.offset(x = heartX, y = heartY).size(20.dp))
-            RelationshipChevron(
+            ExpandChevron(
                 chevronProgress,
                 colors.textSecondary,
                 Modifier.align(Alignment.TopEnd).padding(top = 11.dp, end = 8.dp).size(14.dp)
@@ -532,15 +533,6 @@ private fun RelationshipHeart(modifier: Modifier = Modifier) {
             close()
         }
         drawPath(path, HeartGaugeTokens.heart)
-    }
-}
-
-@Composable
-private fun RelationshipChevron(progress: Float, color: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier.graphicsLayer { rotationZ = progress * 180f }) {
-        val strokeWidth = 1.4.dp.toPx()
-        drawLine(color, start = androidx.compose.ui.geometry.Offset(size.width * 0.28f, size.height * 0.42f), end = androidx.compose.ui.geometry.Offset(size.width * 0.5f, size.height * 0.64f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
-        drawLine(color, start = androidx.compose.ui.geometry.Offset(size.width * 0.5f, size.height * 0.64f), end = androidx.compose.ui.geometry.Offset(size.width * 0.72f, size.height * 0.42f), strokeWidth = strokeWidth, cap = StrokeCap.Round)
     }
 }
 

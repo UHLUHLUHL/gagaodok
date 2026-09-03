@@ -1,6 +1,14 @@
 package com.sapiens.gagaodok.ui.components
 
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.foundation.Canvas
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.tween
 
@@ -38,4 +46,33 @@ object ExpandMotion {
      */
     fun <T> reveal(expanding: Boolean): FiniteAnimationSpec<T> =
         if (expanding) tween(RevealMillis, delayMillis = RevealDelayMillis) else tween(HideMillis)
+}
+
+/**
+ * 접었다 펴는 것을 가리키는 화살표입니다.
+ *
+ * 호감도 카드가 쓰던 것을 그대로 꺼냈습니다. 접히면 아래를, 펼치면 위를
+ * 가리키도록 180도 돕니다.
+ *
+ * @param progress 0이면 접힘, 1이면 펼침.
+ */
+@Composable
+fun ExpandChevron(progress: Float, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.graphicsLayer { rotationZ = progress * 180f }) {
+        val strokeWidth = 1.4.dp.toPx()
+        drawLine(
+            color,
+            start = Offset(size.width * 0.28f, size.height * 0.42f),
+            end = Offset(size.width * 0.5f, size.height * 0.64f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color,
+            start = Offset(size.width * 0.5f, size.height * 0.64f),
+            end = Offset(size.width * 0.72f, size.height * 0.42f),
+            strokeWidth = strokeWidth,
+            cap = StrokeCap.Round,
+        )
+    }
 }
