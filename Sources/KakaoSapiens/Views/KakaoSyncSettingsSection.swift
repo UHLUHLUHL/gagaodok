@@ -424,6 +424,15 @@ private struct SyncSettingsBody: View {
 private struct SyncDeviceListCard: View {
     @ObservedObject var model: SyncDeviceListModel
 
+    private func button(_ title: String, work: @escaping () -> Void) -> some View {
+        Button(title, action: work)
+            .font(.custom("Pretendard-Medium", size: 11))
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(KakaoTheme.bubbleMine, in: RoundedRectangle(cornerRadius: 7))
+            .foregroundColor(KakaoTheme.bubbleMineText)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("연결된 기기")
@@ -439,6 +448,9 @@ private struct SyncDeviceListCard: View {
                 button("다시 시도") { await model.load() }
             case .loaded(let devices):
                 if devices.isEmpty { detail("현재 표시할 기기가 없습니다.") }
+                if model.revokeFailed {
+                    detail("기기를 빼지 못했습니다. 목록은 그대로입니다.")
+                }
                 ForEach(devices) { device in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -449,6 +461,16 @@ private struct SyncDeviceListCard: View {
                                 .foregroundColor(KakaoTheme.textTertiary)
                         }
                         Spacer()
+                        if model.canRevoke(device), model.pendingRevoke == nil {
+                            button("빼기") { model.requestRevoke(device) }
+                        }
+                    }
+                }
+                if let pending = model.pendingRevoke {
+                    detail("\(pending.title)을(를) 이 계정에서 뺍니다. 그 기기는 더 이상 동기화하지 못하고, 다시 쓰려면 QR 합류를 처음부터 다시 해야 합니다. 이 Mac의 대화는 그대로입니다.")
+                    HStack(spacing: 7) {
+                        button("빼기 확인") { await model.confirmRevoke() }
+                        button("취소") { model.cancelRevoke() }
                     }
                 }
                 button("새로고침") { await model.load() }

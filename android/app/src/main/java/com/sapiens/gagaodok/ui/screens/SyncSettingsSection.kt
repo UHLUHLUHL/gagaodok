@@ -259,6 +259,8 @@ fun SyncSettingsSection() {
 @Composable
 private fun SyncDeviceListSection(model: SyncDeviceListModel) {
     val state by model.state.collectAsState()
+    val pending by model.pendingRevoke.collectAsState()
+    val revokeFailed by model.revokeFailed.collectAsState()
     val colors = KakaoTheme.colors
     Column(
         Modifier.fillMaxWidth().padding(top = 12.dp)
@@ -278,9 +280,25 @@ private fun SyncDeviceListSection(model: SyncDeviceListModel) {
             }
             is SyncDeviceListState.Loaded -> {
                 if (current.devices.isEmpty()) Text("현재 표시할 기기가 없습니다.", style = KakaoText.caption, color = colors.textSecondary)
+                if (revokeFailed) {
+                    Text("기기를 빼지 못했습니다. 목록은 그대로입니다.", style = KakaoText.caption, color = colors.textSecondary)
+                }
                 current.devices.forEach { device ->
                     Text(device.title + if (device.isCurrent) " · 현재 기기" else "", style = KakaoText.listPreview, color = colors.textPrimary)
                     Text("연결: ${device.linkedAt}", style = KakaoText.listTime, color = colors.textTertiary)
+                    if (model.canRevoke(device) && pending == null) {
+                        SyncActionButton("빼기") { model.requestRevoke(device) }
+                    }
+                }
+                pending?.let {
+                    Text(
+                        "${it.title}을(를) 이 계정에서 뺍니다. 그 기기는 더 이상 동기화하지 못하고, " +
+                            "다시 쓰려면 QR 합류를 처음부터 다시 해야 합니다. 이 기기의 대화는 그대로입니다.",
+                        style = KakaoText.caption,
+                        color = colors.textSecondary,
+                    )
+                    SyncActionButton("빼기 확인") { model.confirmRevoke() }
+                    SyncActionButton("취소") { model.cancelRevoke() }
                 }
                 SyncActionButton("새로고침") { model.load() }
             }

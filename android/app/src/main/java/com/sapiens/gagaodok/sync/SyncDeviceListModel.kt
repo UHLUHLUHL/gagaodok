@@ -31,6 +31,47 @@ class SyncDeviceListModel(private val client: SyncWorkerClient) {
     private val mutableState = MutableStateFlow<SyncDeviceListState>(SyncDeviceListState.Idle)
     val state: StateFlow<SyncDeviceListState> = mutableState.asStateFlow()
 
+    /** The device the user asked to remove, waiting for confirmation. */
+    private val mutablePendingRevoke = MutableStateFlow<SyncAccountDevice?>(null)
+    val pendingRevoke: StateFlow<SyncAccountDevice?> = mutablePendingRevoke.asStateFlow()
+    private val mutableRevokeFailed = MutableStateFlow(false)
+    val revokeFailed: StateFlow<Boolean> = mutableRevokeFailed.asStateFlow()
+
+    /**
+     * Removing *this* device is deliberately not offered here.
+     *
+     * Revoking is a server-side act; it would leave this device holding keys
+     * the account no longer honours — the half-linked state this whole feature
+     * exists to escape. Leaving is what "이 기기 연결 해제" does, and that
+     * clears the local side too.
+     */
+    fun canRevoke(device: SyncAccountDevice): Boolean = !device.isCurrent
+
+    fun requestRevoke(device: SyncAccountDevice) {
+        if (!canRevoke(device)) return
+        mutableRevokeFailed.value = false
+        mutablePendingRevoke.value = device
+    }
+
+    fun cancelRevoke() {
+        mutablePendingRevoke.value = null
+        mutableRevokeFailed.value = false
+    }
+
+    fun confirmRevoke() {
+        val device = mutablePendingRevoke.value ?: return
+        mutablePendingRevoke.value = null
+        runCatching { client.revokeDevice(device.id) }
+            .onSuccess {
+                mutableRevokeFailed.value = false
+                // Read the list back rather than dropping the row locally:
+                // what the account holds is the server's answer, not our guess.
+                mutableState.value = SyncDeviceListState.Idle
+                load()
+            }
+            .onFailure { mutableRevokeFailed.value = true }
+    }
+
     fun load() {
         if (mutableState.value == SyncDeviceListState.Loading) return
         mutableState.value = SyncDeviceListState.Loading

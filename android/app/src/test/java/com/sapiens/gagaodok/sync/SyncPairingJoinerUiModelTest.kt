@@ -129,6 +129,29 @@ class SyncPairingJoinerUiModelTest {
         assertTrue(model.actions.canConfirmSas)
     }
 
+    /**
+     * The tablet hit this on 2026-09-04: the Worker linked the device, then the
+     * delivery envelope would not open. Reporting that as "rejected" sent the
+     * screen back to waiting, so the only button on offer was one that could
+     * never succeed — the device row it would insert already existed.
+     */
+    @Test fun `an unreadable delivery is terminal and never offers waiting`() {
+        val service = Service().apply {
+            failRedeem = SyncPairingException(SyncPairingException.Reason.DELIVERY_UNREADABLE)
+        }
+        val model = SyncPairingJoinerUiModel(service) { true }
+        model.requestScan()
+        model.cameraPermissionGranted()
+        model.acceptScannedPayload("R0RQMQ", DEVICE, "TABLET_SPACE", "android_tablet")
+        model.confirmSasAndRedeem()
+
+        assertEquals(
+            SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.DeliveryUnreadable),
+            model.state.value,
+        )
+        assertFalse(model.actions.canConfirmSas)
+    }
+
     @Test fun `duplicate actions while busy are ignored`() {
         val service = Service()
         val model = SyncPairingJoinerUiModel(service) { true }

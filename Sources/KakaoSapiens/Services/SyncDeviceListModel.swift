@@ -27,9 +27,46 @@ public enum SyncDeviceListState: Equatable {
 @MainActor
 public final class SyncDeviceListModel: ObservableObject {
     @Published public private(set) var state: SyncDeviceListState = .idle
+    /// The device the user has asked to remove, waiting for confirmation.
+    @Published public private(set) var pendingRevoke: SyncAccountDevice?
+    @Published public private(set) var revokeFailed = false
     private let client: SyncWorkerClient
 
     public init(client: SyncWorkerClient) { self.client = client }
+
+    /// Removing *this* device is deliberately not offered here.
+    ///
+    /// Revoking is a server-side act; it would leave this Mac holding keys the
+    /// account no longer honours — the half-linked state this whole feature
+    /// exists to escape. Leaving is what "이 기기 연결 해제" does, and that
+    /// clears the local side too.
+    public func canRevoke(_ device: SyncAccountDevice) -> Bool { !device.isCurrent }
+
+    public func requestRevoke(_ device: SyncAccountDevice) {
+        guard canRevoke(device) else { return }
+        revokeFailed = false
+        pendingRevoke = device
+    }
+
+    public func cancelRevoke() {
+        pendingRevoke = nil
+        revokeFailed = false
+    }
+
+    public func confirmRevoke() async {
+        guard let device = pendingRevoke else { return }
+        pendingRevoke = nil
+        do {
+            _ = try await client.revokeDevice(deviceID: device.id)
+            revokeFailed = false
+            // Read the list back rather than removing the row locally: what the
+            // account holds is the server's answer, not our guess at it.
+            state = .idle
+            await load()
+        } catch {
+            revokeFailed = true
+        }
+    }
 
     public func load() async {
         guard state != .loading else { return }

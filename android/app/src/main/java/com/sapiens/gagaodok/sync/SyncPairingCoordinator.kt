@@ -21,6 +21,13 @@ class SyncPairingException(val reason: Reason) : Exception() {
         /** The user has not confirmed the two screens show the same number. */
         SAS_NOT_CONFIRMED,
         REJECTED,
+        /**
+         * The Worker accepted the redeem, but what came back could not be
+         * opened. Kept apart from [REJECTED] because by the time we get here
+         * the server has already linked this device: pressing the button
+         * again can only ever fail, so the screen must not offer waiting.
+         */
+        DELIVERY_UNREADABLE,
         STORAGE_FAILED,
         TRANSPORT,
     }
@@ -306,7 +313,7 @@ class SyncPairingJoinerCoordinator(
                 Base64.getDecoder().decode(body.getString("account_master_key")),
                 Base64.getDecoder().decode(body.getString("device_token")),
             )
-        }.getOrElse { throw SyncPairingException(SyncPairingException.Reason.REJECTED) }
+        }.getOrElse { throw SyncPairingException(SyncPairingException.Reason.DELIVERY_UNREADABLE) }
 
         return SyncPairingRedeemedCandidate(
             bundle,

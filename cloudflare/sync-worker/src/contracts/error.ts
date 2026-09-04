@@ -14,6 +14,7 @@ export const ERROR_CODES = [
   "RECOVERY_CONFLICT",
   "PAIRING_INVALID",
   "PAIRING_STATE_CONFLICT",
+  "DEVICE_ALREADY_LINKED",
   "REQUEST_TOO_LARGE",
   "PROFILE_UNSUPPORTED",
   "RATE_LIMITED",
@@ -43,6 +44,10 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   RECOVERY_CONFLICT: 409,
   PAIRING_INVALID: 401,
   PAIRING_STATE_CONFLICT: 409,
+  // This device id is already linked and active on the account. Distinct
+  // from PAIRING_STATE_CONFLICT, which the joiner is told to wait out:
+  // waiting cannot clear this one, only revoking the existing device can.
+  DEVICE_ALREADY_LINKED: 409,
   REQUEST_TOO_LARGE: 413,
   PROFILE_UNSUPPORTED: 422,
   RATE_LIMITED: 429,

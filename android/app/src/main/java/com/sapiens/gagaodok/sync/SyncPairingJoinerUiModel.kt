@@ -34,6 +34,11 @@ enum class SyncPairingJoinerUiError {
     NotAvailable,
     InvalidQr,
     PairingFailed,
+    /**
+     * Linked on the server, unusable here. Terminal on purpose: the device row
+     * already exists, so another redeem would collide with it.
+     */
+    DeliveryUnreadable,
 }
 
 sealed interface SyncPairingJoinerUiState {
@@ -125,10 +130,15 @@ class SyncPairingJoinerUiModel(
             service.redeem(sasConfirmed = true)
             SyncPairingJoinerUiState.LinkedSyncOff
         } catch (error: SyncPairingException) {
-            if (error.reason == SyncPairingException.Reason.REJECTED) {
-                SyncPairingJoinerUiState.WaitingApproval(digits)
-            } else {
-                SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.PairingFailed)
+            when (error.reason) {
+                // The Worker turned the redeem down. The common cause is that
+                // the Mac has not approved yet, which waiting does fix.
+                SyncPairingException.Reason.REJECTED ->
+                    SyncPairingJoinerUiState.WaitingApproval(digits)
+                SyncPairingException.Reason.DELIVERY_UNREADABLE ->
+                    SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.DeliveryUnreadable)
+                else ->
+                    SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.PairingFailed)
             }
         } catch (_: Throwable) {
             SyncPairingJoinerUiState.Error(SyncPairingJoinerUiError.PairingFailed)

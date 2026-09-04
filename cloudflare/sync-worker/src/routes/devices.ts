@@ -90,3 +90,68 @@ export async function handleDeviceListRequest(request: Request, env: Env): Promi
     return new ApiError("INTERNAL_ERROR").toResponse(requestId);
   }
 }
+
+/**
+ * Take one device off the account.
+ *
+ * Any linked device may revoke any device on its own account, including
+ * itself. The alternative — letting only one device revoke — turns the loss of
+ * that device into the loss of the account. A stolen device could revoke the
+ * others, but whoever holds it already holds the account master key, so the
+ * damage is done before this endpoint is reached.
+ *
+ * The row is marked, never deleted: conversation rows reference it, and the
+ * history of which device wrote what has to survive the device leaving.
+ *
+ * Revoking an already-revoked device answers success rather than an error. A
+ * client that never saw the first response must be able to repeat the call
+ * without being told something is wrong.
+ */
+export async function handleDeviceRevokeRequest(
+  request: Request,
+  env: Env,
+  deviceId: string,
+): Promise<Response> {
+  const requestId = crypto.randomUUID().toUpperCase();
+  try {
+    const auth = await authenticateDevice(request, env.DB);
+    const url = new URL(request.url);
+    if ([...url.searchParams.keys()].length !== 0) throw validationFailed();
+
+    let existing: { revoked_at: string | null } | null;
+    try {
+      existing = await env.DB.prepare(
+        "SELECT revoked_at FROM device WHERE account_id = ? AND device_id = ?",
+      ).bind(auth.account_id, deviceId).first<{ revoked_at: string | null }>();
+    } catch {
+      throw storageUnavailable();
+    }
+    if (existing === null) throw new ApiError("ENTITY_NOT_FOUND");
+
+    if (existing.revoked_at !== null) {
+      return Response.json({
+        protocol_version: PROTOCOL_VERSION,
+        request_id: requestId,
+        result: { device_id: deviceId, revoked_at: existing.revoked_at },
+      });
+    }
+
+    const revokedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    try {
+      await env.DB.prepare(
+        `UPDATE device SET revoked_at = ?
+          WHERE account_id = ? AND device_id = ? AND revoked_at IS NULL`,
+      ).bind(revokedAt, auth.account_id, deviceId).run();
+    } catch {
+      throw storageUnavailable();
+    }
+    return Response.json({
+      protocol_version: PROTOCOL_VERSION,
+      request_id: requestId,
+      result: { device_id: deviceId, revoked_at: revokedAt },
+    });
+  } catch (error) {
+    if (error instanceof ApiError) return error.toResponse(requestId);
+    return new ApiError("INTERNAL_ERROR").toResponse(requestId);
+  }
+}

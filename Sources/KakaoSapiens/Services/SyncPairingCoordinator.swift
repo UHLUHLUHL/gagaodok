@@ -16,6 +16,10 @@ public enum SyncPairingError: Error, Equatable {
     /// The user has not confirmed the two screens show the same number.
     case shortAuthenticationStringNotConfirmed
     case rejected
+    /// The Worker accepted the redeem, but what came back could not be opened.
+    /// Separate from ``rejected`` because the server has already linked this
+    /// device by then: redeeming again can only collide with that row.
+    case deliveryUnreadable
     case storageFailed
     case transport
 }
@@ -331,7 +335,7 @@ public actor SyncPairingJoinerCoordinator {
             claimID: claim,
             claimLookup: derived.claimLookup,
             payloadType: .delivery
-        ) else { throw SyncPairingError.rejected }
+        ) else { throw SyncPairingError.deliveryUnreadable }
 
         guard let body = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
               let masterText = body["account_master_key"] as? String,
@@ -339,7 +343,7 @@ public actor SyncPairingJoinerCoordinator {
               let master = Data(base64Encoded: masterText),
               let token = Data(base64Encoded: tokenText),
               let bundle = try? SyncSecretBundle(accountMasterKey: master, deviceToken: token) else {
-            throw SyncPairingError.rejected
+            throw SyncPairingError.deliveryUnreadable
         }
 
         do { try vault.save(bundle) } catch { throw SyncPairingError.storageFailed }

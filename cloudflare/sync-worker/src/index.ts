@@ -1,5 +1,6 @@
 import type { Env } from "./env";
 import { ApiError, PROTOCOL_VERSION } from "./contracts/error";
+import { isCanonicalUuid } from "./contracts/identity";
 import {
   handleAttachmentComplete,
   handleAttachmentDownload,
@@ -8,7 +9,7 @@ import {
 } from "./routes/attachments";
 import { handleBootstrapRequest } from "./routes/bootstrap";
 import { handleChangesRequest } from "./routes/changes";
-import { handleDeviceListRequest } from "./routes/devices";
+import { handleDeviceListRequest, handleDeviceRevokeRequest } from "./routes/devices";
 import { handleOperationRequest } from "./routes/operations";
 import {
   handleEnrollmentInitialize,
@@ -80,6 +81,12 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/v1/account/devices") {
       return await limited(request, env, "sync_read", () => handleDeviceListRequest(request, env));
+    }
+
+    const revoke = /^\/v1\/account\/devices\/([^/]+)\/revoke$/.exec(url.pathname);
+    const revokeTarget = revoke?.[1];
+    if (request.method === "POST" && revokeTarget !== undefined && isCanonicalUuid(revokeTarget)) {
+      return await limited(request, env, "sync_read", () => handleDeviceRevokeRequest(request, env, revokeTarget));
     }
 
     const attachment = matchAttachmentPath(url.pathname);

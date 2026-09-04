@@ -109,6 +109,7 @@ canonical operation이 확정되기 전의 오류와 unknown route에는 `reques
 | 409 | `BUBBLE_ORDER_CONFLICT` | 새 bubble의 scope-wide 예상 순서 불일치 |
 | 409 | `OPERATION_REPLAY_MISMATCH` | 같은 ID에 다른 request fingerprint |
 | 409 | `ATTACHMENT_STATE_CONFLICT` | 잘못된 attachment 상태 전이 |
+| 409 | `DEVICE_ALREADY_LINKED` | 합류하려는 device_id가 이미 활성 상태 |
 | 413 | `REQUEST_TOO_LARGE` | endpoint 상한 초과 |
 | 422 | `PROFILE_UNSUPPORTED` | 지원·고지된 fallback 없음 |
 | 429 | `RATE_LIMITED` | 호출 제한 |
@@ -175,6 +176,36 @@ AuthContext = {
 ```
 
 v1에는 `last_seen_at`이 없으므로 온라인·최근 접속 상태를 추정해 표시하지 않는다.
+
+### 4.0.1 `POST /v1/account/devices/{device_id}/revoke`
+
+인증된 기기는 **같은 account의 어떤 기기든** 폐기할 수 있고 자기 자신도 포함한다.
+한 기기만 폐기 권한을 가지면 그 기기를 잃는 순간 account 전체가 잠기기 때문이다.
+탈취된 기기가 다른 기기를 폐기할 수 있지만, 그 기기를 쥔 쪽은 이미 account master
+key를 가지고 있으므로 이 endpoint가 피해를 늘리지 않는다.
+
+행은 **삭제하지 않고 `revoked_at`을 기록한다.** 대화 행이 device를 참조하고, 어떤
+기기가 무엇을 썼는지는 기기가 떠난 뒤에도 남아야 한다. 폐기된 token은 기존 인증
+경계에서 그대로 403이 된다.
+
+이미 폐기된 기기에 대한 요청은 **오류가 아니라 성공**이며 최초 `revoked_at`을 그대로
+반환한다. 첫 응답을 받지 못한 client가 같은 요청을 다시 보낼 수 있어야 한다.
+다른 account의 기기와 없는 기기는 모두 `ENTITY_NOT_FOUND`다.
+
+query parameter는 없다. 폐기된 기기는 pairing을 처음부터 다시 거쳐 되돌아올 수
+있다(§ pairing redeem). 활성 기기를 pairing으로 덮어쓰는 것은
+`DEVICE_ALREADY_LINKED`로 거부한다.
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "90000000-0000-4000-8000-000000000011",
+  "result": {
+    "device_id": "80000000-0000-4000-8000-000000000002",
+    "revoked_at": "2026-09-04T02:00:00Z"
+  }
+}
+```
 
 ### 4.1 `POST /v1/sync/operations`
 

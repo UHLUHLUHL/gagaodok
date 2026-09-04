@@ -88,6 +88,21 @@ public final class SyncWorkerClient {
         try await get(path: "/v1/account/devices")
     }
 
+    /// Take one device off this account. Any linked device may revoke any
+    /// other, itself included: if only one device could, losing that device
+    /// would lock the account.
+    public func revokeDevice(deviceID: String) async throws -> SyncHTTPResponse {
+        let request = try authorizedRequest(
+            path: "/v1/account/devices/\(deviceID)/revoke",
+            method: "POST"
+        )
+        let response = try await transport.send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            throw SyncWorkerClientError.httpStatus(response.statusCode)
+        }
+        return response
+    }
+
     /// Issue a new recovery phrase for the account this device is already
     /// linked to. The body carries no master key and no entropy.
     public func rotateRecovery(body: Data) async throws -> SyncHTTPResponse {

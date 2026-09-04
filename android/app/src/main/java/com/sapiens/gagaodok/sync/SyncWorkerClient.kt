@@ -64,6 +64,18 @@ class SyncWorkerClient(
     }
     fun changes(after: Long, limit: Int = 300): SyncHttpResponse = get("/v1/sync/changes?after_seq=$after&limit=$limit")
     fun devices(): SyncHttpResponse = get("/v1/account/devices")
+
+    /**
+     * Take one device off this account. Any linked device may revoke any
+     * other, itself included: if only one device could, losing that device
+     * would lock the account.
+     */
+    fun revokeDevice(deviceId: String): SyncHttpResponse = checked(
+        transport.send(
+            request("/v1/account/devices/$deviceId/revoke")
+                .post(ByteArray(0).toRequestBody(JSON)).build(),
+        ),
+    )
     fun bootstrap(cursor: String? = null, limit: Int = 300): SyncHttpResponse {
         val suffix = cursor?.let { "&cursor=" + java.net.URLEncoder.encode(it, Charsets.UTF_8.name()) } ?: ""
         return get("/v1/sync/bootstrap?limit=$limit$suffix")

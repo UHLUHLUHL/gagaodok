@@ -69,6 +69,47 @@ describe("pairing route family",()=>{
     expect(await r.json()).toEqual({protocol_version:1,error:{code:"PAIRING_INVALID",retryable:false}});
   });
 
+  async function seedNewDevice(revokedAt: string | null): Promise<void> {
+    await env.DB.prepare(`INSERT INTO device (account_id,device_id,space_id,platform,linked_at,revoked_at,key_generation,token_hash) VALUES (?,?, 'PHONE_SPACE','android_phone',?,?,1,?)`)
+      .bind(ACCOUNT,NEW_DEVICE,NOW,revokedAt,"a".repeat(64)).run();
+  }
+  async function runFullPairing(): Promise<Response> {
+    await call("/v1/pairing/sessions","POST",sessionBody());
+    await call(`/v1/pairing/sessions/${pairing.session_id}/claims`,"POST",claimBody(),false);
+    await call(`/v1/pairing/sessions/${pairing.session_id}/claims/${pairing.claim_id}/approve`,"POST",await approveBody());
+    return call(`/v1/pairing/sessions/${pairing.session_id}/claims/${pairing.claim_id}/redeem`,"POST",redeemBody(),false);
+  }
+
+  /**
+   * A device that was revoked must be able to come back. Without this the only
+   * way out of "linked on the server, unusable on the device" was an operator
+   * editing D1 by hand, which is exactly what happened on 2026-09-04.
+   */
+  it("revives a revoked device rather than colliding with its row",async()=>{
+    await seedNewDevice(NOW);
+    const redeemed=await runFullPairing();
+    expect(redeemed.status).toBe(200);
+    const row=await env.DB.prepare("SELECT revoked_at, token_hash FROM device WHERE device_id=?").bind(NEW_DEVICE).first<{revoked_at:string|null;token_hash:string}>();
+    expect(row?.revoked_at).toBeNull();
+    expect(row?.token_hash).toBe("c".repeat(64));
+    // Revived, not duplicated: conversation rows point at this row.
+    expect((await env.DB.prepare("SELECT count(*) AS n FROM device").first<{n:number}>())?.n).toBe(2);
+  });
+
+  /**
+   * The other half. Reviving a *revoked* row is safe because rejoining still
+   * costs a QR, a matching number and the host's approval; taking over an
+   * *active* one would hand the account to whoever learned the device id.
+   */
+  it("refuses to take over a device that is still linked",async()=>{
+    await seedNewDevice(null);
+    const redeemed=await runFullPairing();
+    expect(redeemed.status).toBe(409);
+    expect(await redeemed.json()).toEqual({protocol_version:1,error:{code:"DEVICE_ALREADY_LINKED",retryable:false}});
+    const row=await env.DB.prepare("SELECT token_hash FROM device WHERE device_id=?").bind(NEW_DEVICE).first<{token_hash:string}>();
+    expect(row?.token_hash).toBe("a".repeat(64));
+  });
+
   it("rejects redeem auth from another claim and leaves state approved",async()=>{
     await call("/v1/pairing/sessions","POST",sessionBody()); await call(`/v1/pairing/sessions/${pairing.session_id}/claims`,"POST",claimBody(),false);
     await call(`/v1/pairing/sessions/${pairing.session_id}/claims/${pairing.claim_id}/approve`,"POST",await approveBody());

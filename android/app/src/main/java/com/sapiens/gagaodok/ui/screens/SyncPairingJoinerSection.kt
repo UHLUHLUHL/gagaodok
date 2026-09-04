@@ -207,7 +207,8 @@ private fun pairingDetail(state: SyncPairingJoinerUiState): String = when (state
     SyncPairingJoinerUiState.Scanning -> "QR을 찾는 중입니다. QR 값은 화면이나 로그에 표시하지 않습니다."
     is SyncPairingJoinerUiState.VerifySas -> "맥 화면과 이 번호가 같은지 확인하세요: ${state.digits}"
     is SyncPairingJoinerUiState.WaitingApproval ->
-        "맥 화면과 이 번호가 같은지 확인한 뒤 승인 결과를 다시 확인하세요: ${state.digits}"
+        "맥 화면과 이 번호가 같은지 확인한 뒤 승인 결과를 다시 확인하세요: ${state.digits}\n" +
+            "여러 번 눌러도 그대로면 맥에서 아직 승인하지 않은 것입니다."
     SyncPairingJoinerUiState.Redeeming -> "승인 결과를 확인하고 있습니다."
     SyncPairingJoinerUiState.LinkedSyncOff -> "계정에 합류했습니다. 실제 대화 동기화는 꺼져 있습니다."
     is SyncPairingJoinerUiState.Error -> when (state.reason) {
@@ -215,5 +216,8 @@ private fun pairingDetail(state: SyncPairingJoinerUiState): String = when (state
         SyncPairingJoinerUiError.NotAvailable -> "기존 연결 정보가 있어 덮어쓰지 않았습니다."
         SyncPairingJoinerUiError.InvalidQr -> "가가오독 합류 QR이 아닙니다. 새 QR로 다시 시도하세요."
         SyncPairingJoinerUiError.PairingFailed -> "합류를 완료하지 못했습니다. 맥의 세션을 확인하세요."
+        SyncPairingJoinerUiError.DeliveryUnreadable ->
+            "서버에는 합류가 기록됐지만 이 기기가 계정 키를 열지 못했습니다. " +
+                "다시 눌러도 같은 결과가 나옵니다. 맥에서 이 기기의 연결을 지운 뒤 새 QR로 다시 시작하세요."
     }
 }
