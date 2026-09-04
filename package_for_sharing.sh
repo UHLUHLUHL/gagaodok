@@ -84,7 +84,7 @@ else
     codesign --force --deep --sign - "${APP_BUNDLE}" 2>/dev/null || true
 fi
 
-cp -f "설치방법.txt" "dist/설치방법.txt" 2>/dev/null || true
+cp -f "docs/installation/설치방법.txt" "dist/설치방법.txt" 2>/dev/null || true
 
 cd dist
 zip -qry "${APP_NAME}.zip" "${APP_NAME}.app" "설치방법.txt" 2>/dev/null || zip -qry "${APP_NAME}.zip" "${APP_NAME}.app"
@@ -92,4 +92,4 @@ cd ..
 
 echo
 echo "✅ 완성: $DIR/dist/${APP_NAME}.zip ($(du -h dist/${APP_NAME}.zip | cut -f1))"
-echo "   이 zip과 설치방법.txt 를 친구에게 보내세요."
+echo "   이 zip과 dist/설치방법.txt 를 친구에게 보내세요."

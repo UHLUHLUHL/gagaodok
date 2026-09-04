@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gemini 요금 시뮬레이터. TOKEN_COST.md의 표를 만든 코드입니다.
+"""Gemini 요금 시뮬레이터. docs/TOKEN_COST.md의 표를 만든 코드입니다.
 
 AIServicePrefixCache.kt와 ConversationCompactor.kt의 상수·규칙을 그대로 옮겼습니다.
 앱과 어긋나면 앱이 맞습니다 — 여기를 고치십시오.
@@ -125,7 +125,7 @@ def fit():
         print(f"   {label:<8} {fmt(got)}  (관측 {fmt(want)})  오차 {abs(got-want)/want*100:>5.1f}%")
     print(f"   캐시 적중 {r['cached_in']/r['total_in']*100:.0f}%   현재 문맥 {r['ctx']:,}토큰")
     print("\n   주의: 캐시 생성량이 관측보다 적게 나옵니다. 실제 세션이 더 짧다는 뜻이고,")
-    print("   그 방향에서는 개선안 ①의 효과가 표의 값보다 커집니다. TOKEN_COST.md 참고.")
+    print("   그 방향에서는 개선안 ①의 효과가 표의 값보다 커집니다. docs/TOKEN_COST.md 참고.")
 
 
 CASES = [("현재 그대로",            {}),
