@@ -131,6 +131,13 @@ class AIService private constructor(internal val appContext: Context) {
     internal val summarizingRooms = mutableSetOf<String>()
     internal val phoneMemoryRetryAfter = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    /// 방마다 기억 갱신이 **유료로** 연속 실패한 횟수입니다. 성공하면 지웁니다.
+    ///
+    /// 대기 시간을 이 값으로 늘립니다. 재시도 대기 때문에 그냥 돌아온 것은 실패가
+    /// 아니므로 세지 않습니다. 앱을 껐다 켜면 0부터입니다 — 원인이 고쳐졌을 수도
+    /// 있으니 한 번은 다시 해 보는 편이 낫습니다.
+    internal val phoneMemoryFailures = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     companion object {
     /// 미리보기에서 던져볼 상황들입니다.
     ///

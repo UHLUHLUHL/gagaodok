@@ -1,6 +1,7 @@
 package com.sapiens.gagaodok.service
 
 import android.util.Log
+import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.ConversationTurn
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -17,19 +18,78 @@ internal fun AIService.updatePhoneMemory(
     apiKey: String
 ) {
     val key = roomId.toString()
-    if ((phoneMemoryRetryAfter[key] ?: 0L) > android.os.SystemClock.elapsedRealtime()) return
+    val coverageBefore = expected.coveredTurns
+    var migration = false
+    var targetThrough = 0
+    var segmentCount = 0
+
+    // **모든 종료 경로가 여기를 지납니다.**
+    //
+    // 예전에는 일곱 갈래 중 다섯이 그냥 `return`이었고, 그중 셋은 유료 요청을 보낸
+    // 뒤였습니다. 전환 결과가 기존 요약보다 커서 버리는 경로까지 조용했습니다.
+    // 그러면 요약 범위가 멈춘 채 재시도가 되풀이돼도 알 방법이 없고, `logcat`에
+    // 오류가 안 보인다고 정상이라 판정할 수도 없습니다.
+    // 실패 횟수와 대기 시간도 여기서 한 번에 정합니다. 갈래마다 따로 세면 어느
+    // 한 곳을 빠뜨리고, 빠뜨린 갈래만 영원히 15분마다 되풀이됩니다.
+    fun record(outcome: PhoneMemoryOutcome, coverageAfter: Int = coverageBefore) {
+        when {
+            outcome.advancesCoverage -> phoneMemoryFailures.remove(key)
+            outcome.paid -> phoneMemoryFailures[key] = (phoneMemoryFailures[key] ?: 0) + 1
+        }
+        val waiting = if (outcome.advancesCoverage || !outcome.paid) 0L
+            else phoneMemoryBackoffMillis(phoneMemoryFailures[key] ?: 1)
+        if (waiting > 0L) {
+            phoneMemoryRetryAfter[key] = android.os.SystemClock.elapsedRealtime() + waiting
+        }
+        measurement.observeMemory(PhoneMemoryObservation(
+            outcome = outcome,
+            migration = migration,
+            coverageBefore = coverageBefore,
+            coverageAfter = coverageAfter,
+            targetThrough = targetThrough,
+            segmentCount = segmentCount,
+            retryAfterMillis = waiting
+        ))
+        // 방 식별자와 응답 본문은 남기지 않습니다.
+        Log.i(
+            "PhoneMemory",
+            "outcome=$outcome migration=$migration " +
+                "coverage=$coverageBefore→$coverageAfter target=$targetThrough wait=${waiting}ms"
+        )
+    }
+
+    if ((phoneMemoryRetryAfter[key] ?: 0L) > android.os.SystemClock.elapsedRealtime()) {
+        record(PhoneMemoryOutcome.BACKOFF_SKIPPED)
+        return
+    }
     synchronized(summarizingRooms) {
-        if (!summarizingRooms.add(key)) return
+        if (!summarizingRooms.add(key)) {
+            record(PhoneMemoryOutcome.ALREADY_RUNNING)
+            return
+        }
     }
     try {
         // Failed validation must not incur a paid generation on every chat turn.
-        phoneMemoryRetryAfter[key] = android.os.SystemClock.elapsedRealtime() + 15 * 60_000L
-        val migration = expected.memoryVersion == 0 && !expected.isEmpty
-        val through = if (migration) expected.coveredTurns else pending?.lastTurn ?: return
+        //
+        // **대기 시간은 연속 실패 횟수를 따라 늘어납니다.** 15분 고정이던 시절에는
+        // 실패해도 요약 범위가 안 늘어나 `pending`이 계속 남고, 매 요청이 갱신을
+        // 다시 걸어 하루에 최대 96번까지 같은 유료 실패를 되풀이할 수 있었습니다.
+        phoneMemoryRetryAfter[key] = android.os.SystemClock.elapsedRealtime() +
+            phoneMemoryBackoffMillis((phoneMemoryFailures[key] ?: 0) + 1)
+        migration = expected.memoryVersion == 0 && !expected.isEmpty
+        val through = if (migration) expected.coveredTurns else pending?.lastTurn ?: run {
+            record(PhoneMemoryOutcome.NO_PENDING)
+            return
+        }
+        targetThrough = through
         val source = ConversationCompactor.slice(conversation, 1, through)
-        if (ConversationCompactor.turnCount(source) != through) return
+        if (ConversationCompactor.turnCount(source) != through) {
+            record(PhoneMemoryOutcome.SOURCE_TURN_MISMATCH)
+            return
+        }
         val ranges = if (migration) expected.segments.map { it.firstTurn to it.lastTurn }
             else listOf(requireNotNull(pending).firstTurn to through)
+        segmentCount = ranges.size
         require(ranges.size <= 30) { "Migration requires bounded repair" }
         val evidenceTurns = if (migration) source else requireNotNull(pending).turns
         val evidence = evidenceTurns.map { it.id.toString() }.toSet()
@@ -68,8 +128,15 @@ internal fun AIService.updatePhoneMemory(
                 .put("maxOutputTokens", ranges.size * 1500 + 2000)
                 .put("thinkingConfig", JSONObject().put("thinkingLevel", "high")))
         val response = postGemini(body, apiKey, roomId, measureOptimization = true)
-        val candidate = response.optJSONArray("candidates")?.optJSONObject(0) ?: return
-        if (candidate.optString("finishReason") != "STOP") return
+        // 여기서부터는 이미 요금이 나갔습니다. 어떻게 끝나든 반드시 적습니다.
+        val candidate = response.optJSONArray("candidates")?.optJSONObject(0) ?: run {
+            record(PhoneMemoryOutcome.NO_CANDIDATE)
+            return
+        }
+        if (candidate.optString("finishReason") != "STOP") {
+            record(PhoneMemoryOutcome.NOT_STOP)
+            return
+        }
         val draft = ThreeLayerMemory.json.decodeFromString<MemoryDraft>(joinParts(candidate).trim())
         require(draft.segments.map { it.firstTurn to it.lastTurn } == ranges)
         require(draft.segments.all { it.text.isNotBlank() && TokenEstimator.textTokens(it.text) <= 1500 })
@@ -84,14 +151,27 @@ internal fun AIService.updatePhoneMemory(
             memoryVersion = 2, revision = expected.revision + 1
         )
         // A migration must not add a second copy of the same memory to the prefix.
+        //
+        // **이 경로가 반복 비용의 가장 유력한 후보입니다.** v2 렌더는 v0 렌더에 M3
+        // 블록(250~800토큰)을 더한 형태인데 머리말 차이는 수십 자뿐입니다. 모델이
+        // 기존 구간을 M3 몫만큼 압축해내지 못하면 조건이 구조적으로 실패하고,
+        // 입력이 그대로이므로 다음 시도도 같은 결과입니다.
         if (migration && TokenEstimator.textTokens(ThreeLayerMemory.render(replacement)) >
-            TokenEstimator.textTokens(ConversationCompactor.render(expected, com.sapiens.gagaodok.model.ChatMode.COMPANION))) return
+            TokenEstimator.textTokens(ConversationCompactor.render(expected, ChatMode.COMPANION))) {
+            record(PhoneMemoryOutcome.MIGRATION_NOT_SMALLER)
+            return
+        }
         val committed = store.commitPhoneMemory(roomId, expected, replacement, checkpoint.sourceHash, through)
-        if (committed) phoneMemoryRetryAfter.remove(key)
-        Log.i("PhoneMemory", "checkpoint committed=$committed migration=$migration coverage=$through")
+        if (committed) {
+            phoneMemoryRetryAfter.remove(key)
+            record(PhoneMemoryOutcome.COMMITTED, coverageAfter = through)
+        } else {
+            record(PhoneMemoryOutcome.COMMIT_REJECTED)
+        }
     } catch (error: Exception) {
         // Never log response text or room identifiers. Original memory remains readable.
         Log.w("PhoneMemory", "checkpoint rejected: ${error.javaClass.simpleName}")
+        record(PhoneMemoryOutcome.EXCEPTION)
     } finally {
         synchronized(summarizingRooms) { summarizingRooms -= key }
     }

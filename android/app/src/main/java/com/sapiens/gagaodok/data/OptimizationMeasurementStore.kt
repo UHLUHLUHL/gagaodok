@@ -8,6 +8,8 @@ import com.sapiens.gagaodok.service.CACHE_BURST_WINDOW_MILLIS
 import com.sapiens.gagaodok.service.CACHE_REFRESH_MIN_TAIL_TOKENS
 import com.sapiens.gagaodok.service.CACHE_TTL_SECONDS
 import com.sapiens.gagaodok.service.MINIMUM_CACHE_TOKENS
+import com.sapiens.gagaodok.service.PhoneMemoryObservation
+import com.sapiens.gagaodok.service.PhoneMemoryOutcome
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
@@ -117,6 +119,28 @@ data class MeasurementCache(
     val actualCacheTokens: Long = 0
 )
 
+/// 기억 갱신이 실제로 진전되고 있는지를 보는 집계입니다.
+///
+/// **`paidAttempts`가 큰데 `coverageAdvanced`가 0이면 돈만 쓰고 제자리입니다.**
+/// 그 상태에서는 요약이 안 쌓이므로 최근 원문이 계속 자라고, 접두사와 캐시가
+/// 함께 커집니다. 비용이 커지는 것이 원인이 아니라 결과일 수 있다는 뜻입니다.
+@Serializable
+data class MeasurementMemory(
+    val attempts: Int = 0,
+    /// 유료 요청을 보낸 시도입니다. 반복 비용은 이 수와 실패율로 읽습니다.
+    val paidAttempts: Int = 0,
+    val committed: Int = 0,
+    /// 실제로 늘어난 요약 범위(턴 수)의 합입니다.
+    val coverageAdvanced: Int = 0,
+    val outcomeCounts: Map<PhoneMemoryOutcome, Int> = emptyMap(),
+    /// 마지막으로 성공한 시점의 요약 범위입니다.
+    val lastCommittedCoverage: Int = 0,
+    /// 유료 실패가 연속으로 이어진 최대 횟수입니다. 같은 실패가 되풀이되면 커집니다.
+    val maxConsecutivePaidFailures: Int = 0,
+    /// 전환(v0 → v2) 시도 수입니다. 일반 갱신과 실패 양상이 달라 따로 셉니다.
+    val migrationAttempts: Int = 0
+)
+
 @Serializable
 data class MeasurementRun(
     val id: Int,
@@ -125,6 +149,8 @@ data class MeasurementRun(
     val policy: MeasurementPolicy,
     val requests: MeasurementRequests = MeasurementRequests(),
     val cache: MeasurementCache = MeasurementCache(),
+    /// 옛 기록에는 없으므로 기본값을 둡니다.
+    val memory: MeasurementMemory = MeasurementMemory(),
     val roomRequestCounts: Map<String, Int> = emptyMap()
 )
 
@@ -213,6 +239,40 @@ class OptimizationMeasurementStore internal constructor(
             actualCacheTokens = old.actualCacheTokens + observation.actualCacheTokens.coerceAtLeast(0)
         )))
     }
+
+    /// 기억 갱신 한 번의 결과를 적습니다.
+    ///
+    /// **무료 건너뜀은 연속 실패로 세지 않습니다.** 재시도 대기 중이라 그냥 돌아온
+    /// 것은 실패가 아니라 절약이고, 그것까지 세면 실제로 돈을 쓴 실패가 몇 번이나
+    /// 이어졌는지가 묻힙니다.
+    @Synchronized
+    fun observeMemory(observation: PhoneMemoryObservation) {
+        val run = _state.value.activeRun ?: return
+        val old = run.memory
+        val advanced = (observation.coverageAfter - observation.coverageBefore).coerceAtLeast(0)
+        consecutivePaidFailures = when {
+            observation.outcome.advancesCoverage -> 0
+            observation.outcome.paid -> consecutivePaidFailures + 1
+            else -> consecutivePaidFailures
+        }
+        replaceActive(run.copy(memory = old.copy(
+            attempts = old.attempts + 1,
+            paidAttempts = old.paidAttempts + if (observation.outcome.paid) 1 else 0,
+            committed = old.committed + if (observation.outcome.advancesCoverage) 1 else 0,
+            coverageAdvanced = old.coverageAdvanced + advanced,
+            outcomeCounts = old.outcomeCounts +
+                (observation.outcome to (old.outcomeCounts[observation.outcome] ?: 0) + 1),
+            lastCommittedCoverage =
+                if (observation.outcome.advancesCoverage) observation.coverageAfter
+                else old.lastCommittedCoverage,
+            maxConsecutivePaidFailures =
+                maxOf(old.maxConsecutivePaidFailures, consecutivePaidFailures),
+            migrationAttempts = old.migrationAttempts + if (observation.migration) 1 else 0
+        )))
+    }
+
+    /// `observeMemory` 안에서만 만지므로 별도 잠금이 필요 없습니다.
+    private var consecutivePaidFailures = 0
 
     private fun replaceActive(run: MeasurementRun) = update(_state.value.copy(activeRun = run))
 

@@ -3,6 +3,7 @@ package com.sapiens.gagaodok.service
 import com.sapiens.gagaodok.data.ModelTokenUsage
 import com.sapiens.gagaodok.data.MeasurementCache
 import com.sapiens.gagaodok.data.MeasurementLedger
+import com.sapiens.gagaodok.data.MeasurementMemory
 import com.sapiens.gagaodok.data.MeasurementPolicy
 import com.sapiens.gagaodok.data.MeasurementRequests
 import com.sapiens.gagaodok.data.MeasurementRun
@@ -32,7 +33,7 @@ private const val REPORTING_MID_GAP_MILLIS = 15 * 60_000L
 
 @Serializable
 internal data class UsagePatternExport(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val privacy: String = "대화 원문, 첨부파일, 방 이름, UUID, API 키, 절대 시각을 포함하지 않음",
     val rooms: List<UsagePatternRoom>
 )
@@ -45,6 +46,12 @@ internal data class UsagePatternRoom(
     val assistantTurns: Int,
     val sessionUserTurns: List<Int>,
     val userGapBuckets: UserGapBuckets,
+    /// 위 다섯 칸보다 촘촘한 histogram입니다. 기존 버킷은 이미 내보낸 파일과
+    /// 견주려고 그대로 두고, 분석에 필요한 해상도는 여기서 얻습니다.
+    ///
+    /// 캐시 수명을 견줄 때 5~15분을 한 칸으로 묶으면 10분과 15분을 가를 수 없고,
+    /// 30분 초과가 한 칸이면 얼마나 오래 쉬었는지 알 수 없습니다.
+    val gapHistogram: GapHistogram,
     val cacheTiming: CacheTimingStats,
     val models: List<UsagePatternModel>
 )
@@ -56,6 +63,16 @@ internal data class UserGapBuckets(
     val fiveToFifteenMinutes: Int,
     val fifteenToThirtyMinutes: Int,
     val overThirtyMinutes: Int
+)
+
+/// 스스로 경계를 밝히는 histogram입니다. 읽는 쪽이 칸의 뜻을 짐작하지 않아도 됩니다.
+///
+/// `counts[i]`는 `edgeSeconds[i-1]` 초과 `edgeSeconds[i]` 이하이고,
+/// 마지막 칸은 `edgeSeconds.last()` 초과입니다. 그래서 `counts`가 하나 더 깁니다.
+@Serializable
+internal data class GapHistogram(
+    val edgeSeconds: List<Int>,
+    val counts: List<Int>
 )
 
 @Serializable
@@ -81,7 +98,7 @@ internal data class UsagePatternModel(
 
 @Serializable
 internal data class OptimizationExport(
-    val schemaVersion: Int = 2,
+    val schemaVersion: Int = 3,
     val privacy: String = "대화 원문, 첨부파일, 방 이름, UUID, API 키, 절대 시각, 프롬프트 원문을 포함하지 않음",
     val currentSnapshot: UsagePatternExport,
     val measurementRuns: List<OptimizationRunExport>
@@ -95,6 +112,9 @@ internal data class OptimizationRunExport(
     val policy: MeasurementPolicy,
     val requests: MeasurementRequests,
     val cache: MeasurementCache,
+    /// 기억 갱신이 실제로 진전됐는지입니다. `paidAttempts`가 큰데
+    /// `coverageAdvanced`가 0이면 돈만 쓰고 제자리라는 뜻입니다.
+    val memory: MeasurementMemory,
     val rooms: List<MeasuredRoomExport>
 )
 
@@ -130,6 +150,7 @@ internal fun buildUsagePatternExport(
                 .count(),
             sessionUserTurns = sessions.map { it.size },
             userGapBuckets = gapBuckets(userTimes),
+            gapHistogram = gapHistogram(userTimes),
             cacheTiming = cacheTiming(sessions),
             models = usageByRoom[room.id].orEmpty().entries
                 .sortedBy { it.key.rawValue }
@@ -159,6 +180,7 @@ internal fun buildOptimizationExport(
             policy = run.policy,
             requests = run.requests,
             cache = run.cache,
+            memory = run.memory,
             rooms = measuredRooms(run, end, rooms, messagesByRoom)
         )
     }
@@ -219,6 +241,23 @@ private fun gapBuckets(times: List<Long>): UserGapBuckets {
         }
     }
     return UserGapBuckets(underOne, oneToFive, fiveToFifteen, fifteenToThirty, overThirty)
+}
+
+/// 분석에 필요한 해상도로 간격을 셉니다.
+///
+/// 5~10분과 10~15분을 가르는 이유는 캐시 수명 후보를 견주기 위해서입니다.
+/// 30분 위쪽을 1시간·4시간·하루로 나누는 이유는 "얼마나 오래 쉬었는가"가
+/// 다음 대화까지 캐시를 남겨 둘 값어치를 정하기 때문입니다.
+private val GAP_EDGE_SECONDS = listOf(60, 300, 600, 900, 1_800, 3_600, 14_400, 86_400)
+
+private fun gapHistogram(times: List<Long>): GapHistogram {
+    val counts = MutableList(GAP_EDGE_SECONDS.size + 1) { 0 }
+    times.zipWithNext().forEach { (before, after) ->
+        val seconds = ((after - before).coerceAtLeast(0L) / 1000L)
+        val index = GAP_EDGE_SECONDS.indexOfFirst { seconds <= it }
+        counts[if (index < 0) GAP_EDGE_SECONDS.size else index] += 1
+    }
+    return GapHistogram(GAP_EDGE_SECONDS, counts)
 }
 
 private fun cacheTiming(sessions: List<List<Long>>): CacheTimingStats {

@@ -12,6 +12,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import com.sapiens.gagaodok.service.PhoneMemoryObservation
+import com.sapiens.gagaodok.service.PhoneMemoryOutcome
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,6 +35,73 @@ class OptimizationMeasurementTest {
         assertNotNull(restored.state.value.activeRun)
         assertEquals(1, restored.state.value.completedRuns.size)
     }
+
+    @Test
+    fun `기억 갱신 결과를 종류별로 세고 유료 실패를 따로 센다`() {
+        val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
+        store.start(MeasurementPolicy.current())
+
+        // 전환이 구조적으로 실패하는 상황입니다. 돈은 나가고 요약 범위는 그대로입니다.
+        repeat(3) {
+            store.observeMemory(memoryObservation(
+                PhoneMemoryOutcome.MIGRATION_NOT_SMALLER,
+                migration = true, before = 350, after = 350
+            ))
+        }
+        // 재시도 대기 때문에 그냥 돌아온 것은 실패가 아닙니다.
+        store.observeMemory(memoryObservation(
+            PhoneMemoryOutcome.BACKOFF_SKIPPED, migration = false, before = 350, after = 350
+        ))
+        store.observeMemory(memoryObservation(
+            PhoneMemoryOutcome.COMMITTED, migration = false, before = 350, after = 400
+        ))
+
+        val memory = store.state.value.activeRun!!.memory
+        assertEquals(5, memory.attempts)
+        assertEquals(4, memory.paidAttempts)
+        assertEquals(1, memory.committed)
+        assertEquals(50, memory.coverageAdvanced)
+        assertEquals(400, memory.lastCommittedCoverage)
+        assertEquals(3, memory.migrationAttempts)
+        assertEquals(3, memory.maxConsecutivePaidFailures)
+        assertEquals(3, memory.outcomeCounts[PhoneMemoryOutcome.MIGRATION_NOT_SMALLER])
+        assertEquals(1, memory.outcomeCounts[PhoneMemoryOutcome.BACKOFF_SKIPPED])
+    }
+
+    @Test
+    fun `돈만 쓰고 요약 범위가 제자리인 상태가 드러난다`() {
+        // 이것이 이 계측을 넣은 이유입니다. 최근 원문이 큰 것이 원인이 아니라
+        // 기억 갱신이 진전되지 않은 결과일 수 있습니다.
+        val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
+        store.start(MeasurementPolicy.current())
+
+        repeat(8) {
+            store.observeMemory(memoryObservation(
+                PhoneMemoryOutcome.NOT_STOP, migration = false, before = 200, after = 200
+            ))
+        }
+
+        val memory = store.state.value.activeRun!!.memory
+        assertEquals(8, memory.paidAttempts)
+        assertEquals(0, memory.coverageAdvanced)
+        assertEquals(0, memory.committed)
+        assertEquals(8, memory.maxConsecutivePaidFailures)
+    }
+
+    private fun memoryObservation(
+        outcome: PhoneMemoryOutcome,
+        migration: Boolean,
+        before: Int,
+        after: Int
+    ) = PhoneMemoryObservation(
+        outcome = outcome,
+        migration = migration,
+        coverageBefore = before,
+        coverageAfter = after,
+        targetThrough = after,
+        segmentCount = if (migration) 7 else 1,
+        retryAfterMillis = if (outcome.advancesCoverage || !outcome.paid) 0L else 900_000L
+    )
 
     @Test
     fun `inactive measurement ignores observations`() {

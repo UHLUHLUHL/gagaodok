@@ -76,6 +76,31 @@ class UsagePatternExportTest {
     }
 
     @Test
+    fun `세밀 히스토그램은 5~10분과 10~15분을 가른다`() {
+        // 기존 다섯 칸으로는 캐시 수명 후보(10분·15분·30분)를 견줄 수 없습니다.
+        val room = ChatRoom(id = roomId, modeIdentifier = ChatMode.COMPANION.rawValue)
+        // 간격이 각각 7분 / 12분 / 45분이 되도록 놓습니다.
+        val offsets = listOf(0L, 420_000L, 1_140_000L, 3_840_000L)
+        val messages = offsets.map { message(MessageSender.USER, "내용 $it", base + it) }
+
+        val export = Codec.json.decodeFromString<UsagePatternExport>(
+            buildUsagePatternExport(listOf(room), mapOf(roomId to messages), emptyMap())
+        )
+        val histogram = export.rooms.single().gapHistogram
+
+        // 경계를 스스로 밝히므로 읽는 쪽이 칸의 뜻을 짐작하지 않아도 됩니다.
+        assertEquals(listOf(60, 300, 600, 900, 1_800, 3_600, 14_400, 86_400), histogram.edgeSeconds)
+        assertEquals(histogram.edgeSeconds.size + 1, histogram.counts.size)
+        assertEquals(3, histogram.counts.sum())
+        // 7분 → 300 초과 600 이하 칸
+        assertEquals(1, histogram.counts[2])
+        // 12분 → 600 초과 900 이하 칸
+        assertEquals(1, histogram.counts[3])
+        // 45분 → 1800 초과 3600 이하 칸
+        assertEquals(1, histogram.counts[5])
+    }
+
+    @Test
     fun `5분 연속 사용 뒤 캐시 수명 안의 재사용 가능성을 세션별로 계산한다`() {
         val room = ChatRoom(id = roomId, modeIdentifier = ChatMode.COMPANION.rawValue)
         val userMinutes = listOf(0L, 4L, 8L, 40L, 44L)
