@@ -64,9 +64,16 @@ internal suspend fun AIService.sendGeminiRequest(
         throw AIServiceException("이 방의 기억 형식은 현재 앱에서 지원하지 않습니다. 앱을 업데이트해주세요.")
     }
     val digest = if (phoneMemory) ThreeLayerMemory.validPrefix(storedDigest, conversation) else storedDigest
-    val basePlan = ConversationCompactor.plan(conversation, digest, mode)
-    val plan = if (phoneMemory && digest.memoryVersion == 2 && !digest.isEmpty)
-        basePlan.copy(digestText = ThreeLayerMemory.render(digest)) else basePlan
+    // **요청 계획은 한 곳에서만 계산합니다.**
+    //
+    // 예전에는 `plan()`의 결과를 여기서 덮어썼습니다. 그러면 `plan()`이 "요약을 쓰지
+    // 않는다"고 판단한 경우에도 요약이 얹혀서, 같은 구간이 요약과 원문으로 두 번
+    // 들어갔습니다. 렌더러를 넘겨 주고 판단은 `plan()`에 맡깁니다.
+    val plan = ConversationCompactor.plan(
+        conversation, digest, mode,
+        renderDigest = if (phoneMemory && digest.memoryVersion == 2) ThreeLayerMemory::render
+            else null
+    )
 
     val verbatimContents = buildGeminiContents(plan.verbatimTurns)
     var contents = verbatimContents

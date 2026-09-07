@@ -269,10 +269,13 @@ object ConversationCompactor {
         return conversation.subList(begin, end).toList()
     }
 
+    /// @param renderDigest 요약을 글로 만드는 방법입니다. 3계층 기억을 쓰는 방은
+    ///   자기 렌더러를 넘깁니다. 비우면 이 파일의 [render]를 씁니다.
     fun plan(
         conversation: List<ConversationTurn>,
         digest: ConversationDigest?,
-        mode: ChatMode
+        mode: ChatMode,
+        renderDigest: ((ConversationDigest) -> String)? = null
     ): Plan {
         val starts = userTurnStarts(conversation)
         val total = starts.size
@@ -280,7 +283,13 @@ object ConversationCompactor {
         val covered = min(actual.coveredTurns, total)
 
         // 아직 켤 때가 아니면 지금까지처럼 전부 보냅니다.
-        if (total < THRESHOLD_TURNS) {
+        //
+        // **단, 이미 만들어 둔 요약이 있으면 이야기가 다릅니다.** 예전에는 여기서
+        // 무조건 원문 전체를 돌려주고, 부르는 쪽이 요약을 다시 얹었습니다. 그래서
+        // 수정·재전송으로 방이 문턱 아래로 짧아지면 같은 구간이 **요약으로도 원문으로도**
+        // 들어갔습니다. 입력 낭비일 뿐 아니라, 옛 요약과 고친 원문이 서로 다른 사실을
+        // 주장하는 상태가 됩니다.
+        if (total < THRESHOLD_TURNS && covered == 0) {
             return Plan(null, conversation, null, total, 0)
         }
 
@@ -296,7 +305,8 @@ object ConversationCompactor {
         // 방금 정한 구간은 아직 글이 없으므로 다음 요청부터 반영됩니다.
         val verbatim = if (covered >= total) emptyList() else slice(conversation, covered + 1, total)
         return Plan(
-            digestText = if (actual.isEmpty) null else render(actual, mode),
+            digestText = if (actual.isEmpty) null
+                else renderDigest?.invoke(actual) ?: render(actual, mode),
             verbatimTurns = verbatim,
             pending = pending,
             totalTurns = total,

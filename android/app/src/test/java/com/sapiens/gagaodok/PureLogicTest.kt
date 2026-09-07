@@ -240,6 +240,39 @@ class ConversationCompactorTest {
     }
 
     @Test
+    fun `요약이 덮은 구간은 문턱 아래로 짧아져도 원문으로 다시 보내지 않는다`() {
+        // 1~50턴 요약이 있는 방을 수정·재전송으로 60턴으로 줄인 경우입니다.
+        // 예전에는 80턴 미만이라 원문 60턴을 통째로 돌려주고, 부르는 쪽이 요약을
+        // 다시 얹어서 1~50턴이 요약으로도 원문으로도 들어갔습니다.
+        val convo = conversation(60)
+        val digest = com.sapiens.gagaodok.service.ConversationDigest(
+            segments = listOf(com.sapiens.gagaodok.service.ConversationSegment(
+                firstTurn = 1, lastTurn = 50, text = "옛 요약"
+            )),
+            memoryVersion = 2,
+            revision = 1
+        )
+
+        val plan = ConversationCompactor.plan(
+            convo, digest, ChatMode.COMPANION, renderDigest = { "M2/M3 본문" }
+        )
+
+        assertEquals("M2/M3 본문", plan.digestText)
+        assertEquals(50, plan.coveredTurns)
+        assertEquals(10, ConversationCompactor.turnCount(plan.verbatimTurns))
+    }
+
+    @Test
+    fun `요약이 없는 짧은 방은 지금까지처럼 원문 전체를 보낸다`() {
+        val convo = conversation(10)
+        val plan = ConversationCompactor.plan(convo, null, ChatMode.COMPANION)
+
+        assertNull(plan.digestText)
+        assertEquals(convo.size, plan.verbatimTurns.size)
+        assertEquals(0, plan.coveredTurns)
+    }
+
+    @Test
     fun `문턱을 넘으면 요약할 구간을 잡는다`() {
         val convo = conversation(ConversationCompactor.THRESHOLD_TURNS)
         val plan = ConversationCompactor.plan(convo, null, ChatMode.MATH_MENTOR)
