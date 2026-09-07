@@ -63,6 +63,25 @@ android {
             resValue("string", "app_name", "가가오독 합류 시험")
             buildConfigField("boolean", "PAIRING_TEST", "true")
         }
+        // 캐시·기억 실험판입니다. 기존 앱과 **나란히** 설치됩니다.
+        //
+        // applicationId가 다르므로 안드로이드가 아예 다른 앱으로 봅니다. 데이터 폴더도
+        // 따로 쓰고, 기존 `가가오독`은 손대지 않습니다. 두 앱을 같은 기기에 두고
+        // 견주려고 만든 것이라 이름도 화면에서 갈립니다.
+        //
+        // `pairingTest`와 같은 방식입니다. 디버그에서 출발하는 이유는 두 가지입니다.
+        // 실험판은 로그와 데이터를 꺼내 봐야 하므로 `run-as`가 되어야 하고,
+        // 축소를 켜면 직렬화 규칙이 어긋났을 때 실험 결과인지 축소 탓인지 갈리지
+        // 않습니다.
+        create("claudeLab") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".claude"
+            versionNameSuffix = "-claude-lab"
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+            resValue("string", "app_name", "가가오독 클로드")
+        }
         release {
             // 리소스 축소는 코드 축소를 함께 켜야 합니다. KaTeX 자산은 assets라 축소 대상이 아닙니다.
             isMinifyEnabled = true
