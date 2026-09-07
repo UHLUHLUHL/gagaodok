@@ -1,6 +1,11 @@
 package com.sapiens.gagaodok
 
+import com.sapiens.gagaodok.data.MeasurementPolicy
 import com.sapiens.gagaodok.model.AIModel
+import com.sapiens.gagaodok.service.CACHE_BURST_WINDOW_MILLIS
+import com.sapiens.gagaodok.service.CACHE_REFRESH_MIN_TAIL_TOKENS
+import com.sapiens.gagaodok.service.CACHE_TTL_SECONDS
+import com.sapiens.gagaodok.service.MINIMUM_CACHE_TOKENS
 import com.sapiens.gagaodok.service.PrefixCache
 import com.sapiens.gagaodok.service.cacheKey
 import com.sapiens.gagaodok.service.normalizePrefixCacheMap
@@ -15,6 +20,26 @@ import java.util.UUID
 
 class GeminiModelCachePolicyTest {
     private val roomId = UUID.fromString("11111111-1111-1111-1111-111111111111")
+
+    @Test
+    fun `캐시는 30분 동안 유지된다`() {
+        // 15분에서 올렸습니다. 실측에서 대화 한 판이 25~35분 이어지는데 15분은
+        // 그 절반만 덮어, 만료 4분 전 규칙 때문에 세션마다 접두사를 두 번 다시
+        // 올리고 있었습니다.
+        assertEquals(1800, CACHE_TTL_SECONDS)
+    }
+
+    @Test
+    fun `측정 정책은 실제로 동작 중인 캐시 상수를 그대로 담는다`() {
+        // 예전에는 이 값들이 하드코딩이라, 정책을 바꿔도 측정 기록은 옛 값을
+        // 가리켰습니다. 그러면 구간끼리 견줄 때 어느 정책이었는지 알 수 없습니다.
+        val policy = MeasurementPolicy.current()
+
+        assertEquals(CACHE_TTL_SECONDS, policy.cacheTtlSeconds)
+        assertEquals(MINIMUM_CACHE_TOKENS, policy.minimumCacheTokens)
+        assertEquals(CACHE_REFRESH_MIN_TAIL_TOKENS, policy.refreshTailMinimumTokens)
+        assertEquals((CACHE_BURST_WINDOW_MILLIS / 1000L).toInt(), policy.burstWindowSeconds)
+    }
 
     @Test
     fun `personal companion choices exclude Luna and keep 37 first`() {

@@ -52,7 +52,31 @@ class UsagePatternExportTest {
     }
 
     @Test
-    fun `5분 연속 사용 뒤 15분 안의 재사용 가능성을 세션별로 계산한다`() {
+    fun `간격 버킷 경계는 캐시 TTL을 바꿔도 5분 15분 30분에 고정된다`() {
+        // 버킷은 보고용 눈금입니다. 예전에는 가운데 경계가 곧 캐시 TTL이라,
+        // TTL을 30분으로 올리면 `15~30분` 버킷이 사라져 이미 내보낸 파일과
+        // 견줄 수 없게 됩니다. 정책이 바뀌어도 같은 자로 재야 합니다.
+        val room = ChatRoom(id = roomId, modeIdentifier = ChatMode.COMPANION.rawValue)
+        // 간격이 각각 30초 / 3분 / 10분 / 20분 / 40분이 되도록 놓습니다.
+        val offsets = listOf(0L, 30_000L, 210_000L, 810_000L, 2_010_000L, 4_410_000L)
+        val messages = offsets.map { offset ->
+            message(MessageSender.USER, "내용 $offset", base + offset)
+        }
+
+        val export = Codec.json.decodeFromString<UsagePatternExport>(
+            buildUsagePatternExport(listOf(room), mapOf(roomId to messages), emptyMap())
+        )
+        val buckets = export.rooms.single().userGapBuckets
+
+        assertEquals(1, buckets.underOneMinute)
+        assertEquals(1, buckets.oneToFiveMinutes)
+        assertEquals(1, buckets.fiveToFifteenMinutes)
+        assertEquals(1, buckets.fifteenToThirtyMinutes)
+        assertEquals(1, buckets.overThirtyMinutes)
+    }
+
+    @Test
+    fun `5분 연속 사용 뒤 캐시 수명 안의 재사용 가능성을 세션별로 계산한다`() {
         val room = ChatRoom(id = roomId, modeIdentifier = ChatMode.COMPANION.rawValue)
         val userMinutes = listOf(0L, 4L, 8L, 40L, 44L)
         val messages = userMinutes.map { minute ->

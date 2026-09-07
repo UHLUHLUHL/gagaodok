@@ -2,6 +2,12 @@ package com.sapiens.gagaodok.data
 
 import android.content.Context
 import com.sapiens.gagaodok.model.Codec
+// 측정 기록이 실제 정책을 담게 하려고 캐시 상수를 직접 읽습니다.
+// 여기서 다시 적으면 두 곳이 어긋나고, 어긋나도 아무도 모릅니다.
+import com.sapiens.gagaodok.service.CACHE_BURST_WINDOW_MILLIS
+import com.sapiens.gagaodok.service.CACHE_REFRESH_MIN_TAIL_TOKENS
+import com.sapiens.gagaodok.service.CACHE_TTL_SECONDS
+import com.sapiens.gagaodok.service.MINIMUM_CACHE_TOKENS
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
@@ -16,7 +22,20 @@ data class MeasurementPolicy(
     val burstWindowSeconds: Int = 300,
     val refreshTailMinimumTokens: Int = 2_000
 ) {
-    companion object { fun current() = MeasurementPolicy() }
+    companion object {
+        /// **위 기본값을 그대로 쓰면 안 됩니다.** 그것은 정책을 바꾸기 전에 저장된
+        /// 옛 기록을 읽기 위한 값입니다.
+        ///
+        /// 지금 시작하는 측정 구간에는 실제로 동작 중인 상수를 담아야 합니다.
+        /// 예전에는 여기가 하드코딩이라 TTL을 15분에서 바꿔도 기록은 계속 900을
+        /// 가리켰고, 그러면 구간끼리 견줄 때 어느 정책이었는지 알 수 없습니다.
+        fun current() = MeasurementPolicy(
+            minimumCacheTokens = MINIMUM_CACHE_TOKENS,
+            cacheTtlSeconds = CACHE_TTL_SECONDS,
+            burstWindowSeconds = (CACHE_BURST_WINDOW_MILLIS / 1000L).toInt(),
+            refreshTailMinimumTokens = CACHE_REFRESH_MIN_TAIL_TOKENS
+        )
+    }
 }
 
 @Serializable

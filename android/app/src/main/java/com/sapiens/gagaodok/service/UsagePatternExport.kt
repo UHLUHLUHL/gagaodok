@@ -18,7 +18,17 @@ import java.util.UUID
 
 private const val SESSION_GAP_MILLIS = 30 * 60_000L
 private const val CACHE_BURST_MILLIS = 5 * 60_000L
-private const val CACHE_TTL_MILLIS = 15 * 60_000L
+
+/// 지금 동작 중인 캐시 수명입니다. 재사용 모형(`cacheTiming`)은 이것을 따라가야
+/// 실제 정책을 반영합니다.
+private const val CACHE_TTL_MILLIS = CACHE_TTL_SECONDS * 1000L
+
+/// **간격 버킷의 가운데 경계입니다. 캐시 TTL과 무관하게 고정합니다.**
+///
+/// 예전에는 이 경계가 곧 TTL이었습니다. 그래서 TTL을 30분으로 올리면 `15~30분`
+/// 버킷이 통째로 사라지고, 이미 내보낸 파일과 견줄 수 없게 됩니다. 정책이 바뀌어도
+/// **같은 자로 재야** 전후를 비교할 수 있습니다. 버킷은 보고용 눈금이지 정책이 아닙니다.
+private const val REPORTING_MID_GAP_MILLIS = 15 * 60_000L
 
 @Serializable
 internal data class UsagePatternExport(
@@ -203,8 +213,8 @@ private fun gapBuckets(times: List<Long>): UserGapBuckets {
         when (after - before) {
             in 0 until 60_000L -> underOne += 1
             in 60_000L..CACHE_BURST_MILLIS -> oneToFive += 1
-            in (CACHE_BURST_MILLIS + 1)..CACHE_TTL_MILLIS -> fiveToFifteen += 1
-            in (CACHE_TTL_MILLIS + 1)..SESSION_GAP_MILLIS -> fifteenToThirty += 1
+            in (CACHE_BURST_MILLIS + 1)..REPORTING_MID_GAP_MILLIS -> fiveToFifteen += 1
+            in (REPORTING_MID_GAP_MILLIS + 1)..SESSION_GAP_MILLIS -> fifteenToThirty += 1
             else -> overThirty += 1
         }
     }
