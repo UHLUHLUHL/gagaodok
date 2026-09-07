@@ -127,19 +127,33 @@ class TokenUsageStore private constructor(context: Context) {
         )
     }
 
-    /// 명시적 캐시를 새로 올린 몫입니다. 만든 토큰 수와 보관량을 함께 적습니다.
-    fun recordCacheCreation(roomId: UUID, model: AIModel, tokens: Int, tokenHours: Double) {
-        if (tokens <= 0 && tokenHours <= 0) return
+    /// 명시적 캐시를 새로 올린 몫입니다.
+    ///
+    /// **보관량은 여기서 적지 않습니다.** 예전에는 만들 때 TTL 전량을 통째로 더했는데,
+    /// 다음 갱신 때 이전 캐시를 지우므로 실제 보관 시간은 그보다 짧습니다. TTL을
+    /// 30분으로 올리면 그 과대추정이 두 배가 되어, 실제로는 늘지 않은 보관료가
+    /// 두 배로 늘어난 것처럼 보입니다. 보관량은 캐시가 끝날 때
+    /// [recordCacheLeaseEnd]로 실제 산 시간만큼 적습니다.
+    fun recordCacheCreation(roomId: UUID, model: AIModel, tokens: Int) {
+        if (tokens <= 0) return
         add(
             roomId, model,
             ModelTokenUsage(
                 cacheCreateTokens = max(0, tokens),
                 // 캐시를 만드는 것도 API 요청 한 건입니다. 그동안 이 요청은
                 // 횟수에도 안 잡혀서 "메시지 수보다 요청이 적은" 장부가 나왔습니다.
-                requestCount = 1,
-                cacheStorageTokenHours = max(0.0, tokenHours)
+                requestCount = 1
             )
         )
+    }
+
+    /// 캐시 하나가 실제로 살아 있던 시간만큼 보관량을 적습니다.
+    ///
+    /// 마지막까지 살아남은 캐시는 앱이 끝날 때 정산되지 않으므로 **보관료가 조금
+    /// 과소평가됩니다.** 이전의 과대평가보다 낫지만 정확하지는 않습니다.
+    fun recordCacheLeaseEnd(roomId: UUID, model: AIModel, tokens: Int, tokenHours: Double) {
+        if (tokens <= 0 || tokenHours <= 0) return
+        add(roomId, model, ModelTokenUsage(cacheStorageTokenHours = max(0.0, tokenHours)))
     }
 
     /// 보냈지만 사용량을 못 받은 요청을 한 건 적습니다.
@@ -147,6 +161,12 @@ class TokenUsageStore private constructor(context: Context) {
         add(roomId, model, ModelTokenUsage(requestCount = 1, unreportedRequests = 1))
     }
 
+    // **잠금 없이 읽고-고치고-쓰면 증가분이 사라집니다.**
+    //
+    // 캐시 생성과 기억 생성은 각자 다른 코루틴에서 장부를 적습니다. 두 갈래가 겹치면
+    // 한쪽이 읽은 옛 값 위에 다른 쪽이 덮어써서, 실제로 나간 요금이 화면에서 조용히
+    // 사라집니다. 화면의 숫자가 실제보다 적은 것이 많은 것보다 나쁩니다.
+    @Synchronized
     private fun add(roomId: UUID, model: AIModel, delta: ModelTokenUsage) {
         val room = (_usageByRoom.value[roomId] ?: emptyMap()).toMutableMap()
         room[model] = (room[model] ?: ModelTokenUsage()).adding(delta)
@@ -190,6 +210,7 @@ class TokenUsageStore private constructor(context: Context) {
     fun costUSD(roomId: UUID): Double =
         AIModel.entries.sumOf { usage(roomId, it).costUSD(it) }
 
+    @Synchronized
     fun resetAll() {
         _usageByRoom.value = emptyMap()
         save()

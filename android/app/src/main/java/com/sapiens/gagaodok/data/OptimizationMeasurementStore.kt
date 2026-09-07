@@ -46,6 +46,32 @@ enum class CacheDecision {
     CREATE_ATTEMPT, CREATE_SUCCESS, HTTP_FAILURE, LOCAL_FAILURE
 }
 
+/// 캐시를 **새로 만든 이유**입니다.
+///
+/// TTL을 바꾼 효과는 총액이 아니라 `EXPIRING_SOON`의 감소로 읽어야 합니다.
+/// 이 구분이 없으면 같은 시기에 들어간 다른 변경과 섞여서, 30분이 도움이 됐는지
+/// 알 수 없습니다. `EXPIRING_SOON`은 접두사 크기 변화에도 강건합니다.
+@Serializable
+enum class CacheCreateReason {
+    /// 이 방에 캐시가 없어서 처음 만들었습니다.
+    FIRST,
+    /// 새로 붙은 꼬리가 충분히 커져서 다시 만들었습니다.
+    TAIL_GREW,
+    /// 곧 만료되어서 다시 만들었습니다. **TTL 연장이 줄이려는 것이 이것입니다.**
+    EXPIRING_SOON,
+    /// 요약 갱신이나 편집으로 접두사 자체가 바뀌었습니다.
+    PREFIX_CHANGED
+}
+
+/// 요청이 어떤 일을 하러 나갔는지입니다.
+///
+/// **섞어 두면 채팅의 지연과 기억 호출의 사고 토큰이 한 통에 담깁니다.** 실사용
+/// 내보내기에서 출력의 44.2%가 사고 토큰이었는데, 채팅은 `low`이고 기억은 `high`라
+/// 어느 쪽 몫인지 가를 수 없었습니다. 그래서 "챗봇 사고량이 늘었다"고도
+/// "기억 호출 탓이다"라고도 말할 수 없었습니다.
+@Serializable
+enum class MeasurementWorkload { CHAT, MEMORY }
+
 data class RequestObservation(
     val roomKey: String,
     val inputTokens: Int,
@@ -60,7 +86,8 @@ data class RequestObservation(
     val totalMillis: Long = 0,
     /// 모델이 답을 쓰기 전에 생각하는 데 쓴 토큰입니다. 요금은 출력에 합산되지만,
     /// 느린 이유를 가리려면 따로 봐야 합니다.
-    val thoughtsTokens: Int = 0
+    val thoughtsTokens: Int = 0,
+    val workload: MeasurementWorkload = MeasurementWorkload.CHAT
 )
 
 @Serializable
@@ -115,6 +142,8 @@ data class MeasurementRequests(
 @Serializable
 data class MeasurementCache(
     val decisionCounts: Map<CacheDecision, Int> = emptyMap(),
+    /// 새로 만든 캐시를 이유별로 셉니다. 옛 기록에는 없으므로 기본값을 둡니다.
+    val createReasons: Map<CacheCreateReason, Int> = emptyMap(),
     val prefixTokenBuckets: List<Int> = List(5) { 0 },
     val actualCacheTokens: Long = 0
 )
@@ -149,6 +178,9 @@ data class MeasurementRun(
     val policy: MeasurementPolicy,
     val requests: MeasurementRequests = MeasurementRequests(),
     val cache: MeasurementCache = MeasurementCache(),
+    /// 작업 종류별 집계입니다. `requests`는 둘을 합친 값이라 그대로 두고,
+    /// 나눠 봐야 하는 것만 여기서 가릅니다.
+    val requestsByWorkload: Map<MeasurementWorkload, MeasurementRequests> = emptyMap(),
     /// 옛 기록에는 없으므로 기본값을 둡니다.
     val memory: MeasurementMemory = MeasurementMemory(),
     val roomRequestCounts: Map<String, Int> = emptyMap()
@@ -189,6 +221,25 @@ class OptimizationMeasurementStore internal constructor(
     @Synchronized
     fun clear() = update(MeasurementLedger())
 
+    private fun accumulate(old: MeasurementRequests, observation: RequestObservation) =
+        old.copy(
+            requestCount = old.requestCount + 1,
+            inputTokens = old.inputTokens + observation.inputTokens.coerceAtLeast(0),
+            cachedInputTokens = old.cachedInputTokens + observation.cachedInputTokens.coerceAtLeast(0),
+            outputTokens = old.outputTokens + observation.outputTokens.coerceAtLeast(0),
+            estimatedPromptTokens = old.estimatedPromptTokens + observation.estimatedPromptTokens.coerceAtLeast(0),
+            unreportedRequests = old.unreportedRequests + if (observation.unreported) 1 else 0,
+            cacheHitRequests = old.cacheHitRequests + if (observation.cachedInputTokens > 0) 1 else 0,
+            prompt = old.prompt.adding(observation.prompt),
+            ttftMillisTotal = old.ttftMillisTotal + observation.ttftMillis.coerceAtLeast(0),
+            ttftMillisMax = maxOf(old.ttftMillisMax, observation.ttftMillis),
+            totalMillisTotal = old.totalMillisTotal + observation.totalMillis.coerceAtLeast(0),
+            totalMillisMax = maxOf(old.totalMillisMax, observation.totalMillis),
+            inputTokensMax = maxOf(old.inputTokensMax, observation.inputTokens),
+            thoughtsTokens = old.thoughtsTokens + observation.thoughtsTokens.coerceAtLeast(0),
+            thoughtsTokensMax = maxOf(old.thoughtsTokensMax, observation.thoughtsTokens)
+        )
+
     @Synchronized
     fun observeRequest(observation: RequestObservation) {
         val run = _state.value.activeRun ?: return
@@ -212,7 +263,16 @@ class OptimizationMeasurementStore internal constructor(
         )
         val rooms = run.roomRequestCounts +
             (observation.roomKey to (run.roomRequestCounts[observation.roomKey] ?: 0) + 1)
-        replaceActive(run.copy(requests = requests, roomRequestCounts = rooms))
+        val perWorkload = run.requestsByWorkload +
+            (observation.workload to accumulate(
+                run.requestsByWorkload[observation.workload] ?: MeasurementRequests(),
+                observation
+            ))
+        replaceActive(run.copy(
+            requests = requests,
+            requestsByWorkload = perWorkload,
+            roomRequestCounts = rooms
+        ))
     }
 
     @Synchronized
@@ -273,6 +333,17 @@ class OptimizationMeasurementStore internal constructor(
 
     /// `observeMemory` 안에서만 만지므로 별도 잠금이 필요 없습니다.
     private var consecutivePaidFailures = 0
+
+    /// 캐시를 새로 만든 이유를 적습니다. 생성에 성공한 뒤에만 부릅니다.
+    @Synchronized
+    fun observeCacheCreateReason(reason: CacheCreateReason) {
+        val run = _state.value.activeRun ?: return
+        val old = run.cache
+        replaceActive(run.copy(cache = old.copy(
+            createReasons = old.createReasons +
+                (reason to (old.createReasons[reason] ?: 0) + 1)
+        )))
+    }
 
     private fun replaceActive(run: MeasurementRun) = update(_state.value.copy(activeRun = run))
 

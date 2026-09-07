@@ -4,6 +4,7 @@ import com.sapiens.gagaodok.data.ModelTokenUsage
 import com.sapiens.gagaodok.data.MeasurementCache
 import com.sapiens.gagaodok.data.MeasurementLedger
 import com.sapiens.gagaodok.data.MeasurementMemory
+import com.sapiens.gagaodok.data.MeasurementWorkload
 import com.sapiens.gagaodok.data.MeasurementPolicy
 import com.sapiens.gagaodok.data.MeasurementRequests
 import com.sapiens.gagaodok.data.MeasurementRun
@@ -111,6 +112,8 @@ internal data class OptimizationRunExport(
     val durationMillis: Long,
     val policy: MeasurementPolicy,
     val requests: MeasurementRequests,
+    /// 채팅과 기억 호출을 갈라 놓은 집계입니다. 사고 토큰과 지연이 섞이지 않게 합니다.
+    val requestsByWorkload: Map<MeasurementWorkload, MeasurementRequests>,
     val cache: MeasurementCache,
     /// 기억 갱신이 실제로 진전됐는지입니다. `paidAttempts`가 큰데
     /// `coverageAdvanced`가 0이면 돈만 쓰고 제자리라는 뜻입니다.
@@ -179,6 +182,7 @@ internal fun buildOptimizationExport(
             durationMillis = (end - run.startedAtMillis).coerceAtLeast(0),
             policy = run.policy,
             requests = run.requests,
+            requestsByWorkload = run.requestsByWorkload,
             cache = run.cache,
             memory = run.memory,
             rooms = measuredRooms(run, end, rooms, messagesByRoom)

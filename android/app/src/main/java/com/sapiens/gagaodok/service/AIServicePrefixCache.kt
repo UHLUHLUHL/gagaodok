@@ -1,5 +1,6 @@
 package com.sapiens.gagaodok.service
 
+import com.sapiens.gagaodok.data.CacheCreateReason
 import com.sapiens.gagaodok.data.CacheDecision
 import com.sapiens.gagaodok.data.CacheObservation
 import com.sapiens.gagaodok.model.AIModel
@@ -29,7 +30,10 @@ internal data class PrefixCache(
     /// 예전 파일에는 없던 값이라 기본값을 둡니다.
     val tokenCount: Int = 0,
     /// 예전 파일에는 없으므로 3.7로만 해석합니다. 다른 모델에 재사용하지 않습니다.
-    val modelIdentifier: String = AIModel.GEMINI_37_FLASH.rawValue
+    val modelIdentifier: String = AIModel.GEMINI_37_FLASH.rawValue,
+    /// 이 캐시를 만든 시각입니다. 실제로 산 시간만큼만 보관료를 적으려고 둡니다.
+    /// 예전 파일에는 없으므로 0이면 정산을 건너뜁니다.
+    val createdAtMillis: Long = 0L
 )
 
 // 15분에서 30분으로 올립니다.
@@ -191,6 +195,8 @@ internal suspend fun AIService.refreshPrefixCache(
             }
         }
 
+        var reason = if (previous == null) CacheCreateReason.FIRST
+            else CacheCreateReason.PREFIX_CHANGED
         if (previous != null) {
             // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
             if (previous.coveredTurns >= contents.size &&
@@ -216,6 +222,10 @@ internal suspend fun AIService.refreshPrefixCache(
                 observe(CacheDecision.TAIL_TOO_SMALL)
                 return
             }
+            // **TTL을 바꾼 효과는 정확히 `EXPIRING_SOON`의 감소로 나타납니다.**
+            // 이 구분이 없으면 30분이 도움이 됐는지 총액만 보고는 알 수 없고,
+            // 같은 시기에 들어간 다른 변경과 섞입니다.
+            reason = if (worthIt) CacheCreateReason.TAIL_GREW else CacheCreateReason.EXPIRING_SOON
         }
         observe(CacheDecision.CREATE_ATTEMPT)
         val payload = JSONObject()
@@ -251,6 +261,7 @@ internal suspend fun AIService.refreshPrefixCache(
 
         val cachedTokens = json.optJSONObject("usageMetadata")?.optInt("totalTokenCount") ?: 0
         observe(CacheDecision.CREATE_SUCCESS, cachedTokens)
+        if (measure) measurement.observeCacheCreateReason(reason)
         synchronized(prefixCaches) {
             prefixCaches[key] = PrefixCache(
                 name = name,
@@ -258,29 +269,32 @@ internal suspend fun AIService.refreshPrefixCache(
                 fingerprint = fingerprint(contents, system),
                 expiresAtMillis = System.currentTimeMillis() + CACHE_TTL_SECONDS * 1000L,
                 tokenCount = if (cachedTokens > 0) cachedTokens else estimated,
-                modelIdentifier = model.rawValue
+                modelIdentifier = model.rawValue,
+                createdAtMillis = System.currentTimeMillis()
             )
         }
         persistCaches()
 
-        // 올린 토큰과 보관량을 함께 적습니다.
+        // 올린 토큰을 적습니다.
         //
         // **올린 토큰을 입력 요금으로 칩니다.** 캐시를 만드는 요청이 청구되는지
         // 문서로 확인하지는 못했습니다. 확실하지 않을 때는 비싼 쪽으로 잡습니다 —
         // 화면의 숫자가 실제보다 적은 것이 많은 것보다 나쁩니다.
-        //
-        // 보관량은 실제 보관 시간이 아니라 TTL 전체로 잡습니다. 다음 갱신 때
-        // 이전 것을 지우므로 실제로는 그보다 짧습니다. 이것도 넉넉한 쪽입니다.
         if (cachedTokens > 0) {
-            usage.recordCacheCreation(
-                roomId, model,
-                tokens = cachedTokens,
-                tokenHours = cachedTokens * (CACHE_TTL_SECONDS / 3600.0)
-            )
+            usage.recordCacheCreation(roomId, model, tokens = cachedTokens)
         }
 
         // 이전 캐시는 보관 요금이 붙으므로 새 캐시가 자리 잡은 뒤 지웁니다.
-        previous?.let { deleteCache(it.name, apiKey) }
+        // 지울 때 **실제로 산 시간만큼만** 보관량을 적습니다. 예전에는 만들 때
+        // TTL 전량을 더해서, 교체로 일찍 끝난 캐시의 보관 시간을 과대평가했습니다.
+        previous?.let {
+            if (it.createdAtMillis > 0L) {
+                val livedHours = (System.currentTimeMillis() - it.createdAtMillis)
+                    .coerceAtLeast(0L) / 3_600_000.0
+                usage.recordCacheLeaseEnd(roomId, model, it.tokenCount, livedHours)
+            }
+            deleteCache(it.name, apiKey)
+        }
     } finally {
         synchronized(refreshingRooms) { refreshingRooms -= key }
     }

@@ -4,6 +4,7 @@ import android.util.Base64
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatAttachment
 import com.sapiens.gagaodok.data.PromptTokenBreakdown
+import com.sapiens.gagaodok.data.MeasurementWorkload
 import com.sapiens.gagaodok.data.RequestObservation
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -81,7 +82,10 @@ internal fun AIService.postGemini(
                             body.optJSONObject("systemInstruction")?.toString().orEmpty()
                         ).toLong()
                     ),
-                    thoughtsTokens = thoughts
+                    thoughtsTokens = thoughts,
+                    // 이 길로 나가는 것은 기억 생성뿐입니다. 채팅과 섞이면
+                    // `high` 사고 토큰이 챗봇 몫으로 잘못 읽힙니다.
+                    workload = MeasurementWorkload.MEMORY
                 )
             )
         } else {
@@ -93,7 +97,8 @@ internal fun AIService.postGemini(
                     cachedInputTokens = 0,
                     outputTokens = 0,
                     estimatedPromptTokens = TokenEstimator.textTokens(body.toString()),
-                    unreported = true
+                    unreported = true,
+                    workload = MeasurementWorkload.MEMORY
                 )
             )
         }
