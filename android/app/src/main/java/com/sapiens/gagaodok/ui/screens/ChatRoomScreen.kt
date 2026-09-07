@@ -347,7 +347,11 @@ fun ChatRoomScreen(
                             menu.dismiss()
                             digestStatus = ConversationDigestStatus.of(
                                 totalTurns = ConversationCompactor.turnCount(ConversationTurn.from(messages)),
-                                digest = app.chatStore.loadDigest(room.id),
+                                digest = app.chatStore.loadDigest(room.id).let { stored ->
+                                    if (!BuildConfig.TABLET_MENTOR && activeMode == ChatMode.COMPANION && room.groupChat == null)
+                                        com.sapiens.gagaodok.service.ThreeLayerMemory.validPrefix(stored, ConversationTurn.from(messages))
+                                    else stored
+                                },
                             )
                         },
                     )

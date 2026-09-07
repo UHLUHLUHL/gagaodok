@@ -328,9 +328,11 @@ class ChatStore private constructor(context: Context) {
 
     fun loadDigest(scope: ConversationScope): ConversationDigest {
         val file = digestFile(scope)
-        if (!file.exists()) return ConversationDigest()
+        if (!file.exists() && !File(file.path + ".bak").exists()) return ConversationDigest()
         return runCatching {
-            Codec.json.decodeFromString<ConversationDigest>(file.readText())
+            Codec.json.decodeFromString<ConversationDigest>(
+                android.util.AtomicFile(file).openRead().bufferedReader().use { it.readText() }
+            )
         }.getOrElse { ConversationDigest() }
     }
 
@@ -346,6 +348,41 @@ class ChatStore private constructor(context: Context) {
         conversationWrites.schedule(scope, ScopedWriteKind.DIGEST) {
             writeDigest(digestFile(scope), digest)
         }
+    }
+
+    /** Phone memory commits share the message lane: flush, compare source, then atomic replace. */
+    fun commitPhoneMemory(
+        roomId: UUID,
+        expected: ConversationDigest,
+        replacement: ConversationDigest,
+        sourceHash: String,
+        sourceThrough: Int
+    ): Boolean {
+        val target = ConversationScope(roomId)
+        var committed = false
+        conversationWrites.flushAndRun(target) {
+            if (room(roomId) == null || loadDigest(target) != expected) return@flushAndRun
+            val turns = com.sapiens.gagaodok.model.ConversationTurn.from(loadMessages(target))
+            val source = com.sapiens.gagaodok.service.ConversationCompactor.slice(turns, 1, sourceThrough)
+            if (com.sapiens.gagaodok.service.ConversationCompactor.turnCount(source) != sourceThrough ||
+                com.sapiens.gagaodok.service.ThreeLayerMemory.hash(source) != sourceHash) return@flushAndRun
+            val file = digestFile(target)
+            if (expected.memoryVersion == 0 && file.exists()) {
+                val backup = File(file.parentFile, "${file.name}.legacy")
+                if (!backup.exists()) file.copyTo(backup, overwrite = false)
+            }
+            val atomic = android.util.AtomicFile(file)
+            var stream: java.io.FileOutputStream? = null
+            try {
+                stream = atomic.startWrite()
+                stream.write(Codec.json.encodeToString(replacement).toByteArray(Charsets.UTF_8))
+                atomic.finishWrite(stream)
+                committed = true
+            } catch (error: Exception) {
+                atomic.failWrite(stream)
+            }
+        }
+        return committed
     }
 
     private fun scopeForAiConversation(aiConversationId: UUID): ConversationScope {

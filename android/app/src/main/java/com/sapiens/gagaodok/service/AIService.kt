@@ -129,6 +129,7 @@ class AIService private constructor(internal val appContext: Context) {
     /// 만들어집니다. 파일로 남길 값어치는 없다고 봤습니다.
     internal val lastRequestAt = mutableMapOf<String, Long>()
     internal val summarizingRooms = mutableSetOf<String>()
+    internal val phoneMemoryRetryAfter = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     companion object {
     /// 미리보기에서 던져볼 상황들입니다.

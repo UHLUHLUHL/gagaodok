@@ -57,8 +57,16 @@ internal suspend fun AIService.sendGeminiRequest(
 
     // 대화가 아주 길어진 방에서는 앞부분을 구간 요약으로 갈아끼웁니다.
     // 기준에 못 미치면 plan이 원본을 그대로 돌려주므로 짧은 방은 지금까지와 똑같이 동작합니다.
-    val digest = store.loadDigest(roomId)
-    val plan = ConversationCompactor.plan(conversation, digest, mode)
+    val phoneMemory = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION &&
+        store.room(roomId)?.groupChat == null && store.room(roomId) != null
+    val storedDigest = store.loadDigest(roomId)
+    if (phoneMemory && storedDigest.memoryVersion !in setOf(0, 2)) {
+        throw AIServiceException("이 방의 기억 형식은 현재 앱에서 지원하지 않습니다. 앱을 업데이트해주세요.")
+    }
+    val digest = if (phoneMemory) ThreeLayerMemory.validPrefix(storedDigest, conversation) else storedDigest
+    val basePlan = ConversationCompactor.plan(conversation, digest, mode)
+    val plan = if (phoneMemory && digest.memoryVersion == 2 && !digest.isEmpty)
+        basePlan.copy(digestText = ThreeLayerMemory.render(digest)) else basePlan
 
     val verbatimContents = buildGeminiContents(plan.verbatimTurns)
     var contents = verbatimContents
@@ -207,7 +215,13 @@ internal suspend fun AIService.sendGeminiRequest(
     }
 
     // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
-    plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, mode, apiKey) } }
+    if (phoneMemory) {
+        if (plan.pending != null || (storedDigest.memoryVersion == 0 && !storedDigest.isEmpty)) {
+            scope.launch { updatePhoneMemory(roomId, conversation, storedDigest, digest, plan.pending, apiKey) }
+        }
+    } else {
+        plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, mode, apiKey) } }
+    }
 
     return outcome.text
 }

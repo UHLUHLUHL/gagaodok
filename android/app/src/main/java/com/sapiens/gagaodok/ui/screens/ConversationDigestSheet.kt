@@ -74,6 +74,14 @@ fun ConversationDigestSheet(
 
             DigestHeadline(status)
 
+            status.segments.lastOrNull()?.memory?.let { checkpoint ->
+                Text("3계층 기억 적용 중", style = KakaoText.listName, color = colors.textPrimary)
+                Text("${status.coveredTurns}턴 시점의 상태입니다. 이후 변화는 최근 대화에서 이어집니다.",
+                    style = KakaoText.caption, color = colors.textSecondary)
+                val state = com.sapiens.gagaodok.service.ThreeLayerMemory.renderItems(checkpoint.items)
+                DigestSegmentRow(label = "관계·장면·미해결 기억", length = state.length, body = state.ifEmpty { "기록된 상태 없음" })
+            }
+
             if (status.segments.isEmpty()) {
                 EmptyDigestNotice(status)
             } else {

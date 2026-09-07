@@ -31,6 +31,10 @@ class ConversationFiles(private val root: File) {
     fun delete(scope: ConversationScope) {
         messageFile(scope).delete()
         digestFile(scope).delete()
+        // Memory backup lifetime follows the conversation, never a global archive.
+        File(digestFile(scope).path + ".legacy").delete()
+        File(digestFile(scope).path + ".bak").delete()
+        File(digestFile(scope).path + ".new").delete()
     }
 
     fun deleteWorldlines(roomId: UUID) {

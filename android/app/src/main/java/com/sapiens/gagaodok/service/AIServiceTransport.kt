@@ -3,6 +3,8 @@ package com.sapiens.gagaodok.service
 import android.util.Base64
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatAttachment
+import com.sapiens.gagaodok.data.PromptTokenBreakdown
+import com.sapiens.gagaodok.data.RequestObservation
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -34,7 +36,12 @@ internal val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 /// 이 길로 나가는 요청 — 구간 요약, 말투 조사, 말투 분석, 다듬기, 미리보기 — 은
 /// 하나도 안 적혔습니다. 말투 조사는 검색 그라운딩까지 켜는 무거운 요청인데
 /// 앱 화면에서는 공짜처럼 보였습니다. 요금이 과소평가되던 가장 큰 이유입니다.
-internal fun AIService.postGemini(body: JSONObject, apiKey: String, roomId: UUID): JSONObject {
+internal fun AIService.postGemini(
+    body: JSONObject,
+    apiKey: String,
+    roomId: UUID,
+    measureOptimization: Boolean = false
+): JSONObject {
     val model = AIModel.GEMINI_37_FLASH
     val request = Request.Builder()
         .url("$GEMINI_BASE/models/${model.rawValue}:generateContent")
@@ -52,16 +59,43 @@ internal fun AIService.postGemini(body: JSONObject, apiKey: String, roomId: UUID
         val json = JSONObject(raw)
         val reported = json.optJSONObject("usageMetadata")
         if (reported != null) {
+            val input = reported.optInt("promptTokenCount") + reported.optInt("toolUsePromptTokenCount")
+            val cached = reported.optInt("cachedContentTokenCount")
+            val thoughts = reported.optInt("thoughtsTokenCount")
+            val output = reported.optInt("candidatesTokenCount") + thoughts
             usage.recordUsage(
                 roomId, model,
-                inputTokens = reported.optInt("promptTokenCount") +
-                    reported.optInt("toolUsePromptTokenCount"),
-                outputTokens = reported.optInt("candidatesTokenCount") +
-                    reported.optInt("thoughtsTokenCount"),
-                cachedInputTokens = reported.optInt("cachedContentTokenCount")
+                inputTokens = input,
+                outputTokens = output,
+                cachedInputTokens = cached
+            )
+            if (measureOptimization) measurement.observeRequest(
+                RequestObservation(
+                    roomKey = roomId.toString(),
+                    inputTokens = input,
+                    cachedInputTokens = cached,
+                    outputTokens = output,
+                    estimatedPromptTokens = TokenEstimator.textTokens(body.toString()),
+                    prompt = PromptTokenBreakdown(
+                        stableSystemTokens = TokenEstimator.textTokens(
+                            body.optJSONObject("systemInstruction")?.toString().orEmpty()
+                        ).toLong()
+                    ),
+                    thoughtsTokens = thoughts
+                )
             )
         } else {
             usage.recordUnreportedRequest(roomId, model)
+            if (measureOptimization) measurement.observeRequest(
+                RequestObservation(
+                    roomKey = roomId.toString(),
+                    inputTokens = 0,
+                    cachedInputTokens = 0,
+                    outputTokens = 0,
+                    estimatedPromptTokens = TokenEstimator.textTokens(body.toString()),
+                    unreported = true
+                )
+            )
         }
         json
     }

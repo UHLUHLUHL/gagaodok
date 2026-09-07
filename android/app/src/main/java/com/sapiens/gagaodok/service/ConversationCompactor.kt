@@ -21,7 +21,8 @@ data class ConversationSegment(
     val lastTurn: Int,
     val text: String,
     @Serializable(with = SwiftDateSerializer::class)
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val memory: MemoryCheckpoint? = null
 ) {
     val turnCount: Int get() = lastTurn - firstTurn + 1
 }
@@ -29,7 +30,9 @@ data class ConversationSegment(
 /// 한 방의 요약 전체입니다.
 @Serializable
 data class ConversationDigest(
-    val segments: List<ConversationSegment> = emptyList()
+    val segments: List<ConversationSegment> = emptyList(),
+    val memoryVersion: Int = 0,
+    val revision: Long = 0
 ) {
     /// 요약이 덮고 있는 마지막 턴 번호입니다. 그 다음 턴부터가 원문으로 나갑니다.
     val coveredTurns: Int get() = segments.lastOrNull()?.lastTurn ?: 0
