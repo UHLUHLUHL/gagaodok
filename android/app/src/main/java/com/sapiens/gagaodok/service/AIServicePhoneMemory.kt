@@ -31,7 +31,11 @@ internal fun AIService.updatePhoneMemory(
     // 오류가 안 보인다고 정상이라 판정할 수도 없습니다.
     // 실패 횟수와 대기 시간도 여기서 한 번에 정합니다. 갈래마다 따로 세면 어느
     // 한 곳을 빠뜨리고, 빠뜨린 갈래만 영원히 15분마다 되풀이됩니다.
-    fun record(outcome: PhoneMemoryOutcome, coverageAfter: Int = coverageBefore) {
+    fun record(
+        outcome: PhoneMemoryOutcome,
+        coverageAfter: Int = coverageBefore,
+        finishReason: String? = null
+    ) {
         when {
             outcome.advancesCoverage -> phoneMemoryFailures.remove(key)
             outcome.paid -> phoneMemoryFailures[key] = (phoneMemoryFailures[key] ?: 0) + 1
@@ -48,12 +52,13 @@ internal fun AIService.updatePhoneMemory(
             coverageAfter = coverageAfter,
             targetThrough = targetThrough,
             segmentCount = segmentCount,
-            retryAfterMillis = waiting
+            retryAfterMillis = waiting,
+            finishReason = finishReason
         ))
         // 방 식별자와 응답 본문은 남기지 않습니다.
         Log.i(
             "PhoneMemory",
-            "outcome=$outcome migration=$migration " +
+            "outcome=$outcome migration=$migration finish=${finishReason ?: "-"} " +
                 "coverage=$coverageBefore→$coverageAfter target=$targetThrough wait=${waiting}ms"
         )
     }
@@ -125,7 +130,7 @@ internal fun AIService.updatePhoneMemory(
                 .put("parts", JSONArray().put(JSONObject().put("text", input)))))
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json")
                 .put("responseSchema", phoneMemoryResponseSchema())
-                .put("maxOutputTokens", ranges.size * 1500 + 2000)
+                .put("maxOutputTokens", phoneMemoryOutputBudget(ranges.size))
                 .put("thinkingConfig", JSONObject().put("thinkingLevel", "high")))
         val response = postGemini(body, apiKey, roomId, measureOptimization = true)
         // 여기서부터는 이미 요금이 나갔습니다. 어떻게 끝나든 반드시 적습니다.
@@ -133,14 +138,43 @@ internal fun AIService.updatePhoneMemory(
             record(PhoneMemoryOutcome.NO_CANDIDATE)
             return
         }
-        if (candidate.optString("finishReason") != "STOP") {
-            record(PhoneMemoryOutcome.NOT_STOP)
+        // **왜 멈췄는지를 반드시 남깁니다.**
+        //
+        // 예전에는 `STOP`이 아니면 전부 `NOT_STOP` 하나였습니다. 출력 한도에 걸린 것과
+        // 안전 필터에 걸린 것은 고칠 곳이 정반대인데 장부에서는 같아 보였습니다.
+        val finish = candidate.optString("finishReason")
+        if (finish != "STOP") {
+            record(PhoneMemoryOutcome.NOT_STOP, finishReason = finish.ifEmpty { "UNKNOWN" })
             return
         }
-        val draft = ThreeLayerMemory.json.decodeFromString<MemoryDraft>(joinParts(candidate).trim())
-        require(draft.segments.map { it.firstTurn to it.lastTurn } == ranges)
-        require(draft.segments.all { it.text.isNotBlank() && TokenEstimator.textTokens(it.text) <= 1500 })
-        val items = ThreeLayerMemory.reduce(previous, draft.updates, evidence)
+        // **여기부터는 단계마다 이름을 붙입니다.**
+        //
+        // 예전에는 해석·구간 검사·분량 검사·상태 검사가 전부 하나의 `EXCEPTION`으로
+        // 뭉쳤습니다. 그러면 실패율을 봐도 어디를 고칠지 알 수 없습니다. 예산이
+        // 모자란 것과 지시문이 안 지켜진 것은 처방이 정반대입니다.
+        val draft = runCatching {
+            ThreeLayerMemory.json.decodeFromString<MemoryDraft>(joinParts(candidate).trim())
+        }.getOrElse {
+            record(PhoneMemoryOutcome.PARSE_FAILED)
+            return
+        }
+        if (draft.segments.map { it.firstTurn to it.lastTurn } != ranges) {
+            record(PhoneMemoryOutcome.RANGE_MISMATCH)
+            return
+        }
+        if (!draft.segments.all {
+                it.text.isNotBlank() &&
+                    TokenEstimator.textTokens(it.text) <= ConversationCompactor.SEGMENT_TOKEN_BUDGET
+            }
+        ) {
+            record(PhoneMemoryOutcome.SEGMENT_TOO_LONG)
+            return
+        }
+        val items = runCatching { ThreeLayerMemory.reduce(previous, draft.updates, evidence) }
+            .getOrElse {
+                record(PhoneMemoryOutcome.STATE_REJECTED)
+                return
+            }
         val checkpoint = MemoryCheckpoint(source.last().id.toString(), ThreeLayerMemory.hash(source), items)
         val generated = draft.segments.mapIndexed { index, segment ->
             ConversationSegment(firstTurn = segment.firstTurn, lastTurn = segment.lastTurn, text = segment.text,

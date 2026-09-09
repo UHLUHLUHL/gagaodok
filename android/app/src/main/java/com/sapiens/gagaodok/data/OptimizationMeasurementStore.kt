@@ -52,15 +52,55 @@ enum class CacheDecision {
 /// 이 구분이 없으면 같은 시기에 들어간 다른 변경과 섞여서, 30분이 도움이 됐는지
 /// 알 수 없습니다. `EXPIRING_SOON`은 접두사 크기 변화에도 강건합니다.
 @Serializable
-enum class CacheCreateReason {
-    /// 이 방에 캐시가 없어서 처음 만들었습니다.
+enum class CacheDropReason {
+    /// 수명이 다했습니다.
+    EXPIRED,
+    /// 다른 모델로 바뀌었습니다.
+    MODEL_CHANGED,
+    /// 대화가 캐시가 덮는 길이보다 짧아졌습니다.
+    SHRUNK,
+    /// 덮고 있던 구간의 글이 바뀌었습니다. 메시지 편집·삭제입니다.
+    FINGERPRINT_CHANGED
+}
+
+/// 캐시를 새로 만든 이유입니다.
+///
+/// **예전에는 `FIRST` 하나가 다섯 가지를 뭉치고 있었습니다.** 만료된 캐시는 지역
+/// 기록에서 지워지므로, 다음 생성 때는 "이 방에 캐시가 없다"로 보입니다. 그래서
+/// TTL을 늘려서 줄이려던 바로 그 사건이 `FIRST`에 섞여 들어갔습니다. 실측 run-7의
+/// `FIRST` 16건이 그 상태였고, 그래서 30분 TTL의 효과는 아직 측정되지 않았습니다.
+enum class CacheCreateReason(
+    /// TTL을 늘리면 줄어야 하는 원인인지입니다. **효과는 이들의 합으로 읽습니다.**
+    val ttlSensitive: Boolean = false
+) {
+    /// 이 방에 캐시가 있었던 적이 없습니다.
     FIRST,
+    /// 수명이 다해 사라진 뒤 다시 만들었습니다.
+    EXPIRED(ttlSensitive = true),
+    /// 아직 살아 있지만 곧 만료되어 미리 다시 만들었습니다.
+    EXPIRING_SOON(ttlSensitive = true),
     /// 새로 붙은 꼬리가 충분히 커져서 다시 만들었습니다.
     TAIL_GREW,
-    /// 곧 만료되어서 다시 만들었습니다. **TTL 연장이 줄이려는 것이 이것입니다.**
-    EXPIRING_SOON,
-    /// 요약 갱신이나 편집으로 접두사 자체가 바뀌었습니다.
-    PREFIX_CHANGED
+    /// 다른 모델로 바뀌어 다시 만들었습니다.
+    MODEL_CHANGED,
+    /// 대화가 짧아져 캐시를 버린 뒤 다시 만들었습니다.
+    SHRUNK,
+    /// 메시지 편집·삭제로 접두사가 바뀌어 다시 만들었습니다.
+    FINGERPRINT_CHANGED,
+    /// 요약 갱신 등으로 접두사가 바뀌었습니다.
+    PREFIX_CHANGED;
+
+    companion object {
+        /// 직전에 캐시를 버린 이유로부터 이번 생성의 이유를 정합니다.
+        /// 버린 기록이 없으면 이 방에 캐시가 있었던 적이 없다는 뜻입니다.
+        fun from(drop: CacheDropReason?): CacheCreateReason = when (drop) {
+            null -> FIRST
+            CacheDropReason.EXPIRED -> EXPIRED
+            CacheDropReason.MODEL_CHANGED -> MODEL_CHANGED
+            CacheDropReason.SHRUNK -> SHRUNK
+            CacheDropReason.FINGERPRINT_CHANGED -> FINGERPRINT_CHANGED
+        }
+    }
 }
 
 /// 요청이 어떤 일을 하러 나갔는지입니다.
@@ -167,7 +207,12 @@ data class MeasurementMemory(
     /// 유료 실패가 연속으로 이어진 최대 횟수입니다. 같은 실패가 되풀이되면 커집니다.
     val maxConsecutivePaidFailures: Int = 0,
     /// 전환(v0 → v2) 시도 수입니다. 일반 갱신과 실패 양상이 달라 따로 셉니다.
-    val migrationAttempts: Int = 0
+    val migrationAttempts: Int = 0,
+    /// 모델이 알려준 종료 사유별 횟수입니다. 실패한 건만 들어갑니다.
+    ///
+    /// **`MAX_TOKENS`가 대부분이면 출력 예산 부족이고, `SAFETY`나 `RECITATION`이면
+    /// 예산을 늘려도 소용없습니다.** 옛 기록에는 없으므로 기본값을 둡니다.
+    val finishReasons: Map<String, Int> = emptyMap()
 )
 
 @Serializable
@@ -327,7 +372,10 @@ class OptimizationMeasurementStore internal constructor(
                 else old.lastCommittedCoverage,
             maxConsecutivePaidFailures =
                 maxOf(old.maxConsecutivePaidFailures, consecutivePaidFailures),
-            migrationAttempts = old.migrationAttempts + if (observation.migration) 1 else 0
+            migrationAttempts = old.migrationAttempts + if (observation.migration) 1 else 0,
+            finishReasons = observation.finishReason?.let {
+                old.finishReasons + (it to (old.finishReasons[it] ?: 0) + 1)
+            } ?: old.finishReasons
         )))
     }
 

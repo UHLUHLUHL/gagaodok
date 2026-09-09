@@ -88,11 +88,62 @@ class OptimizationMeasurementTest {
         assertEquals(8, memory.maxConsecutivePaidFailures)
     }
 
+    @Test
+    fun `종료 사유를 사유별로 세어 예산 부족과 다른 원인을 가른다`() {
+        // `NOT_STOP`만 세면 8건이 출력 한도였는지 안전 필터였는지 알 수 없습니다.
+        // 처방이 정반대라 이 구분 없이는 고칠 곳을 정할 수 없습니다.
+        val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
+        store.start(MeasurementPolicy.current())
+
+        repeat(6) {
+            store.observeMemory(memoryObservation(
+                PhoneMemoryOutcome.NOT_STOP, migration = false,
+                before = 250, after = 250, finishReason = "MAX_TOKENS"
+            ))
+        }
+        store.observeMemory(memoryObservation(
+            PhoneMemoryOutcome.NOT_STOP, migration = false,
+            before = 250, after = 250, finishReason = "SAFETY"
+        ))
+        // 사유가 없는 갈래는 집계를 어지럽히지 않습니다.
+        store.observeMemory(memoryObservation(
+            PhoneMemoryOutcome.COMMITTED, migration = false, before = 250, after = 300
+        ))
+
+        val memory = store.state.value.activeRun!!.memory
+        assertEquals(6, memory.finishReasons["MAX_TOKENS"])
+        assertEquals(1, memory.finishReasons["SAFETY"])
+        assertEquals(2, memory.finishReasons.size)
+    }
+
+    @Test
+    fun `해석 단계별 실패를 따로 세어 어디를 고칠지 가른다`() {
+        val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
+        store.start(MeasurementPolicy.current())
+
+        listOf(
+            PhoneMemoryOutcome.PARSE_FAILED,
+            PhoneMemoryOutcome.RANGE_MISMATCH,
+            PhoneMemoryOutcome.SEGMENT_TOO_LONG,
+            PhoneMemoryOutcome.STATE_REJECTED
+        ).forEach {
+            store.observeMemory(memoryObservation(it, migration = false, before = 250, after = 250))
+        }
+
+        val memory = store.state.value.activeRun!!.memory
+        assertEquals(4, memory.attempts)
+        // 넷 다 응답을 받은 뒤이므로 요금이 나갔습니다.
+        assertEquals(4, memory.paidAttempts)
+        assertEquals(0, memory.committed)
+        assertEquals(4, memory.outcomeCounts.size)
+    }
+
     private fun memoryObservation(
         outcome: PhoneMemoryOutcome,
         migration: Boolean,
         before: Int,
-        after: Int
+        after: Int,
+        finishReason: String? = null
     ) = PhoneMemoryObservation(
         outcome = outcome,
         migration = migration,
@@ -100,7 +151,8 @@ class OptimizationMeasurementTest {
         coverageAfter = after,
         targetThrough = after,
         segmentCount = if (migration) 7 else 1,
-        retryAfterMillis = if (outcome.advancesCoverage || !outcome.paid) 0L else 900_000L
+        retryAfterMillis = if (outcome.advancesCoverage || !outcome.paid) 0L else 900_000L,
+        finishReason = finishReason
     )
 
     @Test

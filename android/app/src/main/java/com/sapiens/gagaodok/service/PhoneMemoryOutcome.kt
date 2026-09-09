@@ -51,11 +51,59 @@ enum class PhoneMemoryOutcome(
     /// 저장 직전 검사(원문 hash, revision)에서 거부되었습니다.
     COMMIT_REJECTED(paid = true),
 
-    /// 파싱·검증에서 예외가 났습니다.
+    /// 응답이 JSON으로 읽히지 않았습니다.
+    ///
+    /// **출력이 잘렸을 때 가장 먼저 나타나는 증상입니다.** 다만 지시문을 안 지킨
+    /// 응답도 여기로 오므로, `finishReason`을 함께 봐야 어느 쪽인지 갈립니다.
+    PARSE_FAILED(paid = true),
+
+    /// 요청한 구간과 다른 범위를 돌려주었습니다. 지시문을 안 지킨 것입니다.
+    RANGE_MISMATCH(paid = true),
+
+    /// 요약 한 구간이 분량 상한을 넘었거나 비었습니다.
+    SEGMENT_TOO_LONG(paid = true),
+
+    /// M3 상태 갱신이 검증에서 거부되었습니다.
+    ///
+    /// 허용되지 않은 key, 원문 밖의 근거 ID, 중복 연산, 상태 총량 초과가 여기 옵니다.
+    /// 예산과 무관한 실패이므로 예산을 늘려도 줄지 않습니다.
+    STATE_REJECTED(paid = true),
+
+    /// 위 어디에도 안 드는 예외입니다. 남아 있으면 새 갈래를 만들어야 한다는 뜻입니다.
     EXCEPTION(paid = true),
 
     /// 저장에 성공했습니다.
     COMMITTED(paid = true, advancesCoverage = true)
+}
+
+/// 모델이 한 응답에 쓸 수 있는 출력 토큰의 상한입니다.
+///
+/// Gemini 3.7 Flash의 공식 한도입니다. 저장소가 쓰는 `GEMINI_MAX_OUTPUT_TOKENS`(8192)는
+/// 채팅 답변 길이를 정하려고 고른 값이지 모델의 한도가 아닙니다.
+internal const val GEMINI_MODEL_MAX_OUTPUT_TOKENS = 65_536
+
+/// 사고 토큰에 남겨 두는 자리입니다.
+///
+/// **근거가 있는 값이 아닙니다.** 실사용에서 관측된 사고 최대치 3,362는 예산 3,500에
+/// 눌려 잘린 값이라, 모델이 원래 얼마나 생각하려 했는지는 아직 모릅니다. 첫 회차는
+/// 넉넉히 주고 절단되지 않은 값을 얻은 뒤에 조입니다.
+///
+/// 상한을 올린다고 요금이 바로 늘지는 않지만 **공짜도 아닙니다.** 잘려 있던 사고가
+/// 실제로 길어지면 그만큼 출력 요금이 붙습니다.
+internal const val MEMORY_THINKING_HEADROOM = 8192
+
+/// 기억 갱신 한 번에 줄 출력 예산입니다.
+///
+/// **사고와 본문이 한 예산을 나눠 씁니다.** 예전에는 `구간수 × 1500 + 2000`이었는데,
+/// 일반 갱신에서 3,500이었고 실측 호출당 평균 출력이 그 98.25%였습니다. 본문은 평균
+/// 258토큰 — 지시한 구간당 900~1,100의 1/4도 못 썼습니다. 사고가 자리를 다 먹고
+/// 요약이 시작도 못 한 채 잘린 것입니다.
+///
+/// 그래서 본문 몫과 사고 몫을 따로 셉니다. 본문 몫은 지시문이 요구하는 최대치에서
+/// 나옵니다 — M2 구간당 1,500, M3 합계 800, JSON 구조 약 200.
+internal fun phoneMemoryOutputBudget(segmentCount: Int): Int {
+    val body = segmentCount * ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1000
+    return minOf(body + MEMORY_THINKING_HEADROOM, GEMINI_MODEL_MAX_OUTPUT_TOKENS)
 }
 
 /// 실패한 뒤 다음 시도까지 기다리는 기본 시간입니다.
@@ -93,5 +141,12 @@ data class PhoneMemoryObservation(
     /// 이번 시도가 다룬 구간 수입니다. 전환이면 여러 개일 수 있습니다.
     val segmentCount: Int,
     /// 실패 뒤 다음 시도까지의 대기 시간입니다. 성공이나 무료 건너뜀이면 0입니다.
-    val retryAfterMillis: Long
+    val retryAfterMillis: Long,
+    /// 모델이 알려준 종료 사유입니다. `STOP`이 아닐 때만 채웁니다.
+    ///
+    /// **이것이 없으면 `NOT_STOP`을 고칠 수 없습니다.** 출력 한도에 걸린 것과
+    /// 안전 필터에 걸린 것은 처방이 정반대인데, 예전에는 둘 다 `NOT_STOP` 하나로
+    /// 뭉쳐 있었습니다. 성공한 건에까지 남기면 집계가 `STOP`으로 뒤덮이므로
+    /// 실패했을 때만 남깁니다.
+    val finishReason: String? = null
 )
