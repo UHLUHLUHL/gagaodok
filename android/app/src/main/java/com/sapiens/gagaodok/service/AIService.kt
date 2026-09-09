@@ -138,6 +138,13 @@ class AIService private constructor(internal val appContext: Context) {
     /// 있으니 한 번은 다시 해 보는 편이 낫습니다.
     internal val phoneMemoryFailures = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
+    /// 캐시를 마지막으로 버린 이유입니다. 다음 생성의 원인을 가리는 데만 씁니다.
+    ///
+    /// 프로세스가 살아 있는 동안만 유지합니다. 앱을 다시 켜면 비므로 그때의 생성은
+    /// `FIRST`로 잡힙니다 — 그 편이 옛 사유를 잘못 갖다 붙이는 것보다 낫습니다.
+    internal val cacheDropReasons =
+        java.util.concurrent.ConcurrentHashMap<String, com.sapiens.gagaodok.data.CacheDropReason>()
+
     companion object {
     /// 미리보기에서 던져볼 상황들입니다.
     ///

@@ -143,7 +143,10 @@ internal suspend fun AIService.sendGeminiRequest(
         } catch (_: MissingCachedContentException) {
             // 서버가 TTL 전에 캐시를 잃었거나 정리했으면 이 모델의 로컬 포인터만 버리고
             // 같은 요청을 캐시 없이 한 번 보냅니다. 다른 모델의 캐시는 건드리지 않습니다.
-            dropCache(cacheKey(roomId, model), deleteRemote = false, apiKey = apiKey)
+            dropCache(
+                cacheKey(roomId, model), deleteRemote = false, apiKey = apiKey,
+                reason = com.sapiens.gagaodok.data.CacheDropReason.EXPIRED
+            )
             streamGemini(outcome, requestContents, system, null, apiKey, model, mode, onText = consume)
         }
         sink.finish()

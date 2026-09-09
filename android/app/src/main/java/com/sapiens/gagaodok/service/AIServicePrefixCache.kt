@@ -1,6 +1,7 @@
 package com.sapiens.gagaodok.service
 
 import com.sapiens.gagaodok.data.CacheCreateReason
+import com.sapiens.gagaodok.data.CacheDropReason
 import com.sapiens.gagaodok.data.CacheDecision
 import com.sapiens.gagaodok.data.CacheObservation
 import com.sapiens.gagaodok.model.AIModel
@@ -94,13 +95,13 @@ internal fun AIService.usablePrefixCache(
     val key = cacheKey(roomId, model)
     val cache = synchronized(prefixCaches) { prefixCaches[key] } ?: return null
     if (cache.modelIdentifier != model.rawValue) {
-        dropCache(key, deleteRemote = false, apiKey = apiKey)
+        dropCache(key, deleteRemote = false, apiKey = apiKey, reason = CacheDropReason.MODEL_CHANGED)
         return null
     }
 
     // 만료된 것은 서버에도 없으므로 지울 것이 없습니다.
     if (cache.expiresAtMillis <= System.currentTimeMillis() + 30_000) {
-        dropCache(key, deleteRemote = false, apiKey = apiKey)
+        dropCache(key, deleteRemote = false, apiKey = apiKey, reason = CacheDropReason.EXPIRED)
         return null
     }
 
@@ -112,11 +113,11 @@ internal fun AIService.usablePrefixCache(
     // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
     // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
     if (contents.size <= cache.coveredTurns) {
-        dropCache(key, deleteRemote = true, apiKey = apiKey)
+        dropCache(key, deleteRemote = true, apiKey = apiKey, reason = CacheDropReason.SHRUNK)
         return null
     }
     if (fingerprint(contents.take(cache.coveredTurns), system) != cache.fingerprint) {
-        dropCache(key, deleteRemote = true, apiKey = apiKey)
+        dropCache(key, deleteRemote = true, apiKey = apiKey, reason = CacheDropReason.FINGERPRINT_CHANGED)
         return null
     }
     return cache
@@ -125,8 +126,19 @@ internal fun AIService.usablePrefixCache(
 /// 로컬 기록에서 지우고, 서버에 남아 있을 것이면 그것도 지웁니다.
 ///
 /// 서버 쪽을 안 지우면 아무도 안 쓰는 캐시가 TTL이 다할 때까지 보관료를 먹습니다.
-internal fun AIService.dropCache(key: String, deleteRemote: Boolean, apiKey: String) {
+internal fun AIService.dropCache(
+    key: String,
+    deleteRemote: Boolean,
+    apiKey: String,
+    reason: CacheDropReason
+) {
+    // **왜 버렸는지를 남겨야 다음 생성의 이유를 알 수 있습니다.**
+    //
+    // 버리고 나면 다음 생성에서는 `previous == null`이라 "이 방에 캐시가 없다"로만
+    // 보입니다. 그래서 만료로 버린 것과 처음 만드는 것이 구분되지 않았고, TTL을
+    // 늘려서 줄이려던 사건이 `FIRST`에 섞였습니다.
     val removed = synchronized(prefixCaches) { prefixCaches.remove(key) }
+    if (removed != null) cacheDropReasons[key] = reason
     persistCaches()
     if (deleteRemote && removed != null) {
         scope.launch { deleteCache(removed.name, apiKey) }
@@ -195,7 +207,7 @@ internal suspend fun AIService.refreshPrefixCache(
             }
         }
 
-        var reason = if (previous == null) CacheCreateReason.FIRST
+        var reason = if (previous == null) CacheCreateReason.from(cacheDropReasons[key])
             else CacheCreateReason.PREFIX_CHANGED
         if (previous != null) {
             // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
@@ -222,7 +234,8 @@ internal suspend fun AIService.refreshPrefixCache(
                 observe(CacheDecision.TAIL_TOO_SMALL)
                 return
             }
-            // **TTL을 바꾼 효과는 정확히 `EXPIRING_SOON`의 감소로 나타납니다.**
+            // **TTL을 바꾼 효과는 `EXPIRED`와 `EXPIRING_SOON`의 합으로 읽습니다.**
+            // 캐시가 살아 있을 때 미리 갱신하면 여기, 이미 죽은 뒤면 `EXPIRED`입니다.
             // 이 구분이 없으면 30분이 도움이 됐는지 총액만 보고는 알 수 없고,
             // 같은 시기에 들어간 다른 변경과 섞입니다.
             reason = if (worthIt) CacheCreateReason.TAIL_GREW else CacheCreateReason.EXPIRING_SOON
@@ -262,6 +275,8 @@ internal suspend fun AIService.refreshPrefixCache(
         val cachedTokens = json.optJSONObject("usageMetadata")?.optInt("totalTokenCount") ?: 0
         observe(CacheDecision.CREATE_SUCCESS, cachedTokens)
         if (measure) measurement.observeCacheCreateReason(reason)
+        // 다 썼으므로 지웁니다. 남겨두면 다음 생성이 옛 사유를 다시 씁니다.
+        cacheDropReasons.remove(key)
         synchronized(prefixCaches) {
             prefixCaches[key] = PrefixCache(
                 name = name,
