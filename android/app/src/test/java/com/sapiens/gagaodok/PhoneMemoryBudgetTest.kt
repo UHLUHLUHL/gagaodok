@@ -2,7 +2,9 @@ package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.service.ConversationCompactor
 import com.sapiens.gagaodok.service.GEMINI_MODEL_MAX_OUTPUT_TOKENS
-import com.sapiens.gagaodok.service.MEMORY_THINKING_HEADROOM
+import com.sapiens.gagaodok.service.MEMORY_THINKING_LEVEL
+import com.sapiens.gagaodok.service.THINKING_HEADROOM
+import com.sapiens.gagaodok.service.outputBudget
 import com.sapiens.gagaodok.service.phoneMemoryOutputBudget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -20,7 +22,7 @@ class PhoneMemoryBudgetTest {
         // 본문 몫은 지시문이 요구하는 최대치에서 나옵니다:
         // M2 구간당 1,500 + M3 최대 800 + JSON 구조.
         val body = 1 * ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1000
-        assertEquals(body + MEMORY_THINKING_HEADROOM, phoneMemoryOutputBudget(1))
+        assertEquals(body + THINKING_HEADROOM, phoneMemoryOutputBudget(1))
         assertTrue("본문만으로도 M2 1500과 M3 800이 들어가야 한다", body >= 2300)
     }
 
@@ -37,7 +39,7 @@ class PhoneMemoryBudgetTest {
         // 전환은 구간이 최대 30개입니다(`Migration requires bounded repair`).
         // 30구간이면 54,192로 아직 여유가 있습니다.
         assertTrue(phoneMemoryOutputBudget(30) <= GEMINI_MODEL_MAX_OUTPUT_TOKENS)
-        assertEquals(30 * ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1000 + MEMORY_THINKING_HEADROOM,
+        assertEquals(30 * ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1000 + THINKING_HEADROOM,
             phoneMemoryOutputBudget(30))
     }
 
@@ -49,6 +51,15 @@ class PhoneMemoryBudgetTest {
     }
 
     @Test
+    fun `사고 몫은 본문이 무엇이든 같은 크기로 붙는다`() {
+        // 사고량은 본문 분량과 무관합니다. 말투 분석이든 구간 요약이든 모델이
+        // 생각하는 양은 그 작업의 어려움에서 나오지, 답이 길어서 늘지 않습니다.
+        assertEquals(2048 + THINKING_HEADROOM, outputBudget(2048))
+        assertEquals(2560 + THINKING_HEADROOM, outputBudget(2560))
+        assertEquals(GEMINI_MODEL_MAX_OUTPUT_TOKENS, outputBudget(60_000))
+    }
+
+    @Test
     fun `예전 예산은 사고 하나로 다 찼다`() {
         // 회귀 방지입니다. 예전 값은 1,500 + 2,000 = 3,500이었고 관측된 사고
         // 최대가 3,362였습니다. 남는 자리가 138토큰뿐이라 요약을 쓸 수 없었습니다.
@@ -56,5 +67,9 @@ class PhoneMemoryBudgetTest {
         assertTrue("새 예산은 관측된 사고량에 본문 몫을 더한 것보다 커야 한다",
             phoneMemoryOutputBudget(1) > 3362 + 2300)
         assertTrue(phoneMemoryOutputBudget(1) > old)
+        // **예산만 올리는 것으로는 못 고칩니다.** 실측에서 `high`는 3,500을 주면
+        // 3,362(96.1%), 10,692를 주면 10,262(96.0%)를 썼습니다. 주는 만큼 먹으므로
+        // 남는 자리는 늘 그대로입니다. 그래서 `thinkingLevel`을 낮춰야 합니다.
+        assertEquals("low", MEMORY_THINKING_LEVEL)
     }
 }

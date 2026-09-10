@@ -27,6 +27,44 @@ internal const val GEMINI_BASE = "https://generativelanguage.googleapis.com/v1be
 // thinkingLevel이 medium이므로 실제로 보이는 답변 길이보다 여유를 두고 잡습니다.
 internal const val GEMINI_MAX_OUTPUT_TOKENS = 8192
 
+/// 모델이 한 응답에 쓸 수 있는 출력 토큰의 진짜 상한입니다.
+///
+/// 바로 위 `GEMINI_MAX_OUTPUT_TOKENS`는 채팅 답변 길이를 정하려고 고른 값이지
+/// 모델의 한도가 아닙니다. 뜻이 다르므로 따로 둡니다.
+internal const val GEMINI_MODEL_MAX_OUTPUT_TOKENS = 65_536
+
+/// 사고 토큰에 남겨 두는 자리입니다.
+///
+/// **`maxOutputTokens`는 사고와 본문이 함께 쓰는 예산입니다.** 공식 문서가
+/// "max_output_tokens는 사고 토큰을 포함한다"고 명시합니다. 그래서 본문에 필요한
+/// 만큼만 잡으면 사고가 먼저 자리를 채우고 본문이 문장 한가운데서 잘립니다.
+///
+/// 본문 분량과 무관하게 같은 크기로 붙입니다. 사고량은 답이 길어서 느는 것이
+/// 아니라 그 작업이 어려워서 늘기 때문입니다.
+internal const val THINKING_HEADROOM = 8192
+
+/// 본문에 필요한 양에 사고 몫을 더한 출력 상한입니다.
+///
+/// **예산만 늘리는 것으로는 잘림을 못 막습니다.** 실측에서 `thinkingLevel`이
+/// `high`일 때 3,500을 주면 3,362(96.1%), 10,692를 주면 10,262(96.0%)를 썼습니다.
+/// 주는 만큼 먹으므로 본문 자리는 늘 그대로였습니다. 공식 문서도 잘림을 피하려면
+/// 예산을 좁히는 대신 `thinking_level`을 낮추라고 안내합니다.
+///
+/// 그래서 이 함수는 사고 수준을 낮춘 호출에만 의미가 있습니다. 여유는 `low`가
+/// 실제로 얼마나 생각하는지 측정될 때까지 두는 임시값입니다.
+internal fun outputBudget(bodyTokens: Int): Int =
+    minOf(bodyTokens + THINKING_HEADROOM, GEMINI_MODEL_MAX_OUTPUT_TOKENS)
+
+/// 판단이 아니라 정해진 형식으로 옮겨 적는 작업에 쓰는 사고 수준입니다.
+///
+/// 구간 요약·말투 추출은 원문에 있는 것을 규칙에 맞게 정리하는 일입니다. `high`로
+/// 두었더니 사고가 예산을 다 먹어 결과가 저장되지 못했습니다. **만들어져 저장되는
+/// 결과가, 오래 생각하고 영영 안 나오는 결과보다 낫습니다.**
+///
+/// 품질이 아쉬우면 `medium`으로 올린다. 다만 `medium`도 예산을 다 먹는지는 아직
+/// 모르므로, `low`의 실제 사고량을 먼저 측정한 뒤에 판단한다.
+internal const val MEMORY_THINKING_LEVEL = "low"
+
 const val ERROR_PREFIX = "요청을 처리하는 중 오류가 발생했습니다:"
 
 internal val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()

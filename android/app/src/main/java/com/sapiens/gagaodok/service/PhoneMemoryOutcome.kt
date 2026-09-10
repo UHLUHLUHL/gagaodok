@@ -76,35 +76,12 @@ enum class PhoneMemoryOutcome(
     COMMITTED(paid = true, advancesCoverage = true)
 }
 
-/// 모델이 한 응답에 쓸 수 있는 출력 토큰의 상한입니다.
-///
-/// Gemini 3.7 Flash의 공식 한도입니다. 저장소가 쓰는 `GEMINI_MAX_OUTPUT_TOKENS`(8192)는
-/// 채팅 답변 길이를 정하려고 고른 값이지 모델의 한도가 아닙니다.
-internal const val GEMINI_MODEL_MAX_OUTPUT_TOKENS = 65_536
-
-/// 사고 토큰에 남겨 두는 자리입니다.
-///
-/// **근거가 있는 값이 아닙니다.** 실사용에서 관측된 사고 최대치 3,362는 예산 3,500에
-/// 눌려 잘린 값이라, 모델이 원래 얼마나 생각하려 했는지는 아직 모릅니다. 첫 회차는
-/// 넉넉히 주고 절단되지 않은 값을 얻은 뒤에 조입니다.
-///
-/// 상한을 올린다고 요금이 바로 늘지는 않지만 **공짜도 아닙니다.** 잘려 있던 사고가
-/// 실제로 길어지면 그만큼 출력 요금이 붙습니다.
-internal const val MEMORY_THINKING_HEADROOM = 8192
-
 /// 기억 갱신 한 번에 줄 출력 예산입니다.
 ///
-/// **사고와 본문이 한 예산을 나눠 씁니다.** 예전에는 `구간수 × 1500 + 2000`이었는데,
-/// 일반 갱신에서 3,500이었고 실측 호출당 평균 출력이 그 98.25%였습니다. 본문은 평균
-/// 258토큰 — 지시한 구간당 900~1,100의 1/4도 못 썼습니다. 사고가 자리를 다 먹고
-/// 요약이 시작도 못 한 채 잘린 것입니다.
-///
-/// 그래서 본문 몫과 사고 몫을 따로 셉니다. 본문 몫은 지시문이 요구하는 최대치에서
-/// 나옵니다 — M2 구간당 1,500, M3 합계 800, JSON 구조 약 200.
-internal fun phoneMemoryOutputBudget(segmentCount: Int): Int {
-    val body = segmentCount * ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1000
-    return minOf(body + MEMORY_THINKING_HEADROOM, GEMINI_MODEL_MAX_OUTPUT_TOKENS)
-}
+/// 본문 몫은 지시문이 요구하는 최대치에서 나옵니다 — M2 구간당 1,500, M3 합계 800,
+/// JSON 구조 약 200. 사고 몫은 `outputBudget`이 붙입니다.
+internal fun phoneMemoryOutputBudget(segmentCount: Int): Int =
+    outputBudget(segmentCount * ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1000)
 
 /// 실패한 뒤 다음 시도까지 기다리는 기본 시간입니다.
 internal const val PHONE_MEMORY_RETRY_MILLIS = 15 * 60_000L

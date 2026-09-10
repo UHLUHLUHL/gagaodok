@@ -131,7 +131,10 @@ internal fun AIService.updatePhoneMemory(
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json")
                 .put("responseSchema", phoneMemoryResponseSchema())
                 .put("maxOutputTokens", phoneMemoryOutputBudget(ranges.size))
-                .put("thinkingConfig", JSONObject().put("thinkingLevel", "high")))
+                // **사고가 예산을 다 먹어 요약이 못 나오고 있었습니다.**
+                // 실측: 3,500을 주면 3,362(96.1%), 10,692를 주면 10,262(96.0%).
+                // 예산을 올려도 남는 자리는 그대로라 수준을 낮춥니다.
+                .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL)))
         val response = postGemini(body, apiKey, roomId, measureOptimization = true)
         // 여기서부터는 이미 요금이 나갔습니다. 어떻게 끝나든 반드시 적습니다.
         val candidate = response.optJSONArray("candidates")?.optJSONObject(0) ?: run {

@@ -527,9 +527,11 @@ suspend fun AIService.analyzePersonaStyle(
             )
             .put(
                 "generationConfig",
-                JSONObject().put("maxOutputTokens", 2048)
+                JSONObject().put("maxOutputTokens", outputBudget(2048))
                     // 설명과 예시에서 말투를 뽑아내는 분석 작업이다.
-                    .put("thinkingConfig", JSONObject().put("thinkingLevel", "high"))
+                    // **2,048에 `high`는 사고만으로 예산이 찬다.** 그러면 사용자에게는
+                    // "질문을 나눠서 다시 보내주세요"라고 뜨는데, 나눠도 달라지지 않는다.
+                    .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL))
             )
 
         val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)
@@ -574,9 +576,10 @@ suspend fun AIService.refinePersonaStyle(
         )
         .put(
             "generationConfig",
-            JSONObject().put("maxOutputTokens", 2560)
-                // 말투를 다듬는 것은 판단이 들어가는 작업이다.
-                .put("thinkingConfig", JSONObject().put("thinkingLevel", "high"))
+            JSONObject().put("maxOutputTokens", outputBudget(2560))
+                // 말투를 다듬는 것은 판단이 들어가는 작업이다 — 다만 그 판단이
+                // 예산을 다 쓰면 교정 결과가 아예 안 나온다.
+                .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL))
         )
 
     val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)

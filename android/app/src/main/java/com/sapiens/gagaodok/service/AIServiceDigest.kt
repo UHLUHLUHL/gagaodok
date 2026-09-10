@@ -79,10 +79,12 @@ internal fun AIService.requestSegmentSummary(
             JSONObject()
                 // 지시한 분량보다 넉넉히 잡습니다. 사고 토큰도 이 예산에서 함께 쓰고,
                 // 모자라면 문장 한가운데서 잘린 글이 나옵니다.
-                .put("maxOutputTokens", ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1200)
+                .put("maxOutputTokens", outputBudget(ConversationCompactor.SEGMENT_TOKEN_BUDGET + 1200))
                 // 구간 요약은 한 번 만들면 그 방에 계속 남아 이후 모든 요청에 실려 나간다.
-                // 틀린 요약이 굳으면 되돌릴 길이 없으므로 생각할 값어치가 있다.
-                .put("thinkingConfig", JSONObject().put("thinkingLevel", "high"))
+                // 틀린 요약이 굳으면 되돌릴 길이 없으므로 생각할 값어치가 있다 —
+                // **다만 생각하다 잘려서 아무것도 안 나오면 값어치가 0이다.**
+                // 폰 쪽 실측에서 `high`는 예산을 얼마를 주든 96%를 먹었다.
+                .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL))
         )
 
     val json = runCatching { postGemini(body, apiKey, roomId) }.getOrNull() ?: return ""
