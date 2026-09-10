@@ -212,7 +212,13 @@ data class MeasurementMemory(
     ///
     /// **`MAX_TOKENS`가 대부분이면 출력 예산 부족이고, `SAFETY`나 `RECITATION`이면
     /// 예산을 늘려도 소용없습니다.** 옛 기록에는 없으므로 기본값을 둡니다.
-    val failureDetails: Map<String, Int> = emptyMap()
+    val failureDetails: Map<String, Int> = emptyMap(),
+    /// 자리를 만들려고 놓아준 반복 패턴의 누적 수입니다.
+    ///
+    /// 규칙은 쌓이기만 하므로 어떤 상한을 두든 언젠가 찹니다. 찼을 때 멈추지 않고
+    /// 가장 덜 영구적인 것을 놓아주는데, **얼마나 자주 그러는지는 여기로만 알 수
+    /// 있습니다.** 조용히 잊는 것이 가장 나쁜 결말입니다.
+    val droppedLoopRules: Int = 0
 )
 
 @Serializable
@@ -373,6 +379,7 @@ class OptimizationMeasurementStore internal constructor(
             maxConsecutivePaidFailures =
                 maxOf(old.maxConsecutivePaidFailures, consecutivePaidFailures),
             migrationAttempts = old.migrationAttempts + if (observation.migration) 1 else 0,
+            droppedLoopRules = old.droppedLoopRules + observation.droppedLoops,
             failureDetails = observation.failureDetail?.let {
                 old.failureDetails + (it to (old.failureDetails[it] ?: 0) + 1)
             } ?: old.failureDetails

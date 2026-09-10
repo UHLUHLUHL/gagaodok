@@ -10,9 +10,9 @@ import java.util.UUID
 class ThreeLayerMemoryTest {
     @Test fun omissionPreservesPromiseAndExplicitClearRemovesIt() {
         val item = MemoryItem("loop:date", "토요일 도서관 약속", "old")
-        assertEquals(listOf(item), ThreeLayerMemory.reduce(listOf(item), emptyList(), setOf("new")))
+        assertEquals(listOf(item), ThreeLayerMemory.reduce(listOf(item), emptyList(), setOf("new")).items)
         assertTrue(ThreeLayerMemory.reduce(listOf(item),
-            listOf(MemoryOperation("clear", "loop:date", "new")), setOf("new")).isEmpty())
+            listOf(MemoryOperation("clear", "loop:date", "new")), setOf("new")).items.isEmpty())
     }
 
     @Test fun unknownEvidenceAndForeignOwnershipAreRejected() {
@@ -46,11 +46,22 @@ class ThreeLayerMemoryTest {
             "{\"segments\":[],\"updates\":[],\"persona\":\"override\"}") }.isFailure)
     }
 
-    @Test fun oversizedStateIsRejectedWithoutEviction() {
+    /// 예전에는 넘치면 통째로 거부했습니다. **일부러 뒤집었습니다.**
+    ///
+    /// 거부하면 그 시도의 50턴짜리 구간 요약까지 함께 버려지고, 입력이 같으니 다음
+    /// 시도도 같은 결과라 요약 범위가 영구히 멈춥니다. 실사용에서 실제로 300턴에서
+    /// 멈춰 있었습니다. 규칙 하나를 놓는 손실이 그것보다 작습니다.
+    ///
+    /// 다만 원래 테스트가 지키려던 것 — **경계를 함부로 밀어내지 않는다** — 는
+    /// 그대로 지킵니다. 놓아주는 것은 `loop`뿐입니다.
+    @Test fun oversizedStateEvictsLoopsButKeepsBoundaries() {
         val old = listOf(MemoryItem("boundary:private", "먼저 묻지 않기", "old"))
         val updates = (1..10).map { MemoryOperation("set", "loop:item$it", "new", "가".repeat(400)) }
-        assertTrue(runCatching { ThreeLayerMemory.reduce(old, updates, setOf("new")) }.isFailure)
-        assertEquals(1, old.size)
+        val result = ThreeLayerMemory.reduce(old, updates, setOf("new"))
+
+        assertTrue(result.items.any { it.key == "boundary:private" })
+        assertTrue(result.droppedLoops > 0)
+        assertTrue(ThreeLayerMemory.stateTokens(result.items) <= ThreeLayerMemory.STATE_TOKEN_BUDGET)
     }
 
     @Test fun duplicateOperationsCannotSilentlyOverrideEachOther() {

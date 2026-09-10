@@ -131,5 +131,11 @@ data class PhoneMemoryObservation(
     ///
     /// **수치를 담지 않습니다.** 집계에서 키로 쓰이므로 값이 섞이면 같은 원인이
     /// 여러 칸으로 흩어집니다.
-    val failureDetail: String? = null
+    val failureDetail: String? = null,
+    /// 자리를 만들려고 놓아준 반복 패턴의 수입니다.
+    ///
+    /// **0이 아니면 기억이 그만큼 흐려졌다는 뜻입니다.** 원문과 M2 요약에는 남아
+    /// 있지만 규칙으로 튀어나오지는 않습니다. 이 값이 쌓이는 속도를 보고
+    /// `LOOP_RULE_LIMIT`과 `STATE_TOKEN_BUDGET`을 조정합니다.
+    val droppedLoops: Int = 0
 )

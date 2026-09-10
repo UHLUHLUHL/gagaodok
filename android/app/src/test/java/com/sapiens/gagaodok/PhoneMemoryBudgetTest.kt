@@ -1,6 +1,7 @@
 package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.service.ConversationCompactor
+import com.sapiens.gagaodok.service.LOOP_RULE_LIMIT
 import com.sapiens.gagaodok.service.MemoryOperation
 import com.sapiens.gagaodok.service.ThreeLayerMemory
 import com.sapiens.gagaodok.service.GEMINI_MODEL_MAX_OUTPUT_TOKENS
@@ -89,10 +90,15 @@ class PhoneMemoryBudgetTest {
     }
 
     @Test
-    fun `상한을 800에서 올려 규칙이 쌓일 자리를 만든다`() {
-        // 고정 키 여덟 개만으로 약 467토큰을 쓴다. 800이면 boundary/loop에 남는
-        // 자리가 333토큰뿐이고, 실사용 300턴 시점에 291토큰이 차 있었다.
-        assertTrue("옛 상한 800으로는 규칙 한 개도 더 못 받는다", ThreeLayerMemory.STATE_TOKEN_BUDGET > 800)
-        assertEquals(1200, ThreeLayerMemory.STATE_TOKEN_BUDGET)
+    fun `상한은 안전망이고 실질 방어선은 반복 패턴 개수다`() {
+        // 상한만 두면 거기 닿는 순간부터 계속 버려야 한다. 개수를 묶으면 분량이
+        // 한 값에서 멈춘다. 실측 증가율로 계산하면 loop 10개 · 상한 3,000일 때
+        // 상태가 약 2,283토큰에서 수렴하고 상한에는 닿지 않는다.
+        assertEquals(3000, ThreeLayerMemory.STATE_TOKEN_BUDGET)
+        assertEquals(10, LOOP_RULE_LIMIT)
+        val 고정 = 440
+        val 수렴 = 고정 + 16 * 65 + LOOP_RULE_LIMIT * 80
+        assertTrue("수렴값이 상한 안이라야 평소에 버리지 않는다",
+            수렴 < ThreeLayerMemory.STATE_TOKEN_BUDGET)
     }
 }

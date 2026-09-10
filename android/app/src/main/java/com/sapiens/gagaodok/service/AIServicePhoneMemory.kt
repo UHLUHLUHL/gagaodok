@@ -22,6 +22,7 @@ internal fun AIService.updatePhoneMemory(
     var migration = false
     var targetThrough = 0
     var segmentCount = 0
+    var droppedLoops = 0
 
     // **모든 종료 경로가 여기를 지납니다.**
     //
@@ -53,12 +54,13 @@ internal fun AIService.updatePhoneMemory(
             targetThrough = targetThrough,
             segmentCount = segmentCount,
             retryAfterMillis = waiting,
-            failureDetail = failureDetail
+            failureDetail = failureDetail,
+            droppedLoops = droppedLoops
         ))
         // 방 식별자와 응답 본문은 남기지 않습니다.
         Log.i(
             "PhoneMemory",
-            "outcome=$outcome migration=$migration why=${failureDetail ?: "-"} " +
+            "outcome=$outcome migration=$migration why=${failureDetail ?: "-"} dropped=$droppedLoops " +
                 "coverage=$coverageBefore→$coverageAfter target=$targetThrough wait=${waiting}ms"
         )
     }
@@ -121,6 +123,7 @@ internal fun AIService.updatePhoneMemory(
             clear에는 text를 넣지 않는다. 가정·농담·인용은 실제 상태가 아니다. 중복 key 연산 금지.
             각 변경 evidenceTurnId는 입력의 정확한 ID만 사용한다. 전환 시에는 provenance ID를 쓴다.
             M3 합계 250~400토큰 목표, ${ThreeLayerMemory.STATE_TOKEN_BUDGET}토큰 최대. 경계·약속을 분량 때문에 삭제하지 마라.
+            반복 패턴(loop)은 최대 ${LOOP_RULE_LIMIT}개까지만 유지된다. 넘으면 오래된 것부터 자동으로 빠진다.
             사용자 사실은 M2가 소유하며 persona,호감도,반복 금지 목록을 상태로 복제하지 마라.
             이전 상태: ${ThreeLayerMemory.json.encodeToString(previous)}
         """.trimIndent()
@@ -173,13 +176,17 @@ internal fun AIService.updatePhoneMemory(
             record(PhoneMemoryOutcome.SEGMENT_TOO_LONG)
             return
         }
-        val items = runCatching { ThreeLayerMemory.reduce(previous, draft.updates, evidence) }
+        val reduction = runCatching {
+            ThreeLayerMemory.reduce(previous, draft.updates, evidence, throughTurn = through)
+        }
             .getOrElse { error ->
                 // 검사 여덟 개가 한 갈래로 뭉치므로 어느 것이 걸렸는지 함께 남깁니다.
                 // 메시지는 전부 고정 문구와 수치라 대화 내용이 새지 않습니다.
                 record(PhoneMemoryOutcome.STATE_REJECTED, failureDetail = error.message ?: "UNKNOWN")
                 return
             }
+        val items = reduction.items
+        droppedLoops = reduction.droppedLoops
         val checkpoint = MemoryCheckpoint(source.last().id.toString(), ThreeLayerMemory.hash(source), items)
         val generated = draft.segments.mapIndexed { index, segment ->
             ConversationSegment(firstTurn = segment.firstTurn, lastTurn = segment.lastTurn, text = segment.text,
