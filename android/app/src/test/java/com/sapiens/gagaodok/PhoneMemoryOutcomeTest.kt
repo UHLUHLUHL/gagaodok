@@ -91,11 +91,21 @@ class PhoneMemoryOutcomeTest {
     }
 
     @Test
+    fun `검증 거부 사유도 같은 칸에 담긴다`() {
+        // 모델이 알려준 종료 사유와 우리 검증이 거부한 이유는 둘 다 "왜 실패했나"에
+        // 답합니다. `outcome`이 어느 쪽인지 이미 말해주므로 한 칸이면 충분합니다.
+        assertEquals("State too large",
+            observation(PhoneMemoryOutcome.STATE_REJECTED, "State too large").failureDetail)
+        assertEquals("MAX_TOKENS",
+            observation(PhoneMemoryOutcome.NOT_STOP, "MAX_TOKENS").failureDetail)
+    }
+
+    @Test
     fun `종료 사유는 STOP이 아닐 때만 남긴다`() {
-        // `finishReason`을 안 남기면 `NOT_STOP` 8건이 예산 부족이었는지 안전 필터였는지
+        // `failureDetail`을 안 남기면 `NOT_STOP` 8건이 예산 부족이었는지 안전 필터였는지
         // 구분할 수 없습니다. 반대로 성공한 건에까지 남기면 집계가 STOP으로 뒤덮입니다.
-        assertEquals("MAX_TOKENS", observation(PhoneMemoryOutcome.NOT_STOP, "MAX_TOKENS").finishReason)
-        assertNull(observation(PhoneMemoryOutcome.COMMITTED, null).finishReason)
+        assertEquals("MAX_TOKENS", observation(PhoneMemoryOutcome.NOT_STOP, "MAX_TOKENS").failureDetail)
+        assertNull(observation(PhoneMemoryOutcome.COMMITTED, null).failureDetail)
     }
 
     private fun observation(outcome: PhoneMemoryOutcome, reason: String?) = PhoneMemoryObservation(
@@ -106,6 +116,6 @@ class PhoneMemoryOutcomeTest {
         targetThrough = 300,
         segmentCount = 1,
         retryAfterMillis = 0L,
-        finishReason = reason
+        failureDetail = reason
     )
 }

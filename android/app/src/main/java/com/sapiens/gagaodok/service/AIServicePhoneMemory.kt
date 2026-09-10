@@ -34,7 +34,7 @@ internal fun AIService.updatePhoneMemory(
     fun record(
         outcome: PhoneMemoryOutcome,
         coverageAfter: Int = coverageBefore,
-        finishReason: String? = null
+        failureDetail: String? = null
     ) {
         when {
             outcome.advancesCoverage -> phoneMemoryFailures.remove(key)
@@ -53,12 +53,12 @@ internal fun AIService.updatePhoneMemory(
             targetThrough = targetThrough,
             segmentCount = segmentCount,
             retryAfterMillis = waiting,
-            finishReason = finishReason
+            failureDetail = failureDetail
         ))
         // 방 식별자와 응답 본문은 남기지 않습니다.
         Log.i(
             "PhoneMemory",
-            "outcome=$outcome migration=$migration finish=${finishReason ?: "-"} " +
+            "outcome=$outcome migration=$migration why=${failureDetail ?: "-"} " +
                 "coverage=$coverageBefore→$coverageAfter target=$targetThrough wait=${waiting}ms"
         )
     }
@@ -120,7 +120,7 @@ internal fun AIService.updatePhoneMemory(
             언급 없으면 updates에서 생략하여 유지한다. 명시적 취소·철회만 op=clear로 제거한다.
             clear에는 text를 넣지 않는다. 가정·농담·인용은 실제 상태가 아니다. 중복 key 연산 금지.
             각 변경 evidenceTurnId는 입력의 정확한 ID만 사용한다. 전환 시에는 provenance ID를 쓴다.
-            M3 합계 250~400토큰 목표, 800토큰 최대. 경계·약속을 분량 때문에 삭제하지 마라.
+            M3 합계 250~400토큰 목표, ${ThreeLayerMemory.STATE_TOKEN_BUDGET}토큰 최대. 경계·약속을 분량 때문에 삭제하지 마라.
             사용자 사실은 M2가 소유하며 persona,호감도,반복 금지 목록을 상태로 복제하지 마라.
             이전 상태: ${ThreeLayerMemory.json.encodeToString(previous)}
         """.trimIndent()
@@ -147,7 +147,7 @@ internal fun AIService.updatePhoneMemory(
         // 안전 필터에 걸린 것은 고칠 곳이 정반대인데 장부에서는 같아 보였습니다.
         val finish = candidate.optString("finishReason")
         if (finish != "STOP") {
-            record(PhoneMemoryOutcome.NOT_STOP, finishReason = finish.ifEmpty { "UNKNOWN" })
+            record(PhoneMemoryOutcome.NOT_STOP, failureDetail = finish.ifEmpty { "UNKNOWN" })
             return
         }
         // **여기부터는 단계마다 이름을 붙입니다.**
@@ -174,8 +174,10 @@ internal fun AIService.updatePhoneMemory(
             return
         }
         val items = runCatching { ThreeLayerMemory.reduce(previous, draft.updates, evidence) }
-            .getOrElse {
-                record(PhoneMemoryOutcome.STATE_REJECTED)
+            .getOrElse { error ->
+                // 검사 여덟 개가 한 갈래로 뭉치므로 어느 것이 걸렸는지 함께 남깁니다.
+                // 메시지는 전부 고정 문구와 수치라 대화 내용이 새지 않습니다.
+                record(PhoneMemoryOutcome.STATE_REJECTED, failureDetail = error.message ?: "UNKNOWN")
                 return
             }
         val checkpoint = MemoryCheckpoint(source.last().id.toString(), ThreeLayerMemory.hash(source), items)

@@ -98,12 +98,12 @@ class OptimizationMeasurementTest {
         repeat(6) {
             store.observeMemory(memoryObservation(
                 PhoneMemoryOutcome.NOT_STOP, migration = false,
-                before = 250, after = 250, finishReason = "MAX_TOKENS"
+                before = 250, after = 250, failureDetail = "MAX_TOKENS"
             ))
         }
         store.observeMemory(memoryObservation(
             PhoneMemoryOutcome.NOT_STOP, migration = false,
-            before = 250, after = 250, finishReason = "SAFETY"
+            before = 250, after = 250, failureDetail = "SAFETY"
         ))
         // 사유가 없는 갈래는 집계를 어지럽히지 않습니다.
         store.observeMemory(memoryObservation(
@@ -111,9 +111,9 @@ class OptimizationMeasurementTest {
         ))
 
         val memory = store.state.value.activeRun!!.memory
-        assertEquals(6, memory.finishReasons["MAX_TOKENS"])
-        assertEquals(1, memory.finishReasons["SAFETY"])
-        assertEquals(2, memory.finishReasons.size)
+        assertEquals(6, memory.failureDetails["MAX_TOKENS"])
+        assertEquals(1, memory.failureDetails["SAFETY"])
+        assertEquals(2, memory.failureDetails.size)
     }
 
     @Test
@@ -143,7 +143,7 @@ class OptimizationMeasurementTest {
         migration: Boolean,
         before: Int,
         after: Int,
-        finishReason: String? = null
+        failureDetail: String? = null
     ) = PhoneMemoryObservation(
         outcome = outcome,
         migration = migration,
@@ -152,7 +152,7 @@ class OptimizationMeasurementTest {
         targetThrough = after,
         segmentCount = if (migration) 7 else 1,
         retryAfterMillis = if (outcome.advancesCoverage || !outcome.paid) 0L else 900_000L,
-        finishReason = finishReason
+        failureDetail = failureDetail
     )
 
     @Test

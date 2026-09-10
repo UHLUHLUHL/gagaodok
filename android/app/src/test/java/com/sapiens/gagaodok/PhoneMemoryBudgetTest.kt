@@ -1,6 +1,8 @@
 package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.service.ConversationCompactor
+import com.sapiens.gagaodok.service.MemoryOperation
+import com.sapiens.gagaodok.service.ThreeLayerMemory
 import com.sapiens.gagaodok.service.GEMINI_MODEL_MAX_OUTPUT_TOKENS
 import com.sapiens.gagaodok.service.MEMORY_THINKING_LEVEL
 import com.sapiens.gagaodok.service.THINKING_HEADROOM
@@ -71,5 +73,26 @@ class PhoneMemoryBudgetTest {
         // 3,362(96.1%), 10,692를 주면 10,262(96.0%)를 썼습니다. 주는 만큼 먹으므로
         // 남는 자리는 늘 그대로입니다. 그래서 `thinkingLevel`을 낮춰야 합니다.
         assertEquals("low", MEMORY_THINKING_LEVEL)
+    }
+
+    @Test
+    fun `상태가 상한을 넘으면 요약 작업 전체가 버려진다`() {
+        // **이것이 300턴에서 멈춘 이유입니다.** 상태 블록이 몇십 토큰 길다는 이유로
+        // 방금 만든 M2 구간 요약까지 함께 버려집니다. 입력이 같으니 다음 시도도
+        // 같은 결과라 요약 범위가 영영 멈춥니다.
+        val evidence = setOf("turn-1")
+        val huge = (1..30).map {
+            MemoryOperation(op = "set", key = "boundary:rule_$it", evidenceTurnId = "turn-1", text = "가".repeat(120))
+        }
+        val error = runCatching { ThreeLayerMemory.reduce(emptyList(), huge, evidence) }.exceptionOrNull()
+        assertEquals("State too large", error?.message)
+    }
+
+    @Test
+    fun `상한을 800에서 올려 규칙이 쌓일 자리를 만든다`() {
+        // 고정 키 여덟 개만으로 약 467토큰을 쓴다. 800이면 boundary/loop에 남는
+        // 자리가 333토큰뿐이고, 실사용 300턴 시점에 291토큰이 차 있었다.
+        assertTrue("옛 상한 800으로는 규칙 한 개도 더 못 받는다", ThreeLayerMemory.STATE_TOKEN_BUDGET > 800)
+        assertEquals(1200, ThreeLayerMemory.STATE_TOKEN_BUDGET)
     }
 }
