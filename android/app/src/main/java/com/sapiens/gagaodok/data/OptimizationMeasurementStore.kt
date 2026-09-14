@@ -12,7 +12,9 @@ import com.sapiens.gagaodok.service.PhoneMemoryObservation
 import com.sapiens.gagaodok.service.PhoneMemoryOutcome
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 import kotlinx.serialization.encodeToString
 import java.io.File
 
@@ -193,6 +195,7 @@ data class MeasurementCache(
 /// **`paidAttempts`가 큰데 `coverageAdvanced`가 0이면 돈만 쓰고 제자리입니다.**
 /// 그 상태에서는 요약이 안 쌓이므로 최근 원문이 계속 자라고, 접두사와 캐시가
 /// 함께 커집니다. 비용이 커지는 것이 원인이 아니라 결과일 수 있다는 뜻입니다.
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MeasurementMemory(
     val attempts: Int = 0,
@@ -208,10 +211,16 @@ data class MeasurementMemory(
     val maxConsecutivePaidFailures: Int = 0,
     /// 전환(v0 → v2) 시도 수입니다. 일반 갱신과 실패 양상이 달라 따로 셉니다.
     val migrationAttempts: Int = 0,
-    /// 모델이 알려준 종료 사유별 횟수입니다. 실패한 건만 들어갑니다.
+    /// 실패한 건의 사유별 횟수입니다.
     ///
     /// **`MAX_TOKENS`가 대부분이면 출력 예산 부족이고, `SAFETY`나 `RECITATION`이면
     /// 예산을 늘려도 소용없습니다.** 옛 기록에는 없으므로 기본값을 둡니다.
+    ///
+    /// **옛 이름 `finishReasons`도 함께 읽습니다.** 이름만 바꾸고 별칭을 안 두면
+    /// `ignoreUnknownKeys`가 옛 값을 조용히 버리고, 다음 저장 때 파일에서 영영
+    /// 사라집니다. 실제로 그렇게 잃었습니다 — run-7의 `NOT_STOP` 8건이 어떤 사유
+    /// 였는지가 지금 장부에 없습니다. 되찾을 수는 없지만 되풀이는 막습니다.
+    @JsonNames("finishReasons")
     val failureDetails: Map<String, Int> = emptyMap(),
     /// 자리를 만들려고 놓아준 반복 패턴의 누적 수입니다.
     ///
