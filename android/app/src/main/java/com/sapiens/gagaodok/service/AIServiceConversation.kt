@@ -310,40 +310,38 @@ internal suspend fun AIService.streamGemini(
     }
 }
 
-/// 요청마다 새로 뽑는 씨앗입니다.
-///
-/// **같은 대화를 다시 보내면 답이 그대로였습니다.** 사용자가 답이 마음에 안 들어
-/// 자기 메시지를 눌러 다시 보낼 때, 글을 안 바꾸면 요청이 바이트 단위로 같아지기
-/// 때문입니다. 실측에서 씨앗 없이 같은 요청을 두 번 보내자 답이 **완전히
-/// 동일**했고, 씨앗만 바꾸자 갈렸습니다.
-internal fun nextRequestSeed(): Int = kotlin.random.Random.nextInt(1, Int.MAX_VALUE)
-
-/// 채팅 요청의 생성 설정입니다.
-///
-/// Gemini 3.x는 `temperature`·`topK`·`topP`를 **무시**하고, `frequencyPenalty`·
-/// `presencePenalty`·`candidateCount`는 gemini-3.7-flash부터 **400으로 거부**합니다.
-/// 답의 다양성을 조절할 수 있는 것은 `seed`뿐입니다.
-///
-/// `generationConfig`는 `cachedContents`에 담기지 않으므로 씨앗을 바꿔도
-/// **접두사 캐시는 깨지지 않습니다.** 프롬프트에 글자를 붙이는 방식과 다른 점입니다.
-internal fun chatGenerationConfig(thinkingLevel: String, seed: Int): JSONObject =
-    JSONObject()
-        .put("maxOutputTokens", GEMINI_MAX_OUTPUT_TOKENS)
-        // 사고량은 모드가 정합니다(`ChatMode.geminiThinkingLevel`).
-        // 챗봇 방에서는 끕니다. 안 보이는 사고 토큰이 출력 단가로 붙는 데다,
-        // 그 시간이 첫 글자까지의 대기에 그대로 얹힙니다.
-        .put("thinkingConfig", JSONObject().put("thinkingLevel", thinkingLevel))
-        .put("seed", seed)
-
 internal fun AIService.requestBody(
     contents: List<JSONObject>,
     system: String,
     cache: PrefixCache?,
     mode: ChatMode
 ): JSONObject {
+    // **답의 다양성을 조절할 방법이 없습니다.** 넣어 봤자 소용없는 것을 넣지 않습니다.
+    //
+    // Gemini 3.x는 `temperature`·`topK`·`topP`를 무시하고, `frequencyPenalty`·
+    // `presencePenalty`·`candidateCount`는 gemini-3.7-flash부터 400으로 거부합니다.
+    // 남은 후보가 `seed`였는데, 실제 API로 재 보니 그것도 소용없었습니다
+    // (`docs/seed-probe.sh`, gemini-3.8-flash, 12회 호출).
+    //
+    // - 씨앗 없이 5회 → 답 5개가 전부 다름. **기본값이 이미 무작위입니다.**
+    // - 같은 씨앗(77)으로 2회 → **답이 서로 다름.** 씨앗이 출력을 정하지 못합니다.
+    //
+    // 그래서 씨앗을 넣는 코드를 넣었다가 뺐습니다. 비용은 0이었지만 "재요청 때 답이
+    // 갈리게 한다"는 주석만 남고 실제로는 아무 일도 하지 않아, 읽는 사람을 속입니다.
+    //
+    // 사용자가 겪은 "다시 받아도 비슷한 답"은 결정성 문제가 아니라 **모델이 한 갈래로
+    // 쏠리는 것**이었습니다. 위 12개 답의 행성 이름이 전부 `루미-` 아니면 `크리-`로
+    // 시작했고, 내용도 전부 "결정이 빛을 굴절시켜 무지개가 생기는 행성"이었습니다.
+    // 프롬프트에 "매번 다른 것을 지어내"라고 적었는데도 그랬습니다. 입력을 바꾸지
+    // 않는 한 이 쏠림은 남습니다.
     val body = JSONObject().put(
         "generationConfig",
-        chatGenerationConfig(mode.geminiThinkingLevel, nextRequestSeed())
+        JSONObject()
+            .put("maxOutputTokens", GEMINI_MAX_OUTPUT_TOKENS)
+            // 사고량은 모드가 정합니다(`ChatMode.geminiThinkingLevel`).
+            // 챗봇 방에서는 끕니다. 안 보이는 사고 토큰이 출력 단가로 붙는 데다,
+            // 그 시간이 첫 글자까지의 대기에 그대로 얹힙니다.
+            .put("thinkingConfig", JSONObject().put("thinkingLevel", mode.geminiThinkingLevel))
     )
 
     // 안전 설정은 캐시에 담기지 않으므로 캐시를 쓰든 안 쓰든 매 요청에 함께 보냅니다.
