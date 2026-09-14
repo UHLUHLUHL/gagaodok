@@ -123,6 +123,13 @@ class AIService private constructor(internal val appContext: Context) {
         }.getOrElse { mutableMapOf() }
     }
     internal val refreshingRooms = mutableSetOf<String>()
+
+    /// 대화가 잘려 나가 캐시를 버린 적이 있는 방들입니다. 그런 방에서만 캐시를
+    /// 마지막 한 교환만큼 뒤로 물립니다(`prefixCacheLagEntries`).
+    ///
+    /// 메모리에만 둡니다. 앱을 다시 켜면 비어서, 방마다 한 번은 예전처럼 캐시가
+    /// 깨지고 그다음부터 물립니다. 파일로 남길 만큼 비싼 정보가 아닙니다.
+    internal val shrinkProneRooms = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     /// 방마다 **직전** 요청 시각입니다. 대화가 이어지는 중인지 보는 데 씁니다.
     ///
     /// 메모리에만 둡니다. 앱을 껐다 켜면 비어 있어서 그 방의 캐시가 한 메시지 늦게

@@ -34,7 +34,13 @@ internal data class PrefixCache(
     val modelIdentifier: String = AIModel.GEMINI_37_FLASH.rawValue,
     /// 이 캐시를 만든 시각입니다. 실제로 산 시간만큼만 보관료를 적으려고 둡니다.
     /// 예전 파일에는 없으므로 0이면 정산을 건너뜁니다.
-    val createdAtMillis: Long = 0L
+    val createdAtMillis: Long = 0L,
+    /// 만들 때 대화 끝에서 몇 엔트리를 일부러 캐시 밖에 뒀는지입니다.
+    ///
+    /// `coveredTurns + lagEntries`가 만들 당시의 대화 길이입니다. 그 뒤로 얼마나
+    /// 새로 붙었는지를 재려면 이 값이 있어야 합니다 — 물린 만큼은 처음부터 꼬리에
+    /// 있었으므로 "새로 붙은 것"이 아닙니다. 예전 파일에는 없으므로 0입니다.
+    val lagEntries: Int = 0
 )
 
 // 15분에서 30분으로 올립니다.
@@ -64,6 +70,38 @@ internal const val MINIMUM_CACHE_TOKENS = 4600
 // 캐시를 다시 만들 기준입니다. 자세한 셈은 `refreshPrefixCache`에 적었습니다.
 // 짧은 대화에서 몇 마디 붙었다고 다시 만들지 않게 하는 바닥값입니다.
 internal const val CACHE_REFRESH_MIN_TAIL_TOKENS = 2000
+
+// 캐시가 덮는 범위를 대화 끝에서 이만큼 뒤로 물립니다. 사용자 한 마디와 답 한 번입니다.
+//
+// **캐시가 대화 전체를 덮으면 답을 다시 받을 때마다 캐시가 깨집니다.** 사용자가 자기
+// 메시지를 눌러 고치면 그 뒤가 잘려 나가 대화가 캐시보다 짧아지고, 그러면 캐시를
+// 통째로 버립니다(`SHRUNK`). 실측 run-9에서 재생성 65회 중 36회가 이것이었고,
+// 그 36번은 요청이 캐시 없이 전액으로 나갔습니다.
+//
+// 마지막 교환을 캐시 밖에 두면 그 교환을 다시 받아도 접두사는 그대로입니다. 대신
+// 그 교환이 매 요청에 정가로 실리므로 **공짜가 아닙니다.** 손익분기는 382요청당
+// `SHRUNK` 6회이고(현재 36회), 그 아래로 내려가는 경우는 `prefixCacheLagEntries`가
+// 막습니다. 더 물리면 막는 양은 거의 안 늘고 꼬리 값만 커집니다.
+internal const val CACHE_LAG_ENTRIES = 2
+
+/// 이 방에서 캐시를 몇 엔트리 뒤로 물릴지 정합니다.
+///
+/// 물리는 것이 손해인 세 경우를 여기서 걸러 냅니다. 아무 방에나 물리면 고쳐 쓰지
+/// 않는 방은 얻는 것 없이 꼬리 값만 더 냅니다.
+internal fun prefixCacheLagEntries(
+    entryCount: Int,
+    laggedPrefixTokens: Int,
+    shrinkProne: Boolean
+): Int {
+    // 잘려 나간 적이 없는 방입니다. 물릴 이유가 없습니다.
+    if (!shrinkProne) return 0
+    // 물리고 나면 접두사가 남지 않습니다.
+    if (entryCount <= CACHE_LAG_ENTRIES) return 0
+    // 물리다가 최소치 아래로 내려가면 캐시가 **아예 안 만들어집니다.** 아끼려다
+    // 그 방의 캐시를 통째로 잃는 쪽이 훨씬 비쌉니다.
+    if (laggedPrefixTokens < MINIMUM_CACHE_TOKENS) return 0
+    return CACHE_LAG_ENTRIES
+}
 
 // TTL이 이만큼도 안 남았으면 꼬리가 짧아도 새로 만듭니다. 그대로 두면
 // 곧 만료되어 다음 요청이 통째로 전액이 됩니다.
@@ -113,6 +151,10 @@ internal fun AIService.usablePrefixCache(
     // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
     // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
     if (contents.size <= cache.coveredTurns) {
+        // 이 방은 고쳐 쓰는 방입니다. 다음 캐시는 마지막 교환을 밖에 두고 만들어
+        // 같은 일이 또 나도 접두사가 살아남게 합니다. 한 번 겪고 나서 켜는 이유는,
+        // 고쳐 쓰지 않는 방까지 꼬리 값을 물게 하지 않기 위해서입니다.
+        shrinkProneRooms += key
         dropCache(key, deleteRemote = true, apiKey = apiKey, reason = CacheDropReason.SHRUNK)
         return null
     }
@@ -175,7 +217,24 @@ internal suspend fun AIService.refreshPrefixCache(
 
         // 사진도 함께 셉니다. 글자만 세던 시절에는 사진이 0자로 잡혀서,
         // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
-        val estimated = estimateTokens(contents) + TokenEstimator.textTokens(system)
+        val systemTokens = TokenEstimator.textTokens(system)
+
+        // 물렸을 때의 접두사를 **먼저 재고** 그것으로 물릴지 정합니다. 물리고 나서
+        // 최소치에 걸리면 캐시가 아예 안 만들어지므로, 순서를 바꾸면 판단이 틀립니다.
+        // 물릴 방에서만 잽니다. `estimateTokens`는 사진 헤더까지 디코드하므로
+        // 안 물릴 방에서 두 번 도는 것은 그냥 낭비입니다.
+        val shrinkProne = key in shrinkProneRooms
+        val laggedPrefixTokens = if (shrinkProne) {
+            estimateTokens(contents.dropLast(CACHE_LAG_ENTRIES.coerceAtMost(contents.size))) + systemTokens
+        } else 0
+        val lag = prefixCacheLagEntries(
+            entryCount = contents.size,
+            laggedPrefixTokens = laggedPrefixTokens,
+            shrinkProne = shrinkProne
+        )
+        // 캐시에 올릴 부분입니다. 물린 꼬리는 매 요청에 따로 실려 나갑니다.
+        val prefix = if (lag > 0) contents.dropLast(lag) else contents
+        val estimated = if (lag > 0) laggedPrefixTokens else estimateTokens(contents) + systemTokens
         fun observe(decision: CacheDecision, actualTokens: Int = 0) {
             if (measure) measurement.observeCache(
                 CacheObservation(key, estimated, decision, actualTokens)
@@ -211,7 +270,9 @@ internal suspend fun AIService.refreshPrefixCache(
             else CacheCreateReason.PREFIX_CHANGED
         if (previous != null) {
             // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
-            if (previous.coveredTurns >= contents.size &&
+            // `coveredTurns + lagEntries`가 만들 당시의 대화 길이입니다. 물린 꼬리는
+            // 처음부터 캐시 밖이었으므로 "덮을 것이 남았다"로 세면 안 됩니다.
+            if (previous.coveredTurns + previous.lagEntries >= contents.size &&
                 previous.expiresAtMillis > now + 60_000
             ) {
                 observe(CacheDecision.CACHE_CURRENT)
@@ -227,7 +288,9 @@ internal suspend fun AIService.refreshPrefixCache(
             //
             // 그래서 꼬리가 캐시의 5분의 1보다 커졌을 때만 새로 만듭니다.
             // 그 아래에서는 새로 만드는 값이 아끼는 값보다 큽니다.
-            val tail = estimateTokens(contents.drop(previous.coveredTurns))
+            // 만든 뒤에 **새로 붙은** 만큼만 셉니다. 물린 꼬리까지 꼬리로 세면
+            // 갱신 주기가 그만큼 짧아져, 물린 대가를 재생성 횟수로 또 냅니다.
+            val tail = estimateTokens(contents.drop(previous.coveredTurns + previous.lagEntries))
             val worthIt = tail >= maxOf(CACHE_REFRESH_MIN_TAIL_TOKENS, previous.tokenCount / 5)
             val expiringSoon = previous.expiresAtMillis <= now + CACHE_REFRESH_TTL_FLOOR_MILLIS
             if (!worthIt && !expiringSoon) {
@@ -244,7 +307,7 @@ internal suspend fun AIService.refreshPrefixCache(
         val payload = JSONObject()
             .put("model", "models/${model.rawValue}")
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
-            .put("contents", JSONArray().apply { contents.forEach { put(it) } })
+            .put("contents", JSONArray().apply { prefix.forEach { put(it) } })
             .put("ttl", "${CACHE_TTL_SECONDS}s")
 
         val request = Request.Builder()
@@ -280,12 +343,13 @@ internal suspend fun AIService.refreshPrefixCache(
         synchronized(prefixCaches) {
             prefixCaches[key] = PrefixCache(
                 name = name,
-                coveredTurns = contents.size,
-                fingerprint = fingerprint(contents, system),
+                coveredTurns = prefix.size,
+                fingerprint = fingerprint(prefix, system),
                 expiresAtMillis = System.currentTimeMillis() + CACHE_TTL_SECONDS * 1000L,
                 tokenCount = if (cachedTokens > 0) cachedTokens else estimated,
                 modelIdentifier = model.rawValue,
-                createdAtMillis = System.currentTimeMillis()
+                createdAtMillis = System.currentTimeMillis(),
+                lagEntries = lag
             )
         }
         persistCaches()
