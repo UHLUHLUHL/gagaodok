@@ -1,9 +1,13 @@
 package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.service.CACHE_LAG_ENTRIES
+import com.sapiens.gagaodok.service.ConversationCompactor
+import com.sapiens.gagaodok.service.REROLL_SHRINK_MAX_ENTRIES
+import com.sapiens.gagaodok.service.isRerollShrink
 import com.sapiens.gagaodok.service.MINIMUM_CACHE_TOKENS
 import com.sapiens.gagaodok.service.prefixCacheLagEntries
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /// 캐시가 덮는 범위를 마지막 한 교환만큼 뒤로 물릴지 정합니다.
@@ -78,5 +82,33 @@ class PrefixCacheLagTest {
         // 그것이 캐시 생성 직후에 걸린 경우"의 이론값이 1/5.9 = 16.9%입니다.
         // 거의 일치하므로 한 교환이면 대부분을 막습니다. 더 물리면 꼬리 값만 커집니다.
         assertEquals(2, CACHE_LAG_ENTRIES)
+    }
+
+    @Test
+    fun `답을 다시 받은 것과 요약이 원문을 접은 것을 가른다`() {
+        // 캐시가 80엔트리를 덮고 있다고 하자.
+        // 재요청: 마지막 답 하나가 잘려 79가 된다.
+        assertTrue(isRerollShrink(coveredTurns = 80, newSize = 79))
+        // 요약: 원문 창이 80턴에서 30턴으로 접히며 수십 개가 한꺼번에 준다.
+        assertTrue(!isRerollShrink(coveredTurns = 180, newSize = 80))
+    }
+
+    @Test
+    fun `요약 때문에 고쳐 쓰지 않는 방까지 표시되면 안 된다`() {
+        // **이것이 이 가름의 이유다.** 요약은 50턴에 한 번 반드시 일어나므로,
+        // 크기를 안 보고 표시하면 결국 모든 방이 표시된다. 그러면 답을 다시
+        // 받지 않는 방도 꼬리 값을 매 요청 물면서 얻는 것이 없다.
+        val 요약이_접은_양 = (ConversationCompactor.THRESHOLD_TURNS -
+            ConversationCompactor.VERBATIM_WINDOW_TURNS) * 2   // 턴당 엔트리 둘
+        assertTrue("요약은 재요청보다 훨씬 많이 줄인다", 요약이_접은_양 > REROLL_SHRINK_MAX_ENTRIES)
+        assertTrue(!isRerollShrink(coveredTurns = 200, newSize = 200 - 요약이_접은_양))
+    }
+
+    @Test
+    fun `경계값`() {
+        assertTrue(isRerollShrink(coveredTurns = 50, newSize = 50 - REROLL_SHRINK_MAX_ENTRIES))
+        assertTrue(!isRerollShrink(coveredTurns = 50, newSize = 50 - REROLL_SHRINK_MAX_ENTRIES - 1))
+        // 줄지 않았는데 불린 경우(있으면 안 되지만)도 재요청으로 치지 않는다.
+        assertTrue(isRerollShrink(coveredTurns = 50, newSize = 50))
     }
 }

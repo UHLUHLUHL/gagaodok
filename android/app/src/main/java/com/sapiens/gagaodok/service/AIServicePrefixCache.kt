@@ -84,6 +84,22 @@ internal const val CACHE_REFRESH_MIN_TAIL_TOKENS = 2000
 // 막습니다. 더 물리면 막는 양은 거의 안 늘고 꼬리 값만 커집니다.
 internal const val CACHE_LAG_ENTRIES = 2
 
+// 대화가 이만큼 이하로 줄었으면 "답을 다시 받은 것"으로 봅니다.
+//
+// **줄어드는 이유가 둘인데 대응이 정반대입니다.**
+// - 답을 다시 받으면 마지막 한두 엔트리만 잘립니다. 이건 물려서 막아야 합니다.
+// - 요약이 진행되면 원문 창이 `THRESHOLD_TURNS`(80)에서 `VERBATIM_WINDOW_TURNS`(30)로
+//   접히며 **수십 엔트리가 한꺼번에** 줍니다. 이건 막을 수도 없고 막을 필요도 없습니다.
+//
+// 크기를 안 보고 표시하면, 요약은 50턴에 한 번 반드시 일어나므로 **결국 모든 방이
+// 표시됩니다.** 그러면 답을 다시 받지 않는 방까지 꼬리 값을 매 요청 물면서 얻는
+// 것이 없습니다. 두 경우의 크기가 한 자릿수와 세 자릿수로 갈리므로 여기서 가릅니다.
+internal const val REROLL_SHRINK_MAX_ENTRIES = 4
+
+/// 이 줄어듦이 "답을 다시 받은 것"인가.
+internal fun isRerollShrink(coveredTurns: Int, newSize: Int): Boolean =
+    coveredTurns - newSize in 0..REROLL_SHRINK_MAX_ENTRIES
+
 /// 이 방에서 캐시를 몇 엔트리 뒤로 물릴지 정합니다.
 ///
 /// 물리는 것이 손해인 세 경우를 여기서 걸러 냅니다. 아무 방에나 물리면 고쳐 쓰지
@@ -151,10 +167,14 @@ internal fun AIService.usablePrefixCache(
     // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
     // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
     if (contents.size <= cache.coveredTurns) {
-        // 이 방은 고쳐 쓰는 방입니다. 다음 캐시는 마지막 교환을 밖에 두고 만들어
-        // 같은 일이 또 나도 접두사가 살아남게 합니다. 한 번 겪고 나서 켜는 이유는,
-        // 고쳐 쓰지 않는 방까지 꼬리 값을 물게 하지 않기 위해서입니다.
-        shrinkProneRooms += key
+        // 조금만 줄었으면 답을 다시 받은 것입니다. 이 방은 고쳐 쓰는 방이니 다음
+        // 캐시는 마지막 교환을 밖에 두고 만들어, 같은 일이 또 나도 접두사가
+        // 살아남게 합니다. 한 번 겪고 나서 켜는 이유는, 고쳐 쓰지 않는 방까지
+        // 꼬리 값을 물게 하지 않기 위해서입니다.
+        //
+        // 왕창 줄었으면 요약이 원문을 접은 것이라 표시하지 않습니다 — 그것까지
+        // 세면 요약이 도는 모든 방이 결국 표시됩니다.
+        if (isRerollShrink(cache.coveredTurns, contents.size)) shrinkProneRooms += key
         dropCache(key, deleteRemote = true, apiKey = apiKey, reason = CacheDropReason.SHRUNK)
         return null
     }
