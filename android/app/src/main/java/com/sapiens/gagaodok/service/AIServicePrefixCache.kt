@@ -40,7 +40,16 @@ internal data class PrefixCache(
     /// `coveredTurns + lagEntries`가 만들 당시의 대화 길이입니다. 그 뒤로 얼마나
     /// 새로 붙었는지를 재려면 이 값이 있어야 합니다 — 물린 만큼은 처음부터 꼬리에
     /// 있었으므로 "새로 붙은 것"이 아닙니다. 예전 파일에는 없으므로 0입니다.
-    val lagEntries: Int = 0
+    val lagEntries: Int = 0,
+    /// 만들 당시 요약이 몇 턴까지 덮고 있었는지입니다.
+    ///
+    /// 대화가 짧아진 이유가 "답을 다시 받아서"인지 "요약이 원문을 접어서"인지
+    /// 가르는 데 씁니다. **크기로 추측하면 안 됩니다** — `coveredTurns`는 과거
+    /// 어느 시점의 값이고 지금 요청 길이와는 기준 시점이 다릅니다. 둘을 빼서
+    /// 원인을 맞히려 하면 우연히 비슷해질 때 틀립니다.
+    ///
+    /// 옛 파일에는 없으므로 -1(모름)입니다.
+    val digestCoveredTurns: Int = -1
 )
 
 // 15분에서 30분으로 올립니다.
@@ -84,21 +93,39 @@ internal const val CACHE_REFRESH_MIN_TAIL_TOKENS = 2000
 // 막습니다. 더 물리면 막는 양은 거의 안 늘고 꼬리 값만 커집니다.
 internal const val CACHE_LAG_ENTRIES = 2
 
-// 대화가 이만큼 이하로 줄었으면 "답을 다시 받은 것"으로 봅니다.
-//
-// **줄어드는 이유가 둘인데 대응이 정반대입니다.**
-// - 답을 다시 받으면 마지막 한두 엔트리만 잘립니다. 이건 물려서 막아야 합니다.
-// - 요약이 진행되면 원문 창이 `THRESHOLD_TURNS`(80)에서 `VERBATIM_WINDOW_TURNS`(30)로
-//   접히며 **수십 엔트리가 한꺼번에** 줍니다. 이건 막을 수도 없고 막을 필요도 없습니다.
-//
-// 크기를 안 보고 표시하면, 요약은 50턴에 한 번 반드시 일어나므로 **결국 모든 방이
-// 표시됩니다.** 그러면 답을 다시 받지 않는 방까지 꼬리 값을 매 요청 물면서 얻는
-// 것이 없습니다. 두 경우의 크기가 한 자릿수와 세 자릿수로 갈리므로 여기서 가릅니다.
+// 옛 캐시를 만났을 때만 쓰는 크기 기준입니다. 아래 주 판단이 실패할 때의 보조입니다.
 internal const val REROLL_SHRINK_MAX_ENTRIES = 4
 
 /// 이 줄어듦이 "답을 다시 받은 것"인가.
-internal fun isRerollShrink(coveredTurns: Int, newSize: Int): Boolean =
-    coveredTurns - newSize in 0..REROLL_SHRINK_MAX_ENTRIES
+///
+/// **줄어드는 이유가 둘인데 대응이 정반대입니다.**
+/// - 답을 다시 받으면 마지막 한두 엔트리만 잘립니다. 물려서 막아야 합니다.
+/// - 요약이 진행되면 원문 창이 `THRESHOLD_TURNS`(80)에서 `VERBATIM_WINDOW_TURNS`(30)로
+///   접히며 수십 엔트리가 한꺼번에 줍니다. 막을 수도, 막을 필요도 없습니다.
+///
+/// **크기 차이로 맞히려 하면 안 됩니다.** 처음에 그렇게 썼다가 코덱스 검토에서
+/// 걸렸습니다. `coveredTurns`는 과거 어느 시점에 만들어진 캐시의 접두사 길이이고
+/// `newSize`는 지금 요청의 길이입니다. **기준 시점이 다른 두 수를 빼고 있어서**,
+/// 오래된 캐시 길이와 요약 뒤 길이가 우연히 비슷하면 정상 요약을 재요청으로
+/// 오인합니다. 그래서 요약이 진행됐는지를 **부르는 쪽이 알려 줍니다** — 추측할
+/// 필요가 없는 사실입니다.
+///
+/// 크기 기준은 옛 파일에서 온 캐시(`digestCoveredTurns == -1`)에만 씁니다.
+internal fun isRerollShrink(
+    cacheDigestCoveredTurns: Int,
+    requestDigestCoveredTurns: Int,
+    coveredTurns: Int,
+    newSize: Int
+): Boolean {
+    // 줄지 않았으면 답을 다시 받은 것이 아닙니다. 재요청은 최소한 답 하나를 지웁니다.
+    if (coveredTurns - newSize < 1) return false
+    // 요약이 더 덮게 됐으면 원문이 접힌 것입니다. 크기는 볼 것도 없습니다.
+    if (cacheDigestCoveredTurns >= 0) {
+        return requestDigestCoveredTurns == cacheDigestCoveredTurns
+    }
+    // 옛 캐시라 요약 진행 여부를 모릅니다. 크기로만 가릅니다.
+    return coveredTurns - newSize <= REROLL_SHRINK_MAX_ENTRIES
+}
 
 /// 이 방에서 캐시를 몇 엔트리 뒤로 물릴지 정합니다.
 ///
@@ -144,7 +171,9 @@ internal fun AIService.usablePrefixCache(
     model: AIModel,
     contents: List<JSONObject>,
     system: String,
-    apiKey: String
+    apiKey: String,
+    /// 이번 요청에서 요약이 몇 턴까지 덮고 있는지입니다(`ConversationCompactor.Plan.coveredTurns`).
+    digestCoveredTurns: Int
 ): PrefixCache? {
     val key = cacheKey(roomId, model)
     val cache = synchronized(prefixCaches) { prefixCaches[key] } ?: return null
@@ -172,9 +201,15 @@ internal fun AIService.usablePrefixCache(
         // 살아남게 합니다. 한 번 겪고 나서 켜는 이유는, 고쳐 쓰지 않는 방까지
         // 꼬리 값을 물게 하지 않기 위해서입니다.
         //
-        // 왕창 줄었으면 요약이 원문을 접은 것이라 표시하지 않습니다 — 그것까지
-        // 세면 요약이 도는 모든 방이 결국 표시됩니다.
-        if (isRerollShrink(cache.coveredTurns, contents.size)) shrinkProneRooms += key
+        // 요약이 접은 것이면 표시하지 않습니다 — 그것까지 세면 요약이 도는 모든
+        // 방이 결국 표시되고, 고쳐 쓰지 않는 방도 꼬리 값을 물게 됩니다.
+        if (isRerollShrink(
+                cacheDigestCoveredTurns = cache.digestCoveredTurns,
+                requestDigestCoveredTurns = digestCoveredTurns,
+                coveredTurns = cache.coveredTurns,
+                newSize = contents.size
+            )
+        ) shrinkProneRooms += key
         dropCache(key, deleteRemote = true, apiKey = apiKey, reason = CacheDropReason.SHRUNK)
         return null
     }
@@ -222,6 +257,9 @@ internal suspend fun AIService.refreshPrefixCache(
     system: String,
     apiKey: String,
     previousRequestAt: Long?,
+    /// 이번 요청의 요약 적용 범위입니다. 캐시에 적어 두었다가, 다음에 대화가
+    /// 짧아졌을 때 그 원인이 요약인지 재요청인지 가르는 데 씁니다.
+    digestCoveredTurns: Int,
     measure: Boolean = false
 ) {
     val key = cacheKey(roomId, model)
@@ -369,7 +407,8 @@ internal suspend fun AIService.refreshPrefixCache(
                 tokenCount = if (cachedTokens > 0) cachedTokens else estimated,
                 modelIdentifier = model.rawValue,
                 createdAtMillis = System.currentTimeMillis(),
-                lagEntries = lag
+                lagEntries = lag,
+                digestCoveredTurns = digestCoveredTurns
             )
         }
         persistCaches()

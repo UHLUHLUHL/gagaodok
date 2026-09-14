@@ -93,7 +93,10 @@ internal suspend fun AIService.sendGeminiRequest(
     )
 
     // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
-    val cache = usablePrefixCache(roomId, model, contents, system, apiKey)
+    val cache = usablePrefixCache(
+        roomId, model, contents, system, apiKey,
+        digestCoveredTurns = plan.coveredTurns
+    )
     // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
     val previousRequestAt = markRequest(roomId, model)
 
@@ -220,6 +223,7 @@ internal suspend fun AIService.sendGeminiRequest(
     scope.launch {
         refreshPrefixCache(
             roomId, model, contents, system, apiKey, previousRequestAt,
+            digestCoveredTurns = plan.coveredTurns,
             measure = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
         )
     }
