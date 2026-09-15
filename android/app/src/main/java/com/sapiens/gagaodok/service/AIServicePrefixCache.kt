@@ -119,8 +119,24 @@ internal fun isRerollShrink(
     coveredTurns: Int,
     newSize: Int
 ): Boolean {
-    // 줄지 않았으면 답을 다시 받은 것이 아닙니다. 재요청은 최소한 답 하나를 지웁니다.
-    if (coveredTurns - newSize < 1) return false
+    // **길이가 그대로인 것이 오히려 재요청의 표시입니다.**
+    //
+    // 처음에는 "재요청은 최소한 답 하나를 지우므로 1 이상 줄어든다"고 적고 `< 1`에서
+    // 걸렀습니다. 틀렸습니다. 캐시는 답변이 저장되기 **전**, 방금 보낸 요청의
+    // `contents`로 만들어집니다(`AIServiceConversation.kt`의 `refreshPrefixCache`
+    // 호출부). 그래서 `coveredTurns`는 "사용자 메시지까지"의 길이입니다.
+    //
+    //   캐시 생성 63 → 답변 저장 64 → 답을 다시 받음 63
+    //
+    // 재요청은 길이를 **줄이는 것이 아니라 되돌립니다.** 차이는 0입니다. `< 1`은
+    // 실사용의 네 가지 재요청(일반 재생성·같은 문구·일부 수정·전면 수정)을 전부
+    // 놓쳤습니다. AI 응답이 말풍선 여럿으로 나뉘어도 `ConversationTurn.from`이 한
+    // 턴으로 묶으므로 언제나 정확히 하나만 지워집니다.
+    //
+    // 부르는 쪽이 `contents.size <= coveredTurns`일 때만 들어오므로 음수는 나오지
+    // 않지만, 조건이 바뀌어도 여기서 무너지지 않게 남겨 둡니다.
+    // 회귀 검사는 `RerollShrinkFlowTest`가 실제 경로로 잡습니다.
+    if (coveredTurns - newSize < 0) return false
     // 요약이 더 덮게 됐으면 원문이 접힌 것입니다. 크기는 볼 것도 없습니다.
     if (cacheDigestCoveredTurns >= 0) {
         return requestDigestCoveredTurns == cacheDigestCoveredTurns

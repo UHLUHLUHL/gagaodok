@@ -121,10 +121,16 @@ class PrefixCacheLagTest {
     }
 
     @Test
-    fun `줄지 않았으면 답을 다시 받은 것이 아니다`() {
-        // 재요청은 최소한 답 하나를 지운다. 차이 0은 재요청일 수 없다.
+    fun `길이가 그대로인 것이 오히려 답을 다시 받은 표시다`() {
+        // **이 검사는 뒤집혔다.** 예전에는 "차이 0은 재요청일 수 없다"고 단정했다.
+        // 캐시가 답변 저장 **전**의 요청으로 만들어진다는 것을 놓친 가정이었다.
+        //
+        //   캐시 생성 63 → 답변 저장 64 → 답을 다시 받음 63
+        //
+        // 재요청은 길이를 줄이는 것이 아니라 되돌린다. 실제 경로로 확인한 회귀
+        // 검사는 `RerollShrinkFlowTest`에 있다.
         assertTrue(
-            !isRerollShrink(
+            isRerollShrink(
                 cacheDigestCoveredTurns = 50,
                 requestDigestCoveredTurns = 50,
                 coveredTurns = 63,
@@ -192,13 +198,42 @@ class PrefixCacheLagTest {
 
     @Test
     fun `같은 흐름에서 답을 다시 받으면 표시된다`() {
-        // 요약은 그대로인데 마지막 답 하나가 잘린 경우다.
+        // **실제 흐름의 값은 63 → 63이다.** 예전에는 여기에 62를 손으로 넣었는데,
+        // 그 숫자가 어디서 오는지는 아무 검사도 하지 않았다. 실제 경로를 이어 보면
+        // (`MessageResendLogic.truncateFrom` → `ConversationTurn.from`) 길이는
+        // 줄지 않고 제자리로 돌아온다. `RerollShrinkFlowTest`가 그 경로를 잡는다.
         assertTrue(
             isRerollShrink(
                 cacheDigestCoveredTurns = 50,
                 requestDigestCoveredTurns = 50,
                 coveredTurns = 63,
-                newSize = 62
+                newSize = 63
+            )
+        )
+    }
+
+    @Test
+    fun `길이가 그대로여도 요약이 돌았으면 답을 다시 받은 것이 아니다`() {
+        // 차이 0을 재요청으로 보게 된 뒤에도, 요약 쪽 판단이 먼저다.
+        assertTrue(
+            !isRerollShrink(
+                cacheDigestCoveredTurns = 50,
+                requestDigestCoveredTurns = 100,
+                coveredTurns = 63,
+                newSize = 63
+            )
+        )
+    }
+
+    @Test
+    fun `과거 메시지를 고쳐 길이가 실제로 줄어든 경우도 표시된다`() {
+        // 직전 메시지가 아니라 몇 턴 전을 고치면 그 뒤가 통째로 잘려 실제로 줄어든다.
+        assertTrue(
+            isRerollShrink(
+                cacheDigestCoveredTurns = 50,
+                requestDigestCoveredTurns = 50,
+                coveredTurns = 63,
+                newSize = 59
             )
         )
     }
