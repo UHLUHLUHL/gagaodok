@@ -124,12 +124,20 @@ class AIService private constructor(internal val appContext: Context) {
     }
     internal val refreshingRooms = mutableSetOf<String>()
 
+    internal val shrinkProneFile: File by lazy {
+        File(File(appContext.filesDir, "KakaoSapiens").apply { mkdirs() }, "shrink_prone_rooms.json")
+    }
+
     /// 대화가 잘려 나가 캐시를 버린 적이 있는 방들입니다. 그런 방에서만 캐시를
     /// 마지막 한 교환만큼 뒤로 물립니다(`prefixCacheLagEntries`).
     ///
-    /// 메모리에만 둡니다. 앱을 다시 켜면 비어서, 방마다 한 번은 예전처럼 캐시가
-    /// 깨지고 그다음부터 물립니다. 파일로 남길 만큼 비싼 정보가 아닙니다.
-    internal val shrinkProneRooms = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /// **디스크에 남깁니다.** 메모리에만 뒀더니 실사용에서 사실상 꺼져 있었습니다.
+    /// 표시는 `SHRUNK`을 한 번 겪어야 켜지는데 프로세스는 하루에도 몇 번씩 새로
+    /// 뜨기 때문입니다. 방마다 한 번만 내면 되는 값을 앱을 켤 때마다 다시 냈습니다.
+    internal val shrinkProneRooms: MutableSet<String> by lazy {
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+            .apply { addAll(readShrinkProneRooms(shrinkProneFile)) }
+    }
     /// 방마다 **직전** 요청 시각입니다. 대화가 이어지는 중인지 보는 데 씁니다.
     ///
     /// 메모리에만 둡니다. 앱을 껐다 켜면 비어 있어서 그 방의 캐시가 한 메시지 늦게

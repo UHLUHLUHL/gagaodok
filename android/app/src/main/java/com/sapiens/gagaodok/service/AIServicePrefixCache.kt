@@ -8,11 +8,13 @@ import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.Codec
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -161,6 +163,20 @@ internal fun normalizePrefixCacheMap(caches: Map<String, PrefixCache>): MutableM
         key to cache
     }.toMutableMap()
 
+/// "이 방은 답을 다시 받는 방"이라는 표시를 읽습니다.
+///
+/// 못 읽으면 빈 것으로 칩니다. 캐시를 아끼려는 표시일 뿐이라, 없으면 예전처럼
+/// 동작하면 됩니다. 여기서 예외가 나가면 그 방은 대화 자체가 막힙니다.
+internal fun readShrinkProneRooms(file: File): MutableSet<String> = runCatching {
+    Codec.json.decodeFromString<Set<String>>(file.readText()).toMutableSet()
+}.getOrElse { mutableSetOf() }
+
+/// 표시를 적어 둡니다. 실패해도 조용히 넘어갑니다 — 다음 실행에서 한 번 더
+/// 겪을 뿐이고, 그것 때문에 대화를 막을 이유는 없습니다.
+internal fun writeShrinkProneRooms(file: File, keys: Set<String>) {
+    runCatching { file.writeText(Codec.json.encodeToString(keys)) }
+}
+
 internal fun AIService.persistCaches() {
     val snapshot = synchronized(prefixCaches) { prefixCaches.toMap() }
     scope.launch { runCatching { cacheFile.writeText(Codec.json.encodeToString(snapshot)) } }
@@ -209,7 +225,7 @@ internal fun AIService.usablePrefixCache(
                 coveredTurns = cache.coveredTurns,
                 newSize = contents.size
             )
-        ) shrinkProneRooms += key
+        ) markShrinkProne(key)
         dropCache(key, deleteRemote = true, apiKey = apiKey, reason = CacheDropReason.SHRUNK)
         return null
     }
@@ -218,6 +234,21 @@ internal fun AIService.usablePrefixCache(
         return null
     }
     return cache
+}
+
+/// 이 방을 "답을 다시 받는 방"으로 적어 둡니다.
+///
+/// **디스크에 남깁니다.** 예전에는 메모리에만 뒀는데, 표시는 `SHRUNK`을 한 번
+/// 겪어야 켜지는 반면 프로세스는 하루에도 몇 번씩 새로 뜹니다. 실기기 계측에서
+/// 저녁부터 아침 사이에 대화 묶음 5번·프로세스 재시작 최소 2번이 있었고, 그 구간
+/// 캐시는 끝까지 `lagEntries = 0`이었습니다 — 물림이 한 번도 안 켜졌습니다.
+/// 방마다 한 번만 내면 되는 값을 앱을 켤 때마다 다시 내고 있었습니다.
+internal fun AIService.markShrinkProne(key: String) {
+    if (!shrinkProneRooms.add(key)) return          // 이미 적혀 있으면 파일을 건드리지 않습니다.
+    // **쓰는 시점에 다시 모읍니다.** 미리 찍어 두면, 두 방이 거의 같이 표시됐을 때
+    // 늦게 도착한 쓰기가 옛 목록으로 덮어써서 한쪽이 사라집니다. 그러면 그 방은
+    // 다음 실행에서 값을 한 번 더 냅니다.
+    scope.launch { writeShrinkProneRooms(shrinkProneFile, shrinkProneRooms.toSet()) }
 }
 
 /// 로컬 기록에서 지우고, 서버에 남아 있을 것이면 그것도 지웁니다.
