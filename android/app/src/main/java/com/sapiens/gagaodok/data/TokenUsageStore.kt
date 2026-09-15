@@ -57,7 +57,19 @@ data class ModelTokenUsage(
         return regular / 1_000_000.0 * model.inputPricePerMillion +
             cached / 1_000_000.0 * model.cachedInputPricePerMillion +
             writes / 1_000_000.0 * model.inputPricePerMillion * model.cacheWriteMultiplier +
-            cacheCreateTokens / 1_000_000.0 * model.inputPricePerMillion +
+            // **`cacheCreateTokens`는 넣지 않습니다.** 실제 청구서로 확인했습니다.
+            //
+            // 예전에는 "확실하지 않을 때는 비싼 쪽으로" 원칙으로 입력 단가를 매겼고,
+            // 그래서 화면 숫자가 실제보다 컸습니다. 2026-09-02~09-15 폰 프로젝트
+            // 청구서(필터 없음, SKU 12종)에는 청구되는 종류가 넷뿐입니다 —
+            // input / cached input / output / cached content storage. **생성 항목이 없습니다.**
+            //
+            // 금액이 아니라 **개수**로 판정했으므로 필터의 영향을 받지 않습니다.
+            // 청구된 입력 6,242,745 ≈ 장부의 비캐시 입력 6,314,689 (99%)이고,
+            // 생성이 입력에 섞였다면 14,261,416이어야 했습니다.
+            //
+            // 값 자체는 계속 셉니다. 캐시를 얼마나 다시 만드는지는 진단에 필요하고,
+            // 정책이 바뀌면 다시 쓸 수 있습니다.
             outputTokens / 1_000_000.0 * model.outputPricePerMillion +
             cacheStorageCostUSD(model)
     }

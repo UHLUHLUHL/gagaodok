@@ -41,7 +41,7 @@ class AppSettings private constructor(context: Context) {
     }
 
     private val _exchangeRate = MutableStateFlow(
-        prefs.getFloat(KEY_EXCHANGE_RATE, 1420f).toDouble()
+        prefs.getFloat(KEY_EXCHANGE_RATE, DEFAULT_EXCHANGE_RATE.toFloat()).toDouble()
     )
     val exchangeRate: StateFlow<Double> = _exchangeRate
 
@@ -55,6 +55,16 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_APPEARANCE = "appearanceMode"
         private const val KEY_MODEL = "selectedAIModel"
         private const val KEY_EXCHANGE_RATE = "usageExchangeRate"
+
+        /// 실제 청구서에서 역산한 값입니다. 예전 1,420은 근거 없이 정한 값이었습니다.
+        ///
+        /// 2026-09-02~09-15 폰 청구서 세 항목이 모두 같은 값을 가리킵니다.
+        ///   입력    6,085,703 × $0.75/M  = $4.5643 → ₩6,314 → 1,383
+        ///   캐시읽기 34,537,934 × $0.075/M = $2.5903 → ₩3,583 → 1,383
+        ///   출력      339,611 × $3.75/M  = $1.2735 → ₩1,762 → 1,384
+        ///
+        /// 구글이 환율을 다시 정하면 어긋납니다. 화면에서 사용자가 고칠 수 있습니다.
+        const val DEFAULT_EXCHANGE_RATE = 1383.0
 
         @Volatile
         private var instance: AppSettings? = null

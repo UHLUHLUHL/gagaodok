@@ -136,7 +136,11 @@ fun SettingsScreen() {
                 if (cacheCreated > 0) {
                     // 캐시를 새로 올리는 데 쓴 몫입니다. 위 '입력'에는 안 들어갑니다 —
                     // 별개의 요청이라 어떤 promptTokenCount에도 안 잡히기 때문입니다.
-                    InfoRow("캐시에 올린 토큰", "${formatCount(cacheCreated)} tokens")
+                    //
+                    // **요금은 안 붙습니다.** 실제 청구서(2026-09, 필터 없음)에 생성 SKU가
+                    // 없었습니다. 숫자만 보면 돈이 드는 줄 오해하므로 이름에 적어 둡니다.
+                    // 그래도 보여 주는 이유는 캐시를 얼마나 다시 만드는지가 진단이기 때문입니다.
+                    InfoRow("캐시에 올린 토큰 (청구 안 됨)", "${formatCount(cacheCreated)} tokens")
                 }
                 if (savingsUSD > 0) {
                     InfoRow(

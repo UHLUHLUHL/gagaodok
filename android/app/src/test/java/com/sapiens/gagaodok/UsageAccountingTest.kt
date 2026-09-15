@@ -1,5 +1,6 @@
 package com.sapiens.gagaodok
 
+import com.sapiens.gagaodok.data.AppSettings
 import com.sapiens.gagaodok.data.ModelTokenUsage
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatMode
@@ -30,22 +31,40 @@ class UsageAccountingTest {
     }
 
     @Test
-    fun `캐시에 올린 토큰도 요금에 들어간다`() {
-        // 캐시를 만드는 요청은 별개의 요청이라 어떤 promptTokenCount에도 안 잡힙니다.
-        // 예전에는 이 값을 아예 안 세서 캐시를 매 턴 새로 만드는 비용이 통째로 빠졌습니다.
+    fun `캐시에 올린 토큰은 요금에 안 들어간다`() {
+        // **실제 청구서로 확인했습니다.** 예전에는 "확실하지 않으니 비싼 쪽으로"
+        // 원칙으로 입력 단가를 매겼는데, 그게 화면 숫자를 실제보다 크게 만들었습니다.
+        //
+        // 2026-09-02~09-15 폰 프로젝트 청구서(필터 없음, SKU 12종):
+        //   청구되는 종류는 input / cached input / output / cached content storage 넷뿐이고
+        //   **캐시 생성 SKU가 없습니다.**
+        //   입력 토큰 청구량 6,242,745 ≈ 장부의 비캐시 입력 6,314,689 (99%)
+        //   생성이 입력에 섞였다면 14,261,416이어야 했습니다. 2.3배 차이라 필터로는
+        //   설명되지 않습니다.
+        //
+        // 값 자체는 계속 셉니다. 캐시를 얼마나 다시 만드는지는 진단에 필요합니다.
         val without = ModelTokenUsage(inputTokens = 10_000, outputTokens = 1_000)
         val with = without.copy(cacheCreateTokens = 50_000)
 
-        val delta = with.costUSD(model) - without.costUSD(model)
-        assertEquals(50_000 / 1_000_000.0 * model.inputPricePerMillion, delta, 1e-12)
+        assertEquals(without.costUSD(model), with.costUSD(model), 1e-12)
     }
 
     @Test
-    fun `캐시에 올린 토큰은 입력에서 덜어 내지 않는다`() {
-        // OpenAI식 cacheWriteTokens는 inputTokens의 부분집합이라 덜어 내지만,
-        // Gemini식 캐시 생성은 별도 청구라 덜어 내면 안 됩니다.
+    fun `캐시에 올린 토큰은 입력에서 덜어 내지도 않는다`() {
+        // 요금에 안 넣는 것과 입력에서 빼는 것은 다릅니다. `inputTokens`는 모델이
+        // 알려준 promptTokenCount이고 생성 토큰과 겹치지 않으므로 손대면 안 됩니다.
         val usage = ModelTokenUsage(inputTokens = 1_000, cacheCreateTokens = 100_000)
-        assertTrue(usage.costUSD(model) > 100_000 / 1_000_000.0 * model.inputPricePerMillion)
+
+        assertEquals(1_000 / 1_000_000.0 * model.inputPricePerMillion, usage.costUSD(model), 1e-12)
+    }
+
+    @Test
+    fun `캐시 보관료는 요금에 들어간다`() {
+        // 생성과 달리 보관은 청구서에 항목이 있습니다.
+        // `cached content storage token hours gemini 3.8 flash` 1,539,742시간 → ₩1,065.
+        val usage = ModelTokenUsage(cacheStorageTokenHours = 1_000_000.0)
+
+        assertEquals(model.cacheStoragePricePerMillionPerHour, usage.costUSD(model), 1e-12)
     }
 
     @Test
@@ -112,5 +131,15 @@ class LookupProgressTest {
     @Test
     fun `절만 열리고 아직 줄이 없으면 숫자를 붙이지 않는다`() {
         assertEquals("대사를 모으고 있습니다…", AIService.lookupProgressLabel("[확신도] 보통\n[대사]\n"))
+    }
+
+    @Test
+    fun `환율 기본값은 청구서에서 역산한 값이다`() {
+        // 2026-09-02~09-15 폰 청구서 세 항목에서 모두 같은 값이 나왔습니다.
+        //   입력    6,085,703 × $0.75/M = $4.5643 → ₩6,314  → 1,383
+        //   캐시읽기 34,537,934 × $0.075/M = $2.5903 → ₩3,583 → 1,383
+        //   출력      339,611 × $3.75/M = $1.2735 → ₩1,762  → 1,384
+        // 예전 기본값 1,420은 근거 없이 정한 값이었습니다.
+        assertEquals(1383.0, AppSettings.DEFAULT_EXCHANGE_RATE, 0.0)
     }
 }
