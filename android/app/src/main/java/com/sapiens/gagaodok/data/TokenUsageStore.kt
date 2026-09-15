@@ -159,12 +159,17 @@ class TokenUsageStore private constructor(context: Context) {
         )
     }
 
-    /// 캐시 하나가 실제로 살아 있던 시간만큼 보관량을 적습니다.
+    /// 캐시 하나가 실제로 살아 있던 만큼 보관량을 적습니다. 단위는 **토큰·시간**입니다.
     ///
-    /// 마지막까지 살아남은 캐시는 앱이 끝날 때 정산되지 않으므로 **보관료가 조금
-    /// 과소평가됩니다.** 이전의 과대평가보다 낫지만 정확하지는 않습니다.
-    fun recordCacheLeaseEnd(roomId: UUID, model: AIModel, tokens: Int, tokenHours: Double) {
-        if (tokens <= 0 || tokenHours <= 0) return
+    /// **값을 하나만 받습니다.** 예전에는 `(tokens, tokenHours)` 둘을 받고 `tokens`를
+    /// 쓰지 않은 채 두 번째 값을 그대로 저장했습니다. 그런데 부르는 쪽은 토큰 수를
+    /// 곱하지 않은 **시간**을 넘겼습니다(`faa7429`에서 `× tokenCount`가 빠졌습니다).
+    /// 이름은 `tokenHours`인데 들어오는 것은 `hours`였고, 그래서 보관량이 캐시 크기
+    /// 배수(약 27,000배)만큼 작게 적혔습니다. 인자를 하나로 줄여 같은 실수를 막습니다.
+    ///
+    /// 계산은 `cacheLeaseTokenHours`가 한 곳에서 합니다.
+    fun recordCacheLeaseEnd(roomId: UUID, model: AIModel, tokenHours: Double) {
+        if (tokenHours <= 0) return
         add(roomId, model, ModelTokenUsage(cacheStorageTokenHours = max(0.0, tokenHours)))
     }
 

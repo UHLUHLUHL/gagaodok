@@ -251,6 +251,17 @@ internal fun AIService.markShrinkProne(key: String) {
     scope.launch { writeShrinkProneRooms(shrinkProneFile, shrinkProneRooms.toSet()) }
 }
 
+/// 이 캐시가 산 시간을 보관량(토큰·시간)으로 환산합니다.
+///
+/// **모르면 0을 돌려줍니다.** 만든 시각이 없는 옛 캐시나 크기를 못 받은 캐시는
+/// 지어내지 않고 빠뜨립니다. 시계가 뒤로 조정돼 음수가 나오는 경우도 0입니다 —
+/// 그대로 더하면 장부가 거꾸로 줄어듭니다.
+internal fun cacheLeaseTokenHours(cache: PrefixCache?, now: Long): Double {
+    if (cache == null || cache.tokenCount <= 0 || cache.createdAtMillis <= 0L) return 0.0
+    val hours = (now - cache.createdAtMillis).coerceAtLeast(0L) / 3_600_000.0
+    return cache.tokenCount * hours
+}
+
 /// 로컬 기록에서 지우고, 서버에 남아 있을 것이면 그것도 지웁니다.
 ///
 /// 서버 쪽을 안 지우면 아무도 안 쓰는 캐시가 TTL이 다할 때까지 보관료를 먹습니다.
@@ -267,6 +278,18 @@ internal fun AIService.dropCache(
     // 늘려서 줄이려던 사건이 `FIRST`에 섞였습니다.
     val removed = synchronized(prefixCaches) { prefixCaches.remove(key) }
     if (removed != null) cacheDropReasons[key] = reason
+    // **버리는 캐시도 보관료를 냈습니다.**
+    //
+    // 예전에는 `refreshPrefixCache`가 이전 캐시를 교체할 때만 적었습니다. 그런데
+    // 실측 run-9에서 캐시 생성 74회 중 교체는 11회(15%)뿐이고, 나머지 63회는
+    // 여기로 버려졌습니다. 그 63개가 산 시간이 어디에도 안 적혔습니다.
+    // 실제 청구서와 대조하니 장부가 보관량의 65%밖에 세지 않았습니다.
+    val leased = cacheLeaseTokenHours(removed, System.currentTimeMillis())
+    if (leased > 0) {
+        val roomId = runCatching { UUID.fromString(key.substringBefore('|')) }.getOrNull()
+        val model = AIModel.fromStoredValue(key.substringAfter('|'))
+        if (roomId != null && model != null) usage.recordCacheLeaseEnd(roomId, model, leased)
+    }
     persistCaches()
     if (deleteRemote && removed != null) {
         scope.launch { deleteCache(removed.name, apiKey) }
@@ -457,11 +480,8 @@ internal suspend fun AIService.refreshPrefixCache(
         // 지울 때 **실제로 산 시간만큼만** 보관량을 적습니다. 예전에는 만들 때
         // TTL 전량을 더해서, 교체로 일찍 끝난 캐시의 보관 시간을 과대평가했습니다.
         previous?.let {
-            if (it.createdAtMillis > 0L) {
-                val livedHours = (System.currentTimeMillis() - it.createdAtMillis)
-                    .coerceAtLeast(0L) / 3_600_000.0
-                usage.recordCacheLeaseEnd(roomId, model, it.tokenCount, livedHours)
-            }
+            val hours = cacheLeaseTokenHours(it, System.currentTimeMillis())
+            if (hours > 0) usage.recordCacheLeaseEnd(roomId, model, hours)
             deleteCache(it.name, apiKey)
         }
     } finally {
