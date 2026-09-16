@@ -51,6 +51,80 @@ enum GeminiCachePolicy {
         return Double(tokenCount) * hours
     }
 
+    // MARK: - 재생성 보호
+
+    /// 캐시가 덮는 범위를 대화 끝에서 이만큼 뒤로 물립니다. 사용자 한 마디와 답 한 번입니다.
+    ///
+    /// **캐시가 대화 전체를 덮으면 답을 다시 받을 때마다 캐시가 깨집니다.** 메시지를
+    /// 고쳐 보내면 그 뒤가 잘려 대화가 캐시보다 짧아지고, 캐시를 통째로 버립니다
+    /// (`SHRUNK`). 그 요청은 전체를 정가로 냅니다. 마지막 교환을 캐시 밖에 두면 그
+    /// 교환을 몇 번 다시 받아도 앞부분은 그대로입니다.
+    ///
+    /// 대신 그 두 칸은 매 요청 정가로 나가므로 공짜가 아닙니다. 그래서 한 번이라도
+    /// 캐시가 재요청으로 깨진 방에서만 켭니다. 폰(`CACHE_LAG_ENTRIES`)에서 켠 뒤
+    /// 44요청 동안 재요청 탓 `SHRUNK`이 0건이었습니다.
+    static let cacheLagEntries = 2
+
+    /// 요약 진행 여부를 모르는 옛 캐시에만 쓰는 크기 기준입니다.
+    static let rerollShrinkMaxEntries = 4
+
+    /// 이 줄어듦이 "답을 다시 받은 것"인가.
+    ///
+    /// **길이가 그대로인 것이 오히려 재요청의 표시입니다.** 캐시는 답변이 저장되기
+    /// **전**의 요청으로 만들어지므로 `coveredTurns`는 "사용자 메시지까지"의 길이입니다.
+    ///
+    ///     캐시 생성 63 → 답변 저장 64 → 답을 다시 받음 63
+    ///
+    /// 재요청은 길이를 줄이는 게 아니라 되돌립니다. 폰에서 처음에 "1 이상 줄어야
+    /// 재요청"이라고 적었다가 실사용의 재요청을 전부 놓쳤습니다(`a1a9c6e`).
+    ///
+    /// 요약이 전진했으면 원문이 접힌 것이라 재요청이 아닙니다. 크기로 추측하지 않고
+    /// 부르는 쪽이 요약 범위를 알려 줍니다 — 기준 시점이 다른 두 수를 빼면 우연히
+    /// 비슷해질 때 틀립니다(폰 `7a0f9bb`).
+    static func isRerollShrink(
+        cacheDigestCoveredTurns: Int,
+        requestDigestCoveredTurns: Int,
+        coveredTurns: Int,
+        newSize: Int
+    ) -> Bool {
+        if coveredTurns - newSize < 0 { return false }
+        if cacheDigestCoveredTurns >= 0 {
+            return requestDigestCoveredTurns == cacheDigestCoveredTurns
+        }
+        return coveredTurns - newSize <= rerollShrinkMaxEntries
+    }
+
+    /// 이 방에서 캐시를 몇 칸 물릴지 정합니다. 물리면 손해인 세 경우를 거릅니다.
+    static func lagEntries(entryCount: Int, laggedPrefixTokens: Int, shrinkProne: Bool) -> Int {
+        // 재요청으로 깨진 적이 없는 방입니다. 물리면 꼬리 값만 더 냅니다.
+        guard shrinkProne else { return 0 }
+        // 물리고 나면 접두사가 남지 않습니다.
+        guard entryCount > cacheLagEntries else { return 0 }
+        // 물리다가 최소치 아래로 내려가면 캐시가 **아예 안 만들어집니다.**
+        guard laggedPrefixTokens >= minimumCacheTokens else { return 0 }
+        return cacheLagEntries
+    }
+
+    /// 재요청으로 캐시가 깨진 적이 있는 방·모델 목록을 읽습니다. 못 읽으면 빈 목록입니다 —
+    /// 캐시를 아끼려는 표시일 뿐이라, 없으면 예전처럼 동작하면 됩니다.
+    static func readShrinkProneRooms(from url: URL) -> Set<String> {
+        guard let data = try? Data(contentsOf: url),
+              let keys = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(keys)
+    }
+
+    /// 목록을 적습니다. **디스크에 남깁니다** — 폰에서 메모리에만 두었더니 앱을 켤 때마다
+    /// 사라져서, 물림이 실사용에서 한 번도 켜지지 않았습니다(`79f0b8c`).
+    @discardableResult
+    static func writeShrinkProneRooms(_ keys: Set<String>, to url: URL) -> Bool {
+        guard let data = try? JSONEncoder().encode(keys.sorted()) else { return false }
+        return (try? data.write(to: url, options: .atomic)) != nil
+    }
+
+    static func shrinkProneKey(roomId: UUID, model: AIModel) -> String {
+        "\(roomId.uuidString.lowercased())|\(model.rawValue)"
+    }
+
     // MARK: - 구간 요약
 
     /// 구간 요약의 사고 수준입니다.
@@ -110,9 +184,15 @@ struct GeminiPrefixCache: Codable {
     /// 만든 시각입니다. 실제로 산 시간만큼 보관량을 적는 데 씁니다.
     /// 옛 파일에는 없으므로 비어 있으면 정산을 건너뜁니다.
     var createdAt: Date?
+    /// 만들 때 대화 끝에서 몇 칸을 일부러 캐시 밖에 뒀는지입니다.
+    /// `coveredTurns + lagEntries`가 만들 당시의 대화 길이입니다. 옛 파일에는 없으므로 0입니다.
+    var lagEntries: Int = 0
+    /// 만들 당시 요약이 몇 턴까지 덮고 있었는지입니다. 모르면 -1입니다.
+    var digestCoveredTurns: Int = -1
 
     enum CodingKeys: String, CodingKey {
         case name, coveredTurns, fingerprint, expiresAt, tokenCount, modelIdentifier, createdAt
+        case lagEntries, digestCoveredTurns
     }
 
     init(
@@ -122,7 +202,9 @@ struct GeminiPrefixCache: Codable {
         expiresAt: Date,
         tokenCount: Int = 0,
         modelIdentifier: String = AIModel.gemini37Flash.rawValue,
-        createdAt: Date? = nil
+        createdAt: Date? = nil,
+        lagEntries: Int = 0,
+        digestCoveredTurns: Int = -1
     ) {
         self.name = name
         self.coveredTurns = coveredTurns
@@ -131,6 +213,8 @@ struct GeminiPrefixCache: Codable {
         self.tokenCount = tokenCount
         self.modelIdentifier = modelIdentifier
         self.createdAt = createdAt
+        self.lagEntries = lagEntries
+        self.digestCoveredTurns = digestCoveredTurns
     }
 
     init(from decoder: Decoder) throws {
@@ -143,6 +227,8 @@ struct GeminiPrefixCache: Codable {
         modelIdentifier = try container.decodeIfPresent(String.self, forKey: .modelIdentifier)
             ?? AIModel.gemini37Flash.rawValue
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+        lagEntries = try container.decodeIfPresent(Int.self, forKey: .lagEntries) ?? 0
+        digestCoveredTurns = try container.decodeIfPresent(Int.self, forKey: .digestCoveredTurns) ?? -1
     }
 
     var leaseTokenHoursAtExpiry: Double {

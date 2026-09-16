@@ -21,6 +21,22 @@ extension GeminiService {
         return base.appendingPathComponent("prefix_caches.json")
     }()
 
+    static let shrinkProneStoreURL: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("KakaoSapiens", isDirectory: true)
+        return base.appendingPathComponent("shrink_prone_rooms.json")
+    }()
+
+    /// 이 방을 "답을 다시 받는 방"으로 적어 둡니다.
+    ///
+    /// 액터 안에서 바로 씁니다. 따로 떼어 비동기로 쓰면 두 방이 거의 같이 표시됐을 때
+    /// 늦게 끝난 쓰기가 옛 목록으로 덮어써 한쪽이 사라질 수 있습니다. 파일은 몇십 바이트입니다.
+    func markShrinkProne(roomId: UUID, model: AIModel) {
+        let key = GeminiCachePolicy.shrinkProneKey(roomId: roomId, model: model)
+        guard shrinkProneRooms.insert(key).inserted else { return }
+        GeminiCachePolicy.writeShrinkProneRooms(shrinkProneRooms, to: Self.shrinkProneStoreURL)
+    }
+
     static func loadPrefixCaches() -> [UUID: PrefixCache] {
         guard let data = try? Data(contentsOf: prefixCacheStoreURL),
               let stored = try? JSONDecoder().decode([String: PrefixCache].self, from: data) else { return [:] }
@@ -104,7 +120,9 @@ extension GeminiService {
         model: AIModel,
         contents: [[String: Any]],
         system: String,
-        apiKey: String
+        apiKey: String,
+        /// 이번 요청에서 요약이 몇 턴까지 덮는지입니다(`ConversationCompactor.Plan.coveredTurns`).
+        digestCoveredTurns: Int
     ) -> PrefixCache? {
         guard let cache = prefixCaches[roomId] else { return nil }
 
@@ -130,6 +148,17 @@ extension GeminiService {
         // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
         // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
         guard contents.count > cache.coveredTurns else {
+            // 답을 다시 받아 줄어든 것이면 이 방을 표시합니다. 다음 캐시는 마지막 교환을
+            // 밖에 두고 만들어, 같은 일이 또 나도 앞부분이 살아남게 합니다. 요약이 접은
+            // 것이면 표시하지 않습니다 — 그것까지 세면 요약이 도는 모든 방이 표시됩니다.
+            if GeminiCachePolicy.isRerollShrink(
+                cacheDigestCoveredTurns: cache.digestCoveredTurns,
+                requestDigestCoveredTurns: digestCoveredTurns,
+                coveredTurns: cache.coveredTurns,
+                newSize: contents.count
+            ) {
+                markShrinkProne(roomId: roomId, model: model)
+            }
             dropCache(for: roomId, deleteRemote: true, apiKey: apiKey, reason: .SHRUNK)
             return nil
         }
@@ -170,6 +199,7 @@ extension GeminiService {
         system: String,
         apiKey: String,
         previousRequestAt: Date?,
+        digestCoveredTurns: Int,
         measure: Bool = false
     ) async {
         // 갱신 도중에는 URL 요청에서 액터가 풀리므로, 막지 않으면 같은 방에 대해
@@ -182,8 +212,20 @@ extension GeminiService {
 
         // 사진도 함께 셉니다. 글자만 세던 시절에는 사진이 0자로 잡혀서,
         // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
-        let estimatedTokens = TokenEstimator.estimatedTokens(contents: contents)
-            + TokenEstimator.textTokens(system)
+        let systemTokens = TokenEstimator.textTokens(system)
+        // 물릴 방이면 물린 접두사를 **먼저 재고** 그것으로 물릴지 정합니다. 물리고 나서
+        // 최소치에 걸리면 캐시가 아예 안 만들어지므로 순서가 중요합니다.
+        let shrinkProne = shrinkProneRooms.contains(GeminiCachePolicy.shrinkProneKey(roomId: roomId, model: model))
+        let laggedPrefixTokens = shrinkProne
+            ? TokenEstimator.estimatedTokens(contents: Array(contents.dropLast(GeminiCachePolicy.cacheLagEntries))) + systemTokens
+            : 0
+        let lag = GeminiCachePolicy.lagEntries(
+            entryCount: contents.count, laggedPrefixTokens: laggedPrefixTokens, shrinkProne: shrinkProne)
+        // 캐시에 올릴 부분입니다. 물린 꼬리는 매 요청 따로 실려 나갑니다.
+        let prefix = lag > 0 ? Array(contents.dropLast(lag)) : contents
+        let estimatedTokens = lag > 0
+            ? laggedPrefixTokens
+            : TokenEstimator.estimatedTokens(contents: contents) + systemTokens
         // 판정마다 측정 장부에 적습니다. 챗봇 방만 셉니다(폰과 같음).
         func observe(_ decision: CacheDecision, actual: Int = 0) {
             guard measure else { return }
@@ -219,7 +261,9 @@ extension GeminiService {
 
         if let previous {
             // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
-            if previous.coveredTurns >= contents.count,
+            // `coveredTurns + lagEntries`가 만들 당시 길이입니다. 물린 꼬리는 처음부터
+            // 캐시 밖이었으므로 "덮을 것이 남았다"로 세면 안 됩니다.
+            if previous.coveredTurns + previous.lagEntries >= contents.count,
                previous.expiresAt > now.addingTimeInterval(60) {
                 observe(.CACHE_CURRENT)
                 return
@@ -235,7 +279,7 @@ extension GeminiService {
             // 그래서 꼬리가 캐시의 5분의 1보다 커졌을 때만 새로 만듭니다.
             // 그 아래에서는 새로 만드는 값이 아끼는 값보다 큽니다.
             let tail = TokenEstimator.estimatedTokens(
-                contents: Array(contents.dropFirst(previous.coveredTurns)))
+                contents: Array(contents.dropFirst(previous.coveredTurns + previous.lagEntries)))
             let worthIt = tail >= max(Self.cacheRefreshMinTailTokens, previous.tokenCount / 5)
             let expiringSoon = previous.expiresAt <= now.addingTimeInterval(Self.cacheRefreshTTLFloor)
             guard worthIt || expiringSoon else {
@@ -258,7 +302,7 @@ extension GeminiService {
             // 3.7로만 나갔기 때문에 어긋남이 드러나지 않았습니다.
             "model": "models/\(model.rawValue)",
             "systemInstruction": ["parts": [["text": system]]],
-            "contents": contents,
+            "contents": prefix,
             "ttl": "\(Self.cacheTTLSeconds)s"
         ]
         guard let httpBody = try? JSONSerialization.data(withJSONObject: payload) else { return }
@@ -297,12 +341,14 @@ extension GeminiService {
         let previousStillHeld = previous.map { prefixCaches[roomId]?.name == $0.name } ?? false
         prefixCaches[roomId] = PrefixCache(
             name: name,
-            coveredTurns: contents.count,
-            fingerprint: fingerprint(contents, system: system),
+            coveredTurns: prefix.count,
+            fingerprint: fingerprint(prefix, system: system),
             expiresAt: createdAt.addingTimeInterval(TimeInterval(Self.cacheTTLSeconds)),
             tokenCount: cachedTokens > 0 ? cachedTokens : estimatedTokens,
             modelIdentifier: model.rawValue,
-            createdAt: createdAt
+            createdAt: createdAt,
+            lagEntries: lag,
+            digestCoveredTurns: digestCoveredTurns
         )
 
         // 올린 토큰을 적습니다. **요금에는 넣지 않습니다** — 실제 청구서에 캐시 생성

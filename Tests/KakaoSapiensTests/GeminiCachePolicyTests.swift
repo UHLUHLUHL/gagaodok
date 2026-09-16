@@ -21,6 +21,10 @@ struct GeminiCachePolicyTests {
         digestRetryBacksOff()
         cacheCreationIsNotBilled()
         exchangeRateMatchesBill()
+        rerollJudgement()
+        lagOnlyWhenWorthIt()
+        legacyCacheHasNoLag()
+        shrinkProneListSurvivesRestart()
         print("GeminiCachePolicyTests: 모두 통과")
     }
 
@@ -111,6 +115,48 @@ struct GeminiCachePolicyTests {
         precondition(withCreation.costUSD(for: .gemini38Flash) == without.costUSD(for: .gemini38Flash),
                      "캐시에 올린 토큰은 요금에 들어가지 않는다")
         precondition(withCreation.adding(withCreation).cacheCreateTokens == 100_000, "개수는 계속 센다")
+    }
+
+    // 길이가 그대로인 것이 재요청의 표시다. 요약이 전진했으면 재요청이 아니다.
+    static func rerollJudgement() {
+        let j = GeminiCachePolicy.isRerollShrink
+        precondition(j(50, 50, 63, 63), "같은 길이 = 재요청")
+        precondition(j(50, 50, 63, 59), "과거 수정으로 실제로 줄어도 재요청")
+        precondition(!j(50, 50, 63, 64), "길어졌으면 재요청이 아니다")
+        precondition(!j(50, 100, 63, 63), "요약이 전진했으면 크기와 무관하게 아니다")
+        precondition(!j(50, 100, 143, 62), "요약 접기로 크게 줄어도 아니다")
+        precondition(j(-1, 100, 100, 97), "옛 캐시는 크기로 가른다 — 조금 줄면 재요청")
+        precondition(!j(-1, 100, 200, 100), "옛 캐시가 크게 줄면 요약 접기로 본다")
+    }
+
+    // 물리면 손해인 세 경우를 거른다.
+    static func lagOnlyWhenWorthIt() {
+        let lag = GeminiCachePolicy.lagEntries
+        precondition(lag(63, 20_000, true) == 2, "재요청이 있던 방은 두 칸 물린다")
+        precondition(lag(63, 20_000, false) == 0, "재요청이 없던 방은 물리지 않는다")
+        precondition(lag(2, 20_000, true) == 0, "물리면 남는 것이 없다")
+        precondition(lag(63, 4_599, true) == 0, "물리다 최소치 아래로 가면 캐시를 통째로 잃는다")
+        precondition(lag(63, 4_600, true) == 2, "최소치에 딱 걸치면 물린다")
+    }
+
+    static func legacyCacheHasNoLag() {
+        let json = #"{"name":"c","coveredTurns":12,"fingerprint":"f","expiresAt":1}"#
+        let cache = try! JSONDecoder().decode(GeminiPrefixCache.self, from: Data(json.utf8))
+        precondition(cache.lagEntries == 0, "옛 캐시는 물리지 않은 것")
+        precondition(cache.digestCoveredTurns == -1, "옛 캐시의 요약 범위는 모른다")
+    }
+
+    // 폰에서 이 표시를 메모리에만 두었더니 앱을 켤 때마다 사라져 보호가 한 번도 안 켜졌다.
+    static func shrinkProneListSurvivesRestart() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("sp-\(UUID().uuidString).json")
+        precondition(GeminiCachePolicy.readShrinkProneRooms(from: url).isEmpty, "파일이 없으면 빈 목록")
+        let room = UUID()
+        let key = GeminiCachePolicy.shrinkProneKey(roomId: room, model: .gemini38Flash)
+        precondition(key == "\(room.uuidString.lowercased())|gemini-3.8-flash", "폰과 같은 키 모양: \(key)")
+        precondition(GeminiCachePolicy.writeShrinkProneRooms([key], to: url))
+        precondition(GeminiCachePolicy.readShrinkProneRooms(from: url) == [key], "다시 읽힌다")
+        try! "망가진 내용".write(to: url, atomically: true, encoding: .utf8)
+        precondition(GeminiCachePolicy.readShrinkProneRooms(from: url).isEmpty, "못 읽으면 빈 목록 — 대화를 막지 않는다")
     }
 
     // 청구서 세 항목을 역산하면 모두 1,383이다.

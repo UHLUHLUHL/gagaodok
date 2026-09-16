@@ -49,6 +49,9 @@ public actor GeminiService {
     /// 이게 없으면 만료·재요청·수정으로 버린 뒤 다시 만든 것이 전부 "처음 만듦"으로
     /// 보입니다. 폰에서 실제로 그래서 TTL의 효과를 한동안 잴 수 없었습니다.
     var cacheDropReasons: [UUID: CacheDropReason] = [:]
+    /// 재요청으로 캐시가 깨진 적이 있는 방·모델입니다. 이 방들은 캐시를 두 칸 물려 만듭니다.
+    /// 앱을 다시 켜도 남도록 파일에서 읽습니다.
+    var shrinkProneRooms: Set<String> = GeminiCachePolicy.readShrinkProneRooms(from: GeminiService.shrinkProneStoreURL)
 
     /// 방마다 **직전** 요청 시각입니다. 대화가 이어지는 중인지 보는 데 씁니다.
     ///
