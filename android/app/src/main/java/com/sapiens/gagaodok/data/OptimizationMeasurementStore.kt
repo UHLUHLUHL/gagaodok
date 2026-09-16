@@ -429,9 +429,8 @@ class OptimizationMeasurementStore internal constructor(
     /// `observeMemory` 안에서만 만지므로 별도 잠금이 필요 없습니다.
     private var consecutivePaidFailures = 0
 
-    /// 캐시를 새로 만든 이유를 적습니다. 생성에 성공한 뒤에만 부릅니다.
-    @Synchronized
     /// 직전 요청과의 간격을 구간에 한 건 더합니다.
+    @Synchronized
     fun observeRequestGap(previousRequestAt: Long?, now: Long) {
         val run = _state.value.activeRun ?: return
         val g = run.requestGaps
@@ -446,6 +445,12 @@ class OptimizationMeasurementStore internal constructor(
         replaceActive(run.copy(requestGaps = next))
     }
 
+    /// 캐시를 새로 만든 이유를 적습니다. 생성에 성공한 뒤에만 부릅니다.
+    ///
+    /// **잠금이 필요합니다.** 배경의 캐시 갱신에서 불리므로 다른 기록과 동시에
+    /// 읽고-고치고-쓰면 한쪽이 사라집니다. `5cde1a3`에서 위 함수를 끼워 넣다가
+    /// 이 표시가 옆 함수로 밀려나 한동안 빠져 있었습니다.
+    @Synchronized
     fun observeCacheCreateReason(reason: CacheCreateReason) {
         val run = _state.value.activeRun ?: return
         val old = run.cache

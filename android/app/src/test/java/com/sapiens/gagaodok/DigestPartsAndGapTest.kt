@@ -150,6 +150,24 @@ class DigestPartsAndGapTest {
         assertEquals(1, s.state.value.activeRun!!.requestGaps.unknown)
     }
 
+    // ── 동시에 불리는 기록 ─────────────────────────────────
+
+    @Test
+    fun `배경에서 불리는 기록 함수는 모두 잠근다`() {
+        // `5cde1a3`에서 함수를 끼워 넣다가 `@Synchronized`가 옆 함수로 밀려나
+        // `observeCacheCreateReason`이 잠금 없이 남았다. 배경 캐시 갱신에서 불리므로
+        // 다른 기록과 겹치면 한쪽이 사라진다. 눈으로는 안 보이는 실수라 여기서 막는다.
+        val names = listOf(
+            "observeRequest", "observeCache", "observeMemory",
+            "observeRequestGap", "observeCacheCreateReason", "start", "stop", "clear"
+        )
+        val methods = OptimizationMeasurementStore::class.java.declaredMethods
+        for (name in names) {
+            val m = methods.first { it.name == name }
+            assertTrue("$name 에 잠금이 없다", java.lang.reflect.Modifier.isSynchronized(m.modifiers))
+        }
+    }
+
     // ── 만료 캐시의 보관량 ─────────────────────────────────
 
     @Test
