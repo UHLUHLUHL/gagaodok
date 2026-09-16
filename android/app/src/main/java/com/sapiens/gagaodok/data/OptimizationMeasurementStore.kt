@@ -167,6 +167,14 @@ data class PromptTokenBreakdown(
 /// 둘 다 근거 없이 정한 값이고, "캐시가 죽은 뒤 얼마 만에 돌아오는가"를 모르면
 /// 늘릴지 줄일지 판단할 수 없습니다. 구간 경계는 그 판단에 맞췄습니다 —
 /// 5분은 burst 기준, 30분은 TTL입니다.
+///
+/// **10~30분은 15분에서 한 번 더 나눕니다.** 맥의 TTL이 15분이라, 한 칸으로 두면
+/// 15분 전에 돌아온 건지 후에 돌아온 건지 가를 수 없어 15분 대 30분을 판정하지
+/// 못합니다. 기존 `tenToThirtyMinutes`는 옛 기록과 견주려고 **두 칸의 합**으로 계속
+/// 셉니다 — 전체를 더할 때는 이 칸이나 나눈 두 칸 중 한쪽만 더하십시오.
+///
+/// 판정 기준: 쉬었다 돌아온 경우 가운데 15~30분 사이 비율이 약 15%를 넘으면 30분이
+/// 15분보다 이득입니다(15분 더 두는 보관료 ÷ 그 사이 돌아와 아끼는 입력 값).
 @Serializable
 data class RequestGapCounts(
     /// 앱을 다시 켠 뒤 첫 요청입니다. 직전 시각이 메모리에만 있어 알 수 없습니다.
@@ -175,7 +183,10 @@ data class RequestGapCounts(
     val withinFiveMinutes: Int = 0,
     val fiveToTenMinutes: Int = 0,
     val tenToThirtyMinutes: Int = 0,
-    val overThirtyMinutes: Int = 0
+    val overThirtyMinutes: Int = 0,
+    /// 옛 기록에는 없으므로 기본값을 둡니다.
+    val tenToFifteenMinutes: Int = 0,
+    val fifteenToThirtyMinutes: Int = 0
 )
 
 data class CacheObservation(
@@ -439,7 +450,14 @@ class OptimizationMeasurementStore internal constructor(
             gap == null || gap < 0 -> g.copy(unknown = g.unknown + 1)
             gap <= 5 * 60_000L -> g.copy(withinFiveMinutes = g.withinFiveMinutes + 1)
             gap <= 10 * 60_000L -> g.copy(fiveToTenMinutes = g.fiveToTenMinutes + 1)
-            gap <= 30 * 60_000L -> g.copy(tenToThirtyMinutes = g.tenToThirtyMinutes + 1)
+            gap <= 15 * 60_000L -> g.copy(
+                tenToThirtyMinutes = g.tenToThirtyMinutes + 1,
+                tenToFifteenMinutes = g.tenToFifteenMinutes + 1
+            )
+            gap <= 30 * 60_000L -> g.copy(
+                tenToThirtyMinutes = g.tenToThirtyMinutes + 1,
+                fifteenToThirtyMinutes = g.fifteenToThirtyMinutes + 1
+            )
             else -> g.copy(overThirtyMinutes = g.overThirtyMinutes + 1)
         }
         replaceActive(run.copy(requestGaps = next))

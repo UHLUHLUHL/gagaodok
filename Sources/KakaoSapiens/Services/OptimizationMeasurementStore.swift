@@ -175,13 +175,23 @@ struct PromptTokenBreakdown: Codable, Equatable {
     }
 }
 
-/// 요청 사이 간격의 분포입니다. 5분은 burst 기준, 30분은 폰의 TTL입니다.
+/// 요청 사이 간격의 분포입니다. 5분은 burst 기준, 15분은 맥의 TTL, 30분은 폰의 TTL입니다.
+///
+/// **10~30분은 15분에서 한 번 더 나눕니다.** 맥의 TTL이 15분이라, 한 칸으로 두면
+/// 15분 전에 돌아온 건지 후에 돌아온 건지 가를 수 없어 15분 대 30분을 판정하지
+/// 못합니다. 기존 `tenToThirtyMinutes`는 옛 기록과 견주려고 **두 칸의 합**으로 계속
+/// 셉니다 — 전체를 더할 때는 이 칸이나 나눈 두 칸 중 한쪽만 더하십시오.
+///
+/// 판정 기준: 쉬었다 돌아온 경우 가운데 15~30분 사이 비율이 약 15%를 넘으면 30분이
+/// 15분보다 이득입니다(15분 더 두는 보관료 ÷ 그 사이 돌아와 아끼는 입력 값).
 struct RequestGapCounts: Codable, Equatable {
     /// 앱을 다시 켠 뒤 첫 요청입니다. 모르는 것을 "오래됐다"로 세면 TTL 판단이 틀어집니다.
     var unknown = 0
     var withinFiveMinutes = 0
     var fiveToTenMinutes = 0
     var tenToThirtyMinutes = 0
+    var tenToFifteenMinutes = 0
+    var fifteenToThirtyMinutes = 0
     var overThirtyMinutes = 0
 
     init() {}
@@ -192,6 +202,8 @@ struct RequestGapCounts: Codable, Equatable {
         withinFiveMinutes = c.value(.withinFiveMinutes, 0)
         fiveToTenMinutes = c.value(.fiveToTenMinutes, 0)
         tenToThirtyMinutes = c.value(.tenToThirtyMinutes, 0)
+        tenToFifteenMinutes = c.value(.tenToFifteenMinutes, 0)
+        fifteenToThirtyMinutes = c.value(.fifteenToThirtyMinutes, 0)
         overThirtyMinutes = c.value(.overThirtyMinutes, 0)
     }
 
@@ -202,7 +214,8 @@ struct RequestGapCounts: Codable, Equatable {
         case ..<0: unknown += 1
         case ...300: withinFiveMinutes += 1
         case ...600: fiveToTenMinutes += 1
-        case ...1800: tenToThirtyMinutes += 1
+        case ...900: tenToThirtyMinutes += 1; tenToFifteenMinutes += 1
+        case ...1800: tenToThirtyMinutes += 1; fifteenToThirtyMinutes += 1
         default: overThirtyMinutes += 1
         }
     }

@@ -118,6 +118,34 @@ class DigestPartsAndGapTest {
         assertEquals(1, g.tenToThirtyMinutes)
         assertEquals(1, g.overThirtyMinutes)
         assertEquals(0, g.unknown)
+        assertEquals("20분은 15~30분 칸", 1, g.fifteenToThirtyMinutes)
+        assertEquals(0, g.tenToFifteenMinutes)
+    }
+
+    @Test
+    fun `10~30분은 15분에서 한 번 더 나누고 합계도 유지한다`() {
+        // 맥의 TTL이 15분이라 이 경계가 없으면 15분 대 30분을 판정할 수 없다.
+        // 기존 10~30분 칸은 옛 기록과 견주려고 두 칸의 합으로 계속 센다.
+        val s = store()
+        val now = 10_000_000L
+        s.observeRequestGap(now - 12 * 60_000L, now)
+        s.observeRequestGap(now - 15 * 60_000L, now)
+        s.observeRequestGap(now - 16 * 60_000L, now)
+        s.observeRequestGap(now - 30 * 60_000L, now)
+        val g = s.state.value.activeRun!!.requestGaps
+        assertEquals("12분·정확히 15분", 2, g.tenToFifteenMinutes)
+        assertEquals("16분·정확히 30분", 2, g.fifteenToThirtyMinutes)
+        assertEquals("합계는 두 칸의 합", 4, g.tenToThirtyMinutes)
+    }
+
+    @Test
+    fun `나눈 칸이 없는 옛 기록도 읽는다`() {
+        val file = File.createTempFile("old-gap", ".json")
+        file.writeText("""{"activeRun":{"id":1,"startedAtMillis":1,"policy":{},"requestGaps":{"tenToThirtyMinutes":3}}}""")
+        val g = OptimizationMeasurementStore(file) { 1L }.state.value.activeRun!!.requestGaps
+        assertEquals(3, g.tenToThirtyMinutes)
+        assertEquals(0, g.tenToFifteenMinutes)
+        assertEquals(0, g.fifteenToThirtyMinutes)
     }
 
     @Test
@@ -140,6 +168,7 @@ class DigestPartsAndGapTest {
         val g = s.state.value.activeRun!!.requestGaps
         assertEquals("정확히 5분은 5분 이내", 1, g.withinFiveMinutes)
         assertEquals("정확히 30분은 30분 이내", 1, g.tenToThirtyMinutes)
+        assertEquals("정확히 30분은 15~30분 칸", 1, g.fifteenToThirtyMinutes)
         assertEquals(0, g.overThirtyMinutes)
     }
 

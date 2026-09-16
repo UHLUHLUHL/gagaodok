@@ -136,6 +136,17 @@ struct OptimizationMeasurementStoreTests {
         precondition(g.withinFiveMinutes == 2, "1분·정확히 5분")
         precondition(g.fiveToTenMinutes == 2, "7분·정확히 10분")
         precondition(g.tenToThirtyMinutes == 2, "20분·정확히 30분")
+        precondition(g.fifteenToThirtyMinutes == 2 && g.tenToFifteenMinutes == 0, "20분·30분은 15~30분 칸")
+        // 맥의 TTL이 15분이라 15분 경계가 없으면 15분 대 30분을 판정할 수 없다.
+        let t = store()
+        t.start()
+        for minutes in [12.0, 15.0, 16.0] {
+            t.observeRequestGap(previous: now.addingTimeInterval(-minutes * 60), now: now)
+        }
+        let h = t.ledger.activeRun!.requestGaps
+        precondition(h.tenToFifteenMinutes == 2, "12분·정확히 15분")
+        precondition(h.fifteenToThirtyMinutes == 1, "16분")
+        precondition(h.tenToThirtyMinutes == 3, "기존 칸은 두 칸의 합")
         precondition(g.overThirtyMinutes == 1, "90분")
         precondition(g.unknown == 2, "재시작 뒤 첫 요청과 거꾸로 간 시계")
     }
