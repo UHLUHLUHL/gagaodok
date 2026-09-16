@@ -10,9 +10,8 @@ public struct ModelTokenUsage: Codable, Equatable {
     /// Gemini식 명시적 캐시를 **새로 만드느라 올린** 토큰입니다.
     ///
     /// 이건 별개의 요청(`cachedContents` POST)이라 어떤 `promptTokenCount`에도
-    /// 잡히지 않습니다. 그래서 덜어 내지 않고 그대로 더합니다.
-    /// 예전에는 이 값을 아예 안 세서, 캐시를 매 턴 새로 만드는 동안 그 비용이
-    /// 앱 화면에서 통째로 사라져 있었습니다.
+    /// 잡히지 않습니다. **실제 청구서에 이 항목이 없어 요금에는 넣지 않습니다**
+    /// (`costUSD` 참고). 캐시를 얼마나 자주 다시 만드는지 보려고 개수만 셉니다.
     public var cacheCreateTokens: Int
     public var outputTokens: Int
     public var requestCount: Int
@@ -77,12 +76,13 @@ public struct ModelTokenUsage: Codable, Equatable {
         return Double(regular) / 1_000_000 * model.inputPricePerMillion
             + Double(cached) / 1_000_000 * model.cachedInputPricePerMillion
             + Double(writes) / 1_000_000 * model.inputPricePerMillion * model.cacheWriteMultiplier
-            // 캐시 생성분은 어떤 promptTokenCount에도 안 잡히므로 덜어 내지 않고 그대로 더합니다.
+            // **캐시에 올린 토큰(`cacheCreateTokens`)은 요금에 넣지 않습니다.**
             //
-            // **입력 단가로 칩니다.** 캐시 생성 요청이 청구되는지 문서로 확인하지는 못했습니다.
-            // 확실하지 않을 때는 비싼 쪽으로 잡습니다 — 화면의 숫자가 실제보다 적은 것이
-            // 많은 것보다 나쁩니다.
-            + Double(cacheCreateTokens) / 1_000_000 * model.inputPricePerMillion
+            // 예전에는 확실하지 않다며 입력 단가로 쳤습니다. 실제 청구서(2026-09-02~09-15,
+            // 폰 프로젝트)에 캐시 생성 항목이 없었고, 청구된 입력 토큰 수가 장부의 비캐시
+            // 입력과 99% 맞았습니다. 생성이 입력에 섞였다면 2.3배였어야 합니다.
+            // 금액이 아니라 개수로 판정했으므로 필터나 기간의 영향을 받지 않습니다.
+            // 그동안 화면 금액이 약 66% 높게 나왔습니다. 개수는 진단용으로 계속 셉니다.
             + Double(outputTokens) / 1_000_000 * model.outputPricePerMillion
             + cacheStorageCostUSD(for: model)
     }
@@ -132,8 +132,15 @@ public struct RoomTokenUsage: Codable, Equatable {
         ).costUSD(for: .gemini37Flash)
     }
 
-    public func costKRW(exchangeRate: Double = 1420.0) -> Double { costUSD() * exchangeRate }
+    public func costKRW(exchangeRate: Double = defaultUsageExchangeRate) -> Double { costUSD() * exchangeRate }
 }
+
+/// 원/달러 환율 기본값입니다.
+///
+/// 1,420은 근거 없이 정한 값이었습니다. 실제 청구서의 세 항목을 각각 역산하면
+/// 모두 1,383을 가리킵니다(입력 1,383 · 캐시 읽기 1,383 · 출력 1,384). 구글이 환율을
+/// 다시 정하면 어긋나므로 설정 화면에서 고칠 수 있습니다. 폰과 같은 값입니다.
+public let defaultUsageExchangeRate: Double = 1383.0
 
 private struct UsageLedger: Codable {
     var rooms: [String: [String: ModelTokenUsage]]
@@ -144,7 +151,7 @@ public final class TokenUsageManager: ObservableObject {
     public static let shared = TokenUsageManager()
 
     @Published public private(set) var usageByRoom: [UUID: [AIModel: ModelTokenUsage]] = [:]
-    @Published public var exchangeRate: Double = 1420.0 {
+    @Published public var exchangeRate: Double = defaultUsageExchangeRate {
         didSet { UserDefaults.standard.set(exchangeRate, forKey: "usageExchangeRate") }
     }
 
@@ -196,19 +203,31 @@ public final class TokenUsageManager: ObservableObject {
     }
 
     /// 명시적 캐시를 새로 올린 몫입니다. 만든 토큰 수와 보관량을 함께 적습니다.
-    public func recordCacheCreation(roomId: UUID, model: AIModel, tokens: Int, tokenHours: Double) {
-        guard tokens > 0 || tokenHours > 0 else { return }
+    /// 캐시를 하나 만들었다고 적습니다. 올린 토큰 수는 진단용이고 요금에는 안 들어갑니다.
+    ///
+    /// 보관량은 여기서 받지 않습니다. 예전에는 만들 때 TTL 전체를 미리 적어, 교체로
+    /// 일찍 끝난 캐시가 과대 계상됐습니다. 끝날 때 `recordCacheLeaseEnd`로 적습니다.
+    public func recordCacheCreation(roomId: UUID, model: AIModel, tokens: Int) {
+        guard tokens > 0 else { return }
         add(
             roomId: roomId,
             model: model,
             delta: ModelTokenUsage(
-                cacheCreateTokens: max(0, tokens),
+                cacheCreateTokens: tokens,
                 // 캐시를 만드는 것도 API 요청 한 건입니다. 그동안 이 요청은
                 // 횟수에도 안 잡혀서 "메시지 수보다 요청이 적은" 장부가 나왔습니다.
-                requestCount: 1,
-                cacheStorageTokenHours: max(0, tokenHours)
+                requestCount: 1
             )
         )
+    }
+
+    /// 캐시 하나가 산 동안의 보관량(토큰·시간)을 적습니다.
+    ///
+    /// **토큰·시간을 받습니다. 시간만 받지 않습니다.** 폰에서 인자를 따로 받다가 토큰 수를
+    /// 빠뜨려 약 27,000배 작게 적은 적이 있어, 곱한 값만 받게 했습니다.
+    public func recordCacheLeaseEnd(roomId: UUID, model: AIModel, tokenHours: Double) {
+        guard tokenHours > 0 else { return }
+        add(roomId: roomId, model: model, delta: ModelTokenUsage(cacheStorageTokenHours: tokenHours))
     }
 
     /// 보냈지만 사용량을 못 받은 요청을 한 건 적습니다.

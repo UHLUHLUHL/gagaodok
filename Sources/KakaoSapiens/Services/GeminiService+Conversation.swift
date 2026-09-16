@@ -22,12 +22,18 @@ extension GeminiService {
         conversation: [ConversationTurn],
         botName: String,
         roomId: UUID?,
+        model: AIModel,
         persona: PersonaStyle? = nil,
         mode: ChatMode = .mathMentor,
         roleplayInProgress: Bool = false,
         onBubble: (@Sendable (GeneratedMessageBubble) async -> Void)? = nil
     ) async throws -> String {
-        let model = AIModel.gemini37Flash
+        // **고른 모델로 보냅니다.** 예전에는 여기서 3.7로 박아 두어, 설정이나 방에서
+        // 3.8을 골라도 대화·캐시·장부가 전부 3.7이었습니다. 부르는 쪽이 모델을 정해
+        // 놓고도 넘기지 않고 있었습니다.
+        guard model.isGemini else {
+            throw serviceError("Gemini 경로에 Gemini가 아닌 모델(\(model.rawValue))이 들어왔습니다.")
+        }
         guard let apiKey = KeychainStore.geminiAPIKey else {
             throw serviceError("설정에서 Gemini API 키를 먼저 등록해주세요.")
         }
@@ -45,7 +51,7 @@ extension GeminiService {
 
         // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
         var reusedCache = roomId.flatMap {
-            usablePrefixCache(for: $0, contents: contents, system: system, apiKey: apiKey)
+            usablePrefixCache(for: $0, model: model, contents: contents, system: system, apiKey: apiKey)
         }
         // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
         let previousRequestAt = roomId.flatMap { markRequest($0) }
@@ -142,7 +148,7 @@ extension GeminiService {
         if let roomId {
             Task {
                 await self.refreshPrefixCache(
-                    roomId: roomId, contents: contents, system: system,
+                    roomId: roomId, model: model, contents: contents, system: system,
                     apiKey: apiKey, previousRequestAt: previousRequestAt
                 )
             }
@@ -150,7 +156,8 @@ extension GeminiService {
 
         // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
         if let roomId, let pending = plan.pending {
-            Task { await self.appendDigestSegment(roomId: roomId, pending: pending, mode: mode, apiKey: apiKey) }
+            // 요약도 대화와 같은 모델로 만듭니다. 그 방의 기억을 읽는 쪽과 쓰는 쪽이 같아야 합니다.
+            Task { await self.appendDigestSegment(roomId: roomId, pending: pending, mode: mode, model: model, apiKey: apiKey) }
         }
         return text
     }

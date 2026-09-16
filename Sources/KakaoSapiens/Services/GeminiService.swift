@@ -39,6 +39,11 @@ public actor GeminiService {
     var refreshingRooms: Set<UUID> = []
     /// 같은 방의 요약을 두 번 겹쳐 만들지 않도록 막습니다.
     var summarizingRooms: Set<UUID> = []
+    /// 구간 요약이 연속으로 실패한 횟수와 다음 시도 가능 시각입니다.
+    ///
+    /// 메모리에만 둡니다. 앱을 다시 켜면 한 번은 바로 시도합니다 — 그 한 번의 값은
+    /// 작고, 원인이 고쳐졌을 수도 있습니다.
+    var digestRetry: [UUID: (failures: Int, notBefore: Date)] = [:]
 
     /// 방마다 **직전** 요청 시각입니다. 대화가 이어지는 중인지 보는 데 씁니다.
     ///
@@ -60,7 +65,8 @@ public actor GeminiService {
         switch model {
         case .gemini38Flash, .gemini37Flash:
             rawText = try await sendGeminiRequest(
-                conversation: conversation, botName: botName, roomId: roomId, persona: persona, mode: mode
+                conversation: conversation, botName: botName, roomId: roomId, model: model,
+                persona: persona, mode: mode
             )
         case .gpt56Luna:
             rawText = try await sendOpenAIRequest(
@@ -104,7 +110,7 @@ public actor GeminiService {
             return response.rawText
         }
         return try await sendGeminiRequest(
-            conversation: conversation, botName: botName, roomId: roomId, persona: persona,
+            conversation: conversation, botName: botName, roomId: roomId, model: model, persona: persona,
             mode: mode, roleplayInProgress: roleplayInProgress, onBubble: onBubble
         )
     }

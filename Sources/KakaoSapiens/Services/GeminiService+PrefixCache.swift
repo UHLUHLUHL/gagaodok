@@ -8,36 +8,10 @@ extension GeminiService {
     // Gemini의 implicit 캐시는 "완전히 똑같은 요청"이 짧은 간격으로 반복될 때만 걸립니다.
     // 채팅처럼 턴이 계속 붙는 패턴에서는 접두사가 같아도 적중하지 않아 실측 적중률이 0%였습니다.
     // 그래서 대화 접두사를 명시적 캐시(cachedContents)로 올려두고 새 턴만 보냅니다. 실측 99.7%.
-    struct PrefixCache: Codable {
-        let name: String          // cachedContents/xxxx
-        let coveredTurns: Int     // 이 캐시가 덮는 contents 앞부분의 개수
-        let fingerprint: String   // 덮은 구간이 편집되지 않았는지 확인하는 지문
-        let expiresAt: Date
-        /// 이 캐시에 올라가 있는 토큰 수입니다. 다시 만들 값어치가 있는지 따질 때 씁니다.
-        /// 예전 파일에는 없던 값이라 기본값을 둡니다.
-        var tokenCount: Int = 0
-
-        enum CodingKeys: String, CodingKey {
-            case name, coveredTurns, fingerprint, expiresAt, tokenCount
-        }
-
-        init(name: String, coveredTurns: Int, fingerprint: String, expiresAt: Date, tokenCount: Int = 0) {
-            self.name = name
-            self.coveredTurns = coveredTurns
-            self.fingerprint = fingerprint
-            self.expiresAt = expiresAt
-            self.tokenCount = tokenCount
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            name = try container.decode(String.self, forKey: .name)
-            coveredTurns = try container.decode(Int.self, forKey: .coveredTurns)
-            fingerprint = try container.decode(String.self, forKey: .fingerprint)
-            expiresAt = try container.decode(Date.self, forKey: .expiresAt)
-            tokenCount = try container.decodeIfPresent(Int.self, forKey: .tokenCount) ?? 0
-        }
-    }
+    //
+    // 기록 형식은 `GeminiCachePolicy.swift`에 있습니다. 옛 파일을 읽는 규칙을 따로
+    // 검사하려고 서비스 밖으로 뺐습니다.
+    typealias PrefixCache = GeminiPrefixCache
 
     // 캐시 이름을 메모리에만 두면 앱을 껐다 켤 때마다 서버에 살아 있는 캐시를 버리고
     // 첫 요청을 전액으로 냅니다. TTL이 남아 있으면 이어서 쓰도록 디스크에 적어 둡니다.
@@ -50,13 +24,43 @@ extension GeminiService {
     static func loadPrefixCaches() -> [UUID: PrefixCache] {
         guard let data = try? Data(contentsOf: prefixCacheStoreURL),
               let stored = try? JSONDecoder().decode([String: PrefixCache].self, from: data) else { return [:] }
+        let now = Date()
         var result: [UUID: PrefixCache] = [:]
+        var expired: [(UUID, PrefixCache)] = []
         for (key, cache) in stored {
+            guard let id = UUID(uuidString: key) else { continue }
             // 이미 만료된 것은 되살리지 않습니다. 서버에도 없습니다.
-            guard let id = UUID(uuidString: key), cache.expiresAt > Date() else { continue }
-            result[id] = cache
+            if cache.expiresAt > now { result[id] = cache } else { expired.append((id, cache)) }
         }
+        if !expired.isEmpty { settleExpiredCaches(expired, survivors: result) }
         return result
+    }
+
+    /// 앱이 꺼진 사이 만료된 캐시의 보관량을 장부에 적습니다.
+    ///
+    /// 예전에는 조용히 걸러내기만 해서 그 구간이 장부에서 빠질 수 있었습니다.
+    /// 끝난 시각은 앱을 켠 지금이 아니라 **만료 시각**입니다.
+    ///
+    /// **파일부터 줄이고, 그것이 성공했을 때만 적습니다.** 순서가 반대면 쓰기가
+    /// 실패했을 때 다음 실행에서 같은 캐시를 또 적습니다. 보관량은 적게 나오는 편이
+    /// 많게 나오는 것보다 낫습니다 — 많으면 없는 절감을 있다고 읽게 됩니다.
+    ///
+    /// 이 함수는 `prefixCaches`가 만들어지는 도중에 불리므로 그 속성을 건드리지 않습니다.
+    private static func settleExpiredCaches(_ expired: [(UUID, PrefixCache)], survivors: [UUID: PrefixCache]) {
+        let snapshot = survivors.reduce(into: [String: PrefixCache]()) { $0[$1.key.uuidString] = $1.value }
+        guard let data = try? JSONEncoder().encode(snapshot),
+              (try? data.write(to: prefixCacheStoreURL, options: .atomic)) != nil else { return }
+        let entries = expired.compactMap { id, cache -> (UUID, AIModel, Double)? in
+            let hours = cache.leaseTokenHoursAtExpiry
+            guard hours > 0, let model = AIModel(storedValue: cache.modelIdentifier) else { return nil }
+            return (id, model, hours)
+        }
+        guard !entries.isEmpty else { return }
+        Task { @MainActor in
+            for (id, model, hours) in entries {
+                TokenUsageManager.shared.recordCacheLeaseEnd(roomId: id, model: model, tokenHours: hours)
+            }
+        }
     }
 
     func persistPrefixCaches() {
@@ -78,9 +82,8 @@ extension GeminiService {
     }
 
     static let cacheTTLSeconds = 900
-    // 명시적 캐시는 1,024토큰 미만이면 생성이 거부됩니다. 어림값이 실제보다 조금 클 수 있으므로
-    // 여유를 둡니다. 그래도 거부되면 캐시 없이 그냥 진행하므로 대화에는 영향이 없습니다.
-    static let minimumCacheTokens = 1200
+    // 근거는 `GeminiCachePolicy.minimumCacheTokens`에 적었습니다. 예전 1,200은 옛 모델 기준이었습니다.
+    static let minimumCacheTokens = GeminiCachePolicy.minimumCacheTokens
 
     // 캐시를 다시 만들 기준입니다. 자세한 셈은 `refreshPrefixCache`에 적었습니다.
     // 짧은 대화에서 몇 마디 붙었다고 다시 만들지 않게 하는 바닥값입니다. **정한 값입니다.**
@@ -96,11 +99,20 @@ extension GeminiService {
 
     func usablePrefixCache(
         for roomId: UUID,
+        model: AIModel,
         contents: [[String: Any]],
         system: String,
         apiKey: String
     ) -> PrefixCache? {
         guard let cache = prefixCaches[roomId] else { return nil }
+
+        // **다른 모델로 만든 캐시는 쓸 수 없습니다.** 붙이면 서버가 거절하고,
+        // 스트리밍 중이면 캐시 없이 다시 보낼 수도 없어 그대로 실패합니다.
+        // 서버에는 아직 살아 있으므로 지워야 보관료가 멈춥니다.
+        guard cache.modelIdentifier == model.rawValue else {
+            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey)
+            return nil
+        }
 
         // 만료된 것은 서버에도 없으므로 지울 것이 없습니다.
         guard cache.expiresAt > Date().addingTimeInterval(30) else {
@@ -132,13 +144,25 @@ extension GeminiService {
     func dropCache(for roomId: UUID, deleteRemote: Bool, apiKey: String) {
         guard let removed = prefixCaches[roomId] else { return }
         prefixCaches[roomId] = nil
+        // 버리는 캐시가 산 만큼 보관량을 적습니다. 만료된 것은 만료 시각까지만 셉니다.
+        settleLease(of: removed, roomId: roomId, at: Date())
         if deleteRemote {
             Task { await self.deleteCache(named: removed.name, apiKey: apiKey) }
         }
     }
 
+    /// 캐시가 산 만큼 보관량을 장부에 적습니다. 만료 시각을 넘겨 세지 않습니다.
+    func settleLease(of cache: PrefixCache, roomId: UUID, at end: Date) {
+        let hours = cache.leaseTokenHours(until: end)
+        guard hours > 0, let model = AIModel(storedValue: cache.modelIdentifier) else { return }
+        Task { @MainActor in
+            TokenUsageManager.shared.recordCacheLeaseEnd(roomId: roomId, model: model, tokenHours: hours)
+        }
+    }
+
     func refreshPrefixCache(
         roomId: UUID,
+        model: AIModel,
         contents: [[String: Any]],
         system: String,
         apiKey: String,
@@ -206,7 +230,9 @@ extension GeminiService {
         request.timeoutInterval = 30
 
         let payload: [String: Any] = [
-            "model": "models/\(AIModel.gemini37Flash.rawValue)",
+            // 대화에 쓰는 모델로 만들어야 합니다. 예전에는 3.7로 박아 두었고, 대화도
+            // 3.7로만 나갔기 때문에 어긋남이 드러나지 않았습니다.
+            "model": "models/\(model.rawValue)",
             "systemInstruction": ["parts": [["text": system]]],
             "contents": contents,
             "ttl": "\(Self.cacheTTLSeconds)s"
@@ -223,34 +249,39 @@ extension GeminiService {
         }
 
         let cachedTokens = intValue((json["usageMetadata"] as? [String: Any])?["totalTokenCount"])
+        let createdAt = Date()
+        // 네트워크를 기다리는 사이 다른 요청이 이전 캐시를 이미 버렸을 수 있습니다
+        // (`dropCache`가 정산과 원격 삭제까지 마칩니다). 그때 여기서 또 정산하면
+        // 같은 캐시가 두 번 적힙니다. 아직 그 자리에 있을 때만 여기서 처리합니다.
+        let previousStillHeld = previous.map { prefixCaches[roomId]?.name == $0.name } ?? false
         prefixCaches[roomId] = PrefixCache(
             name: name,
             coveredTurns: contents.count,
             fingerprint: fingerprint(contents, system: system),
-            expiresAt: Date().addingTimeInterval(TimeInterval(Self.cacheTTLSeconds)),
-            tokenCount: cachedTokens > 0 ? cachedTokens : estimatedTokens
+            expiresAt: createdAt.addingTimeInterval(TimeInterval(Self.cacheTTLSeconds)),
+            tokenCount: cachedTokens > 0 ? cachedTokens : estimatedTokens,
+            modelIdentifier: model.rawValue,
+            createdAt: createdAt
         )
 
-        // 올린 토큰과 보관량을 함께 적습니다.
+        // 올린 토큰을 적습니다. **요금에는 넣지 않습니다** — 실제 청구서에 캐시 생성
+        // 항목이 없었습니다(`TokenUsageManager.costUSD` 참고). 몇 번 다시 만드는지는
+        // 진단에 필요하므로 개수는 계속 셉니다.
         //
-        // **올린 토큰을 입력 요금으로 칩니다.** 예전에는 보관료만 적어서, 캐시를
-        // 매 턴 새로 만드는 동안 그 비용이 앱 화면에서 통째로 사라져 있었습니다.
-        //
-        // 보관량은 실제 보관 시간이 아니라 TTL 전체로 잡습니다. 다음 갱신 때
-        // 이전 것을 지우므로 실제로는 그보다 짧습니다. 이것도 넉넉한 쪽입니다.
+        // 보관량은 여기서 적지 않습니다. 예전에는 만들 때 TTL 전체를 미리 적었는데,
+        // 교체로 일찍 끝난 캐시가 과대 계상됐습니다. 이제 끝날 때 산 만큼 적습니다.
         if cachedTokens > 0 {
             await MainActor.run {
-                TokenUsageManager.shared.recordCacheCreation(
-                    roomId: roomId,
-                    model: .gemini37Flash,
-                    tokens: cachedTokens,
-                    tokenHours: Double(cachedTokens) * (Double(Self.cacheTTLSeconds) / 3600.0)
-                )
+                TokenUsageManager.shared.recordCacheCreation(roomId: roomId, model: model, tokens: cachedTokens)
             }
         }
 
         // 이전 캐시는 보관 요금이 붙으므로 새 캐시가 자리 잡은 뒤 지웁니다.
-        if let previous { await deleteCache(named: previous.name, apiKey: apiKey) }
+        // 지우기 전에 산 만큼 적습니다.
+        if let previous, previousStillHeld {
+            settleLease(of: previous, roomId: roomId, at: createdAt)
+            await deleteCache(named: previous.name, apiKey: apiKey)
+        }
     }
 
     func deleteCache(named name: String, apiKey: String) async {

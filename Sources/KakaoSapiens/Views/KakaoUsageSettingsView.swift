@@ -397,8 +397,9 @@ public struct KakaoUsageSettingsView: View {
             .foregroundColor(KakaoTheme.textSecondary)
 
             // 캐시에 올린 토큰은 어느 요청의 입력에도 안 잡힙니다. 따로 보여줍니다.
+            // 실제 청구서에 이 항목이 없어 요금에는 넣지 않습니다. 오해가 없게 적어 둡니다.
             if value.cacheCreateTokens > 0 {
-                Text("캐시에 올린 토큰 \(value.cacheCreateTokens.formatted())")
+                Text("캐시에 올린 토큰 \(value.cacheCreateTokens.formatted()) (청구 안 됨)")
                     .font(.custom("Pretendard-Regular", size: 9.5))
                     .foregroundColor(KakaoTheme.textTertiary)
             }

@@ -40,8 +40,16 @@ extension GeminiService {
     /// 이 길로 나가는 요청 — 구간 요약, 말투 조사, 말투 분석, 다듬기, 미리보기 — 은
     /// 하나도 안 적혔습니다. 말투 조사는 검색 그라운딩까지 켜는 무거운 요청인데
     /// 앱 화면에서는 공짜처럼 보였습니다. 요금이 과소평가되던 가장 큰 이유입니다.
-    func postGemini(body: [String: Any], apiKey: String, roomId: UUID) async throws -> [String: Any] {
-        let model = AIModel.gemini37Flash
+    ///
+    /// 모델을 주지 않으면 그 방이 대화에 쓰는 모델을 씁니다(`auxiliaryModel`).
+    func postGemini(
+        body: [String: Any],
+        apiKey: String,
+        roomId: UUID,
+        model requestedModel: AIModel? = nil
+    ) async throws -> [String: Any] {
+        let model: AIModel
+        if let requestedModel { model = requestedModel } else { model = await auxiliaryModel(for: roomId) }
         guard let url = URL(string: "\(Self.geminiBaseURL)/models/\(model.rawValue):generateContent") else {
             throw URLError(.badURL)
         }
@@ -71,6 +79,22 @@ extension GeminiService {
         let json = try validatedJSON(data: data, response: response, provider: "Gemini")
         await recordGeminiUsage(json["usageMetadata"] as? [String: Any], roomId: roomId, model: model)
         return json
+    }
+
+    /// 보조 호출(구간 요약·말투 조사)이 쓸 모델입니다.
+    ///
+    /// **그 방이 대화에 쓰는 모델을 따릅니다.** 예전에는 3.7로 박아 두어, 3.8로
+    /// 대화하는 방의 기억을 3.7이 쓰고 있었습니다. 구간 요약은 한 번 만들면 그 방에
+    /// 계속 남으므로 쓰는 쪽과 읽는 쪽이 같아야 합니다. 단가는 같아 돈 문제는 아닙니다.
+    ///
+    /// 방이 GPT를 쓰면 Gemini 호출에는 쓸 수 없으므로 3.8로 보냅니다.
+    func auxiliaryModel(for roomId: UUID) async -> AIModel {
+        await MainActor.run {
+            let fallback = ModelSelectionManager.shared.selectedModel
+            let resolved = ChatRoomManager.shared.rooms.first(where: { $0.id == roomId })?
+                .resolvedModel(default: fallback) ?? fallback
+            return resolved.isGemini ? resolved : .gemini38Flash
+        }
     }
 
     /// Gemini가 돌려준 `usageMetadata`를 장부에 적습니다. 없으면 건수만 남깁니다.

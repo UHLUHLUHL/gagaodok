@@ -341,7 +341,9 @@ extension GeminiService {
                 "contents": [["role": "user", "parts": parts]],
                 "generationConfig": structuredOutput.geminiGenerationConfig(maxOutputTokens: maxOutputTokens)
             ]
-            let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId)
+            // 내보내기 창에서 고른 모델로 보냅니다. 예전에는 postGemini가 3.7로 박아 두어
+            // 여기서 3.8을 골라도 3.7로 나갔습니다.
+            let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId, model: model)
             return try textFromGeminiJSON(json)
 
         case .gpt56Luna:
