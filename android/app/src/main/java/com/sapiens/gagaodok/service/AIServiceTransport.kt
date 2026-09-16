@@ -75,13 +75,26 @@ internal val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 /// 이 길로 나가는 요청 — 구간 요약, 말투 조사, 말투 분석, 다듬기, 미리보기 — 은
 /// 하나도 안 적혔습니다. 말투 조사는 검색 그라운딩까지 켜는 무거운 요청인데
 /// 앱 화면에서는 공짜처럼 보였습니다. 요금이 과소평가되던 가장 큰 이유입니다.
+/// 보조 호출(기억 요약·말투 조사·대화 요약)이 쓸 모델입니다.
+///
+/// **그 방이 대화에 쓰는 모델을 그대로 따릅니다.** 예전에는 3.7로 박아 두었는데,
+/// 모델이 하나뿐이던 시절의 코드가 남은 것이었습니다. 그래서 대화는 3.8인데
+/// 그 대화를 요약하는 것은 3.7인 상태가 됐고, 청구서에도 3.7 항목이 계속 떴습니다.
+/// 단가는 같으므로 돈 문제가 아니라, **3.8이 읽을 기억을 3.7이 쓰고 있던 것**이
+/// 문제입니다. M2 구간 요약은 영구 보존이라 그 방의 기억 품질을 오래 좌우합니다.
+///
+/// 방을 못 찾으면 3.8입니다. 단톡방과 수학 멘토는 `resolvedModel`이 3.7로
+/// 고정하므로 대화와 보조 호출이 함께 3.7로 남습니다 — 이번에 건드리지 않습니다.
+internal fun AIService.auxiliaryModel(roomId: UUID): AIModel =
+    store.room(roomId)?.resolvedModel(AIModel.GEMINI_38_FLASH) ?: AIModel.GEMINI_38_FLASH
+
 internal fun AIService.postGemini(
     body: JSONObject,
     apiKey: String,
     roomId: UUID,
-    measureOptimization: Boolean = false
+    measureOptimization: Boolean = false,
+    model: AIModel = auxiliaryModel(roomId)
 ): JSONObject {
-    val model = AIModel.GEMINI_37_FLASH
     val request = Request.Builder()
         .url("$GEMINI_BASE/models/${model.rawValue}:generateContent")
         .addHeader("Content-Type", "application/json")
@@ -152,9 +165,9 @@ internal fun AIService.streamGeminiText(
     body: JSONObject,
     apiKey: String,
     roomId: UUID,
+    model: AIModel = auxiliaryModel(roomId),
     onPartial: (String) -> Unit
 ): TextStreamResult {
-    val model = AIModel.GEMINI_37_FLASH
     val request = Request.Builder()
         .url("$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse")
         .addHeader("Content-Type", "application/json")

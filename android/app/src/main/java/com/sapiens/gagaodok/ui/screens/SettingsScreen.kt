@@ -289,7 +289,9 @@ fun SettingsScreen() {
         // MARK: - 모델
         SettingsSection("기본 모델") {
             Column {
-                listOf(AIModel.GEMINI_37_FLASH).forEach { model ->
+                // 3.8이 들어올 때 이 목록을 같이 안 고쳐서, 고를 수 있는 것이
+                // 3.7뿐이었습니다. 저장된 기본값은 이미 3.8인데 화면에는 안 보였습니다.
+                AIModel.personalCompanionModels.forEach { model ->
                     ChoiceRow(
                         title = model.displayName,
                         subtitle = model.providerName,
