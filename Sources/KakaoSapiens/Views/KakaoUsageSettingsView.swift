@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct KakaoUsageSettingsView: View {
     let onClose: () -> Void
@@ -6,6 +7,8 @@ public struct KakaoUsageSettingsView: View {
     @ObservedObject private var models = ModelSelectionManager.shared
     @ObservedObject private var rooms = ChatRoomManager.shared
     @ObservedObject private var obsidian = ObsidianVaultManager.shared
+    @ObservedObject private var measurement = OptimizationMeasurementStore.shared
+    @State private var confirmClearMeasurement = false
 
     @State private var section: Section = .usage
     @ObservedObject private var appearance = AppearanceManager.shared
@@ -268,6 +271,8 @@ public struct KakaoUsageSettingsView: View {
                 .background(KakaoTheme.dynamic(light: KakaoTheme.hex(0xFDF6E3), dark: KakaoTheme.hex(0x33290F)), in: RoundedRectangle(cornerRadius: 10))
             }
 
+            measurementCard
+
             Text("모델별 사용량")
                 .font(.custom("Pretendard-Bold", size: 12.5))
                 .padding(.leading, 2)
@@ -305,6 +310,62 @@ public struct KakaoUsageSettingsView: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 16)
+    }
+
+    /// 캐시·요약 정책이 실제로 어떻게 움직이는지 재는 장부입니다. 폰과 같은 형식입니다.
+    private var measurementCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("최적화 측정")
+                    .font(.custom("Pretendard-Bold", size: 12.5))
+                Spacer()
+                Button(measurement.isMeasuring ? "측정 종료" : "최적화 측정 시작") {
+                    if measurement.isMeasuring { measurement.stop() } else { measurement.start() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Text(measurementStatus)
+                .font(.custom("Pretendard-Medium", size: 11))
+                .foregroundColor(KakaoTheme.textSecondary)
+
+            Text("챗봇 방의 요청 수·토큰·캐시 판정·요약 결과만 적습니다. 대화 내용은 담지 않습니다.")
+                .font(.custom("Pretendard-Regular", size: 10))
+                .foregroundColor(KakaoTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if measurement.isMeasuring || !measurement.ledger.completedRuns.isEmpty {
+                HStack {
+                    Button("파일 보기") {
+                        NSWorkspace.shared.activateFileViewerSelecting([measurement.fileURL])
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Spacer()
+                    Button("측정 기록 삭제", role: .destructive) { confirmClearMeasurement = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KakaoTheme.sunken, in: RoundedRectangle(cornerRadius: 10))
+        .alert("측정 기록을 삭제할까요?", isPresented: $confirmClearMeasurement) {
+            Button("삭제", role: .destructive) { measurement.clear() }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("진행 중인 회차와 보존된 회차가 모두 지워집니다. 되돌릴 수 없습니다.")
+        }
+    }
+
+    private var measurementStatus: String {
+        if let run = measurement.ledger.activeRun {
+            return "측정 중 · \(run.requests.requestCount)개 요청 기록됨"
+        }
+        let kept = measurement.ledger.completedRuns.count
+        return kept > 0 ? "\(kept)개 측정 회차 보존됨" : "기록 없음"
     }
 
     private var modelSection: some View {

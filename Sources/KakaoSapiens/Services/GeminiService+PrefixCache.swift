@@ -81,21 +81,23 @@ extension GeminiService {
         return previous
     }
 
-    static let cacheTTLSeconds = 900
+    // 값과 근거는 `GeminiCachePolicy`에 모았습니다. 측정 기록이 실제로 돌고 있는 값을
+    // 담으려면 한 곳에 있어야 합니다 — 두 곳에 적으면 어긋나도 아무도 모릅니다.
+    static let cacheTTLSeconds = GeminiCachePolicy.cacheTTLSeconds
     // 근거는 `GeminiCachePolicy.minimumCacheTokens`에 적었습니다. 예전 1,200은 옛 모델 기준이었습니다.
     static let minimumCacheTokens = GeminiCachePolicy.minimumCacheTokens
 
     // 캐시를 다시 만들 기준입니다. 자세한 셈은 `refreshPrefixCache`에 적었습니다.
     // 짧은 대화에서 몇 마디 붙었다고 다시 만들지 않게 하는 바닥값입니다. **정한 값입니다.**
-    static let cacheRefreshMinTailTokens = 2000
+    static let cacheRefreshMinTailTokens = GeminiCachePolicy.refreshTailMinimumTokens
 
     // TTL이 이만큼도 안 남았으면 꼬리가 짧아도 새로 만듭니다. 그대로 두면
     // 곧 만료되어 다음 요청이 통째로 전액이 됩니다.
-    static let cacheRefreshTTLFloor: TimeInterval = 240
+    static let cacheRefreshTTLFloor: TimeInterval = GeminiCachePolicy.refreshTTLFloorSeconds
 
     // 직전 요청이 이 안에 있었으면 "대화 중"으로 봅니다. 그때만 첫 캐시를 만듭니다.
     // **정한 값입니다.** 실제 사용 기록을 보고 뽑은 값이 아닙니다.
-    static let cacheBurstWindow: TimeInterval = 300
+    static let cacheBurstWindow: TimeInterval = GeminiCachePolicy.burstWindowSeconds
 
     func usablePrefixCache(
         for roomId: UUID,
@@ -110,13 +112,13 @@ extension GeminiService {
         // 스트리밍 중이면 캐시 없이 다시 보낼 수도 없어 그대로 실패합니다.
         // 서버에는 아직 살아 있으므로 지워야 보관료가 멈춥니다.
         guard cache.modelIdentifier == model.rawValue else {
-            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey)
+            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey, reason: .MODEL_CHANGED)
             return nil
         }
 
         // 만료된 것은 서버에도 없으므로 지울 것이 없습니다.
         guard cache.expiresAt > Date().addingTimeInterval(30) else {
-            dropCache(for: roomId, deleteRemote: false, apiKey: apiKey)
+            dropCache(for: roomId, deleteRemote: false, apiKey: apiKey, reason: .EXPIRED)
             return nil
         }
 
@@ -128,11 +130,11 @@ extension GeminiService {
         // 그래서 그 방은 대화가 예전 길이를 되찾을 때까지 캐시 없이 전액을 내면서,
         // 쓰지도 않는 캐시의 **보관료는 계속 냈습니다.** 지금은 버리고 다시 만듭니다.
         guard contents.count > cache.coveredTurns else {
-            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey)
+            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey, reason: .SHRUNK)
             return nil
         }
         guard fingerprint(Array(contents.prefix(cache.coveredTurns)), system: system) == cache.fingerprint else {
-            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey)
+            dropCache(for: roomId, deleteRemote: true, apiKey: apiKey, reason: .FINGERPRINT_CHANGED)
             return nil
         }
         return cache
@@ -141,9 +143,10 @@ extension GeminiService {
     /// 로컬 기록에서 지우고, 서버에 남아 있을 것이면 그것도 지웁니다.
     ///
     /// 서버 쪽을 안 지우면 아무도 안 쓰는 캐시가 TTL이 다할 때까지 보관료를 먹습니다.
-    func dropCache(for roomId: UUID, deleteRemote: Bool, apiKey: String) {
+    func dropCache(for roomId: UUID, deleteRemote: Bool, apiKey: String, reason: CacheDropReason? = nil) {
         guard let removed = prefixCaches[roomId] else { return }
         prefixCaches[roomId] = nil
+        if let reason { cacheDropReasons[roomId] = reason }
         // 버리는 캐시가 산 만큼 보관량을 적습니다. 만료된 것은 만료 시각까지만 셉니다.
         settleLease(of: removed, roomId: roomId, at: Date())
         if deleteRemote {
@@ -166,7 +169,8 @@ extension GeminiService {
         contents: [[String: Any]],
         system: String,
         apiKey: String,
-        previousRequestAt: Date?
+        previousRequestAt: Date?,
+        measure: Bool = false
     ) async {
         // 갱신 도중에는 URL 요청에서 액터가 풀리므로, 막지 않으면 같은 방에 대해
         // 갱신이 겹치면서 캐시가 여러 개 만들어지고 이전 것이 지워지지 않습니다.
@@ -180,7 +184,16 @@ extension GeminiService {
         // 사진이 많아 제일 비싼 방이 바로 그 이유로 캐시를 못 받았습니다.
         let estimatedTokens = TokenEstimator.estimatedTokens(contents: contents)
             + TokenEstimator.textTokens(system)
-        guard estimatedTokens >= Self.minimumCacheTokens else { return }
+        // 판정마다 측정 장부에 적습니다. 챗봇 방만 셉니다(폰과 같음).
+        func observe(_ decision: CacheDecision, actual: Int = 0) {
+            guard measure else { return }
+            let estimated = estimatedTokens
+            Task { @MainActor in
+                OptimizationMeasurementStore.shared.observeCache(
+                    decision, estimatedPrefixTokens: estimated, actualCacheTokens: actual)
+            }
+        }
+        guard estimatedTokens >= Self.minimumCacheTokens else { observe(.BELOW_MINIMUM); return }
 
         let previous = prefixCaches[roomId]
 
@@ -196,13 +209,19 @@ extension GeminiService {
             // 올 가능성이 높습니다. 그때만 올립니다. 대신 한 묶음의 두 번째
             // 메시지까지는 캐시 없이 갑니다 — 안 쓸 캐시를 만드는 것보다 낫습니다.
             guard let previousRequestAt,
-                  now.timeIntervalSince(previousRequestAt) <= Self.cacheBurstWindow else { return }
+                  now.timeIntervalSince(previousRequestAt) <= Self.cacheBurstWindow else {
+                observe(.NOT_BURST)
+                return
+            }
         }
+
+        var reason = previous == nil ? CacheCreateReason.from(cacheDropReasons[roomId]) : .PREFIX_CHANGED
 
         if let previous {
             // 이미 같은 구간을 덮고 있으면 다시 만들 것이 없습니다.
             if previous.coveredTurns >= contents.count,
                previous.expiresAt > now.addingTimeInterval(60) {
+                observe(.CACHE_CURRENT)
                 return
             }
 
@@ -219,7 +238,12 @@ extension GeminiService {
                 contents: Array(contents.dropFirst(previous.coveredTurns)))
             let worthIt = tail >= max(Self.cacheRefreshMinTailTokens, previous.tokenCount / 5)
             let expiringSoon = previous.expiresAt <= now.addingTimeInterval(Self.cacheRefreshTTLFloor)
-            guard worthIt || expiringSoon else { return }
+            guard worthIt || expiringSoon else {
+                observe(.TAIL_TOO_SMALL)
+                return
+            }
+            // TTL의 효과는 `EXPIRED`와 이것의 합으로 읽습니다.
+            reason = worthIt ? .TAIL_GREW : .EXPIRING_SOON
         }
 
         guard let url = URL(string: "\(Self.geminiBaseURL)/cachedContents") else { return }
@@ -240,16 +264,33 @@ extension GeminiService {
         guard let httpBody = try? JSONSerialization.data(withJSONObject: payload) else { return }
         request.httpBody = httpBody
 
+        observe(.CREATE_ATTEMPT)
+        // 캐시는 요금 최적화 수단일 뿐이라 실패해도 대화에는 영향이 없습니다. 조용히 넘어가되,
+        // 서버가 거절한 것(HTTP)과 우리 쪽 문제(연결·해석)는 갈라 적습니다.
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let http = response as? HTTPURLResponse else {
+            observe(.LOCAL_FAILURE)
+            return
+        }
+        guard (200...299).contains(http.statusCode) else {
+            observe(.HTTP_FAILURE)
+            return
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let name = json["name"] as? String else {
-            // 캐시는 요금 최적화 수단일 뿐이라 실패해도 대화에는 영향이 없습니다. 조용히 넘어갑니다.
+            observe(.LOCAL_FAILURE)
             return
         }
 
         let cachedTokens = intValue((json["usageMetadata"] as? [String: Any])?["totalTokenCount"])
         let createdAt = Date()
+        observe(.CREATE_SUCCESS, actual: cachedTokens)
+        if measure {
+            let createReason = reason
+            Task { @MainActor in OptimizationMeasurementStore.shared.observeCacheCreateReason(createReason) }
+        }
+        // 다 썼으므로 지웁니다. 남겨 두면 다음 생성이 옛 사유를 다시 씁니다.
+        cacheDropReasons[roomId] = nil
         // 네트워크를 기다리는 사이 다른 요청이 이전 캐시를 이미 버렸을 수 있습니다
         // (`dropCache`가 정산과 원격 삭제까지 마칩니다). 그때 여기서 또 정산하면
         // 같은 캐시가 두 번 적힙니다. 아직 그 자리에 있을 때만 여기서 처리합니다.

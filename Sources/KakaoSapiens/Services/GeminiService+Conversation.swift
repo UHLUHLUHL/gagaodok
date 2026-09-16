@@ -43,11 +43,24 @@ extension GeminiService {
         let digest = roomId.map { ChatRoomManager.shared.loadDigestForRoom(roomId: $0) }
         let plan = ConversationCompactor.plan(conversation: conversation, digest: digest, mode: mode)
 
-        var contents = buildGeminiContents(plan.verbatimTurns)
+        let verbatimContents = buildGeminiContents(plan.verbatimTurns)
+        var contents = verbatimContents
         if let digestText = plan.digestText {
             contents = digestPreamble(digestText) + contents
         }
         let system = systemPrompt(botName: botName, persona: persona, mode: mode)
+
+        // 측정은 챗봇 방만 합니다. 폰과 같은 기준이라 두 기록을 나란히 볼 수 있습니다.
+        // 멘토는 사고 수준도 요약 방식도 달라 섞으면 해석이 안 됩니다.
+        let measure = roomId != nil && mode == .companion
+        let stableSystemTokens = TokenEstimator.textTokens(mode.stableSystemPrompt)
+        let promptBreakdown = PromptTokenBreakdown(
+            stableSystemTokens: stableSystemTokens,
+            personaAndRoomTokens: max(0, TokenEstimator.textTokens(system) - stableSystemTokens),
+            digestTokens: plan.digestText.map(TokenEstimator.textTokens) ?? 0,
+            recentConversationTokens: TokenEstimator.estimatedTokens(contents: verbatimContents)
+        )
+        let estimatedPromptTokens = TokenEstimator.estimatedTokens(contents: contents) + TokenEstimator.textTokens(system)
 
         // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
         var reusedCache = roomId.flatMap {
@@ -55,10 +68,20 @@ extension GeminiService {
         }
         // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
         let previousRequestAt = roomId.flatMap { markRequest($0) }
+        // 같은 값으로 요청 간격 분포도 적습니다. TTL과 burst 기준을 정하려면 "캐시가
+        // 죽은 뒤 얼마 만에 돌아오는가"를 알아야 합니다.
+        if measure {
+            let now = Date()
+            await MainActor.run {
+                OptimizationMeasurementStore.shared.observeRequestGap(previous: previousRequestAt, now: now)
+            }
+        }
 
         // 흘려보낼 곳이 있으면 스트리밍으로, 없으면 지금까지처럼 한 번에 받습니다.
         // 스트림은 완성된 문단만 통과시키므로 화면에 깨진 수식이 뜨지 않습니다.
         func run(cache: PrefixCache?, into outcome: StreamOutcome) async throws {
+            outcome.startedAt = Date()
+            defer { outcome.finishedAt = Date() }
             let roleplaySoFar = mode == .companion && roleplayInProgress
             guard let onBubble else {
                 try await performGeminiRequest(
@@ -99,6 +122,9 @@ extension GeminiService {
             if let roomId {
                 let reported = outcome.usage
                 let responded = outcome.serverResponded
+                if measure {
+                    observeChat(outcome, roomId: roomId, prompt: promptBreakdown, estimatedPromptTokens: estimatedPromptTokens)
+                }
                 Task {
                     if !reported.isEmpty {
                         await self.recordGeminiUsage(reported, roomId: roomId, model: model)
@@ -124,12 +150,17 @@ extension GeminiService {
             // 미보고 건수로도 세지 않습니다.
             if let roomId, !outcome.usage.isEmpty {
                 await recordGeminiUsage(outcome.usage, roomId: roomId, model: model)
+                // 측정도 같은 자리에서 적습니다. 첫 시도는 캐시를 붙였지만 읽지 못한 요청입니다.
+                if measure {
+                    observeChat(outcome, roomId: roomId, prompt: promptBreakdown, estimatedPromptTokens: estimatedPromptTokens)
+                }
                 outcome.usage = [:]
             }
+            outcome.firstTextAt = nil
 
             // 못 쓰게 된 캐시는 서버 쪽도 지웁니다. 남겨 두면 아무도 안 읽는 채로
-            // TTL이 다할 때까지 보관료를 먹습니다.
-            if let roomId { dropCache(for: roomId, deleteRemote: true, apiKey: apiKey) }
+            // TTL이 다할 때까지 보관료를 먹습니다. 서버가 못 찾았으므로 사유는 만료입니다.
+            if let roomId { dropCache(for: roomId, deleteRemote: true, apiKey: apiKey, reason: .EXPIRED) }
             reusedCache = nil
             try await run(cache: nil, into: outcome)
         }
@@ -149,7 +180,7 @@ extension GeminiService {
             Task {
                 await self.refreshPrefixCache(
                     roomId: roomId, model: model, contents: contents, system: system,
-                    apiKey: apiKey, previousRequestAt: previousRequestAt
+                    apiKey: apiKey, previousRequestAt: previousRequestAt, measure: measure
                 )
             }
         }
@@ -185,6 +216,34 @@ extension GeminiService {
         /// 기준입니다. 400·429·5xx로 거절당한 요청은 생성이 시작되지 않았으므로
         /// 세지 않습니다. 세면 화면의 경고가 실제보다 부풀어 믿을 수 없게 됩니다.
         var serverResponded = false
+        /// 요청을 보낸 시각, 첫 글자가 온 시각, 끝난 시각입니다. 응답이 느린 이유를 가리는 데 씁니다.
+        var startedAt: Date?
+        var firstTextAt: Date?
+        var finishedAt: Date?
+    }
+
+    /// 대화 요청 한 건을 측정 장부에 적습니다. 사용량을 못 받았으면 건수만 적습니다.
+    func observeChat(_ outcome: StreamOutcome, roomId: UUID, prompt: PromptTokenBreakdown, estimatedPromptTokens: Int) {
+        let usage = outcome.usage
+        guard !usage.isEmpty || outcome.serverResponded else { return }
+        let start = outcome.startedAt ?? Date()
+        let end = outcome.finishedAt ?? Date()
+        let first = outcome.firstTextAt ?? end
+        let thoughts = intValue(usage["thoughtsTokenCount"])
+        let observation = RequestObservation(
+            roomKey: roomId.uuidString,
+            inputTokens: intValue(usage["promptTokenCount"]) + intValue(usage["toolUsePromptTokenCount"]),
+            cachedInputTokens: intValue(usage["cachedContentTokenCount"]),
+            outputTokens: intValue(usage["candidatesTokenCount"]) + thoughts,
+            estimatedPromptTokens: estimatedPromptTokens,
+            unreported: usage.isEmpty,
+            prompt: prompt,
+            ttftMillis: max(0, Int(first.timeIntervalSince(start) * 1000)),
+            totalMillis: max(0, Int(end.timeIntervalSince(start) * 1000)),
+            thoughtsTokens: thoughts,
+            workload: .CHAT
+        )
+        Task { @MainActor in OptimizationMeasurementStore.shared.observeRequest(observation) }
     }
 
     /// `streamGenerateContent`로 받아 도착하는 대로 흘려보냅니다.
@@ -243,6 +302,7 @@ extension GeminiService {
             let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []
             let piece = parts.compactMap { $0["text"] as? String }.joined()
             guard !piece.isEmpty else { continue }
+            if outcome.firstTextAt == nil { outcome.firstTextAt = Date() }
             outcome.text += piece
             await onText(piece)
         }
@@ -303,6 +363,7 @@ extension GeminiService {
         let json = try validatedJSON(data: data, response: response, provider: "Gemini")
 
         outcome.serverResponded = true
+        outcome.firstTextAt = Date()
         outcome.usage = json["usageMetadata"] as? [String: Any] ?? [:]
         let candidate = (json["candidates"] as? [[String: Any]])?.first
         outcome.finishReason = candidate?["finishReason"] as? String

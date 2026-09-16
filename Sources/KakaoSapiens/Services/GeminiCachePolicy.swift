@@ -23,6 +23,20 @@ enum GeminiCachePolicy {
     /// 헛요청이고 높게 틀리면 캐시를 받을 방이 정가를 내므로, 낮은 쪽이 쌉니다.
     static let minimumCacheTokens = 4600
 
+    /// 명시적 캐시의 수명(초)입니다. 폰은 1,800입니다 — 맥은 아직 옮기지 않았습니다.
+    static let cacheTTLSeconds = 900
+
+    /// 캐시가 덮은 뒤로 이만큼 새로 붙어야 다시 만듭니다(캐시 크기의 1/5과 비교해 큰 쪽).
+    /// **정한 값입니다.**
+    static let refreshTailMinimumTokens = 2000
+
+    /// 수명이 이만큼도 안 남았으면 꼬리가 짧아도 새로 만듭니다.
+    static let refreshTTLFloorSeconds: TimeInterval = 240
+
+    /// 직전 요청이 이 안에 있었으면 "대화 중"으로 보고, 그때만 첫 캐시를 만듭니다.
+    /// **정한 값입니다.** 실제 사용 기록을 보고 뽑은 값이 아닙니다.
+    static let burstWindowSeconds: TimeInterval = 300
+
     /// 한 캐시가 산 동안의 보관량(토큰·시간)입니다.
     ///
     /// **모르면 0입니다.** 만든 시각이 없는 옛 기록이나 크기를 못 받은 캐시는
