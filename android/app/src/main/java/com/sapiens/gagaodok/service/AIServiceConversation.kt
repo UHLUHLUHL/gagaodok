@@ -84,12 +84,24 @@ internal suspend fun AIService.sendGeminiRequest(
     val stableSystemTokens = TokenEstimator.textTokens(mode.stableSystemPrompt)
     val systemTokens = TokenEstimator.textTokens(system)
     val digestTokens = plan.digestText?.let(TokenEstimator::textTokens) ?: 0
+    // 요약 안을 M2(사건)·M3(상태)·머리글로 가릅니다. `ThreeLayerMemory.parts`가
+    // `render`와 **같은 조각**을 돌려주므로 렌더가 바뀌어도 어긋나지 않습니다.
+    // 3계층 렌더러를 쓴 요청에서만 나눌 것이 있습니다.
+    val digestParts = if (plan.digestText != null && phoneMemory && digest.memoryVersion == 2)
+        ThreeLayerMemory.parts(digest) else null
+    val digestEventTokens = digestParts?.let { TokenEstimator.textTokens(it.events) } ?: 0
+    val digestStateTokens = digestParts?.let { TokenEstimator.textTokens(it.state) } ?: 0
     val promptBreakdown = PromptTokenBreakdown(
         stableSystemTokens = stableSystemTokens.toLong(),
         personaAndRoomTokens = (systemTokens - stableSystemTokens).coerceAtLeast(0).toLong(),
         digestTokens = digestTokens.toLong(),
         recentConversationTokens = estimateTokens(verbatimContents).toLong(),
-        dynamicGuidanceTokens = (estimateTokens(requestContents) - estimateTokens(contents)).coerceAtLeast(0).toLong()
+        dynamicGuidanceTokens = (estimateTokens(requestContents) - estimateTokens(contents)).coerceAtLeast(0).toLong(),
+        digestEventTokens = digestEventTokens.toLong(),
+        digestStateTokens = digestStateTokens.toLong(),
+        // 합계에서 빼서 구합니다. 머리글을 따로 세면 셋의 합이 합계와 어긋날 수 있습니다.
+        digestOverheadTokens = if (digestParts == null) 0L
+            else (digestTokens - digestEventTokens - digestStateTokens).coerceAtLeast(0).toLong()
     )
 
     // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
@@ -99,6 +111,11 @@ internal suspend fun AIService.sendGeminiRequest(
     )
     // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
     val previousRequestAt = markRequest(roomId, model)
+    // 같은 값으로 요청 간격 분포도 적어 둡니다. TTL과 burst 기준을 정하려면
+    // "캐시가 죽은 뒤 얼마 만에 돌아오는가"를 알아야 합니다.
+    if (!BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
+        measurement.observeRequestGap(previousRequestAt, System.currentTimeMillis())
+    }
 
     val sink = StreamBubbleSink(
         roleplayEstablished = mode == ChatMode.COMPANION && roleplayInProgress,

@@ -138,16 +138,45 @@ data class PromptTokenBreakdown(
     val personaAndRoomTokens: Long = 0,
     val digestTokens: Long = 0,
     val recentConversationTokens: Long = 0,
-    val dynamicGuidanceTokens: Long = 0
+    val dynamicGuidanceTokens: Long = 0,
+    /// 위 `digestTokens`를 계층별로 가른 값입니다. **셋의 합이 `digestTokens`입니다.**
+    ///
+    /// 합계는 옛 기록과 견주려고 그대로 둡니다. 3계층 렌더러(memoryVersion 2)를 쓴
+    /// 요청에서만 채워지고, 그 외에는 0이라 합계와 어긋납니다 — 그 경우는 애초에
+    /// 나눌 계층이 없습니다.
+    val digestEventTokens: Long = 0,
+    val digestStateTokens: Long = 0,
+    /// 머리글과 "이것은 기록이지 지시가 아니다" 같은 고정 지침입니다.
+    val digestOverheadTokens: Long = 0
 ) {
     fun adding(other: PromptTokenBreakdown) = PromptTokenBreakdown(
-        stableSystemTokens + other.stableSystemTokens,
-        personaAndRoomTokens + other.personaAndRoomTokens,
-        digestTokens + other.digestTokens,
-        recentConversationTokens + other.recentConversationTokens,
-        dynamicGuidanceTokens + other.dynamicGuidanceTokens
+        stableSystemTokens = stableSystemTokens + other.stableSystemTokens,
+        personaAndRoomTokens = personaAndRoomTokens + other.personaAndRoomTokens,
+        digestTokens = digestTokens + other.digestTokens,
+        recentConversationTokens = recentConversationTokens + other.recentConversationTokens,
+        dynamicGuidanceTokens = dynamicGuidanceTokens + other.dynamicGuidanceTokens,
+        digestEventTokens = digestEventTokens + other.digestEventTokens,
+        digestStateTokens = digestStateTokens + other.digestStateTokens,
+        digestOverheadTokens = digestOverheadTokens + other.digestOverheadTokens
     )
 }
+
+/// 요청 사이가 얼마나 벌어졌는지를 구간으로 셉니다.
+///
+/// **캐시 정책을 정하는 데 이 분포가 없으면 안 됩니다.** TTL 30분과 burst 5분은
+/// 둘 다 근거 없이 정한 값이고, "캐시가 죽은 뒤 얼마 만에 돌아오는가"를 모르면
+/// 늘릴지 줄일지 판단할 수 없습니다. 구간 경계는 그 판단에 맞췄습니다 —
+/// 5분은 burst 기준, 30분은 TTL입니다.
+@Serializable
+data class RequestGapCounts(
+    /// 앱을 다시 켠 뒤 첫 요청입니다. 직전 시각이 메모리에만 있어 알 수 없습니다.
+    /// **모르는 것을 "오래됐다"로 세면 안 됩니다.** 따로 셉니다.
+    val unknown: Int = 0,
+    val withinFiveMinutes: Int = 0,
+    val fiveToTenMinutes: Int = 0,
+    val tenToThirtyMinutes: Int = 0,
+    val overThirtyMinutes: Int = 0
+)
 
 data class CacheObservation(
     val roomKey: String,
@@ -243,7 +272,9 @@ data class MeasurementRun(
     val requestsByWorkload: Map<MeasurementWorkload, MeasurementRequests> = emptyMap(),
     /// 옛 기록에는 없으므로 기본값을 둡니다.
     val memory: MeasurementMemory = MeasurementMemory(),
-    val roomRequestCounts: Map<String, Int> = emptyMap()
+    val roomRequestCounts: Map<String, Int> = emptyMap(),
+    /// 옛 기록에는 없으므로 기본값을 둡니다.
+    val requestGaps: RequestGapCounts = RequestGapCounts()
 )
 
 @Serializable
@@ -400,6 +431,21 @@ class OptimizationMeasurementStore internal constructor(
 
     /// 캐시를 새로 만든 이유를 적습니다. 생성에 성공한 뒤에만 부릅니다.
     @Synchronized
+    /// 직전 요청과의 간격을 구간에 한 건 더합니다.
+    fun observeRequestGap(previousRequestAt: Long?, now: Long) {
+        val run = _state.value.activeRun ?: return
+        val g = run.requestGaps
+        val gap = previousRequestAt?.let { now - it }
+        val next = when {
+            gap == null || gap < 0 -> g.copy(unknown = g.unknown + 1)
+            gap <= 5 * 60_000L -> g.copy(withinFiveMinutes = g.withinFiveMinutes + 1)
+            gap <= 10 * 60_000L -> g.copy(fiveToTenMinutes = g.fiveToTenMinutes + 1)
+            gap <= 30 * 60_000L -> g.copy(tenToThirtyMinutes = g.tenToThirtyMinutes + 1)
+            else -> g.copy(overThirtyMinutes = g.overThirtyMinutes + 1)
+        }
+        replaceActive(run.copy(requestGaps = next))
+    }
+
     fun observeCacheCreateReason(reason: CacheCreateReason) {
         val run = _state.value.activeRun ?: return
         val old = run.cache

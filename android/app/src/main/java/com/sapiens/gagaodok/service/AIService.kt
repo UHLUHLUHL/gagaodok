@@ -116,10 +116,18 @@ class AIService private constructor(internal val appContext: Context) {
     // 첫 요청을 전액으로 냅니다. TTL이 남아 있으면 이어서 쓰도록 디스크에 적어 둡니다.
     internal val prefixCaches: MutableMap<String, PrefixCache> by lazy {
         runCatching {
-            Codec.json.decodeFromString<Map<String, PrefixCache>>(cacheFile.readText())
-                // 이미 만료된 것은 되살리지 않습니다. 서버에도 없습니다.
-                .filterValues { it.expiresAtMillis > System.currentTimeMillis() }
-                .let(::normalizePrefixCacheMap)
+            val stored = normalizePrefixCacheMap(
+                Codec.json.decodeFromString<Map<String, PrefixCache>>(cacheFile.readText())
+            )
+            // 이미 만료된 것은 되살리지 않습니다. 서버에도 없습니다.
+            // **다만 버리기 전에 보관량을 적습니다.** 예전에는 조용히 걸러내기만 해서,
+            // 앱이 꺼진 사이 만료된 캐시가 산 시간이 장부에서 통째로 빠졌습니다.
+            // 구글은 만료 시각까지 받으므로 그만큼 장부가 실제보다 적게 나왔습니다.
+            val now = System.currentTimeMillis()
+            val expired = stored.filterValues { it.expiresAtMillis <= now }
+            val survived = stored.filterValues { it.expiresAtMillis > now }.let(::normalizePrefixCacheMap)
+            if (expired.isNotEmpty()) settleExpiredCachesOnLoad(expired, survived)
+            survived
         }.getOrElse { mutableMapOf() }
     }
     internal val refreshingRooms = mutableSetOf<String>()

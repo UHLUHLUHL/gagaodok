@@ -193,6 +193,33 @@ internal fun writeShrinkProneRooms(file: File, keys: Set<String>) {
     runCatching { file.writeText(Codec.json.encodeToString(keys)) }
 }
 
+/// 앱이 꺼진 사이 만료된 캐시의 보관량을 장부에 적고, 파일에서 지웁니다.
+///
+/// **적기 전에 파일부터 줄입니다.** 순서를 뒤집으면 파일 쓰기가 실패했을 때 다음
+/// 실행에서 같은 캐시를 또 적습니다. 보관량은 실제보다 **적게** 나오는 것이
+/// 많게 나오는 것보다 낫습니다 — 많으면 없는 절감을 있다고 읽게 됩니다.
+///
+/// 끝난 시각은 `now`가 아니라 **만료 시각**입니다. 캐시는 그때 죽었고, 앱을 언제
+/// 다시 켰는지는 요금과 무관합니다.
+///
+/// `prefixCaches`를 건드리지 않습니다. 이 함수는 그 속성이 만들어지는 도중에
+/// 불리므로, 여기서 `persistCaches()`를 부르면 같은 속성을 다시 초기화하려 듭니다.
+internal fun AIService.settleExpiredCachesOnLoad(
+    expired: Map<String, PrefixCache>,
+    survived: Map<String, PrefixCache>
+) {
+    val pruned = runCatching {
+        cacheFile.writeText(Codec.json.encodeToString(survived))
+    }.isSuccess
+    if (!pruned) return
+    expired.forEach { (key, cache) ->
+        val roomId = runCatching { UUID.fromString(key.substringBefore('|')) }.getOrNull() ?: return@forEach
+        val model = AIModel.entries.firstOrNull { it.rawValue == cache.modelIdentifier } ?: return@forEach
+        val hours = cacheLeaseTokenHours(cache, cache.expiresAtMillis)
+        if (hours > 0) usage.recordCacheLeaseEnd(roomId, model, hours)
+    }
+}
+
 internal fun AIService.persistCaches() {
     val snapshot = synchronized(prefixCaches) { prefixCaches.toMap() }
     scope.launch { runCatching { cacheFile.writeText(Codec.json.encodeToString(snapshot)) } }
