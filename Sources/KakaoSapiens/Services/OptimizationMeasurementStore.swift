@@ -236,7 +236,53 @@ struct RequestObservation {
     /// 사고 토큰입니다. 요금은 출력에 합산되지만 느린 이유를 가리려면 따로 봅니다.
     var thoughtsTokens = 0
     var workload: MeasurementWorkload = .CHAT
+    /// 요청을 보낸 시각입니다. 모르면 기록하는 시각으로 대신합니다.
+    var sentAt: Date? = nil
+    /// 명시적 캐시를 붙여 보냈는지입니다. 모르면 `nil`입니다.
+    /// 캐시 토큰이 있는데 이것이 `false`면 서버의 암묵 캐시가 읽힌 것입니다.
+    var explicitCache: Bool? = nil
 }
+
+/// 요청 한 번의 기록입니다. 대화 내용은 담지 않습니다. 필드는 폰(`RequestLogEntry`)과 같습니다.
+struct RequestLogEntry: Codable, Equatable {
+    var atMillis: Int
+    var roomKey: String
+    var workload: MeasurementWorkload = .CHAT
+    var inputTokens = 0
+    var cachedInputTokens = 0
+    var outputTokens = 0
+    var unreported = false
+    var explicitCache: Bool? = nil
+
+    init(atMillis: Int, roomKey: String, workload: MeasurementWorkload = .CHAT, inputTokens: Int = 0,
+         cachedInputTokens: Int = 0, outputTokens: Int = 0, unreported: Bool = false, explicitCache: Bool? = nil) {
+        self.atMillis = atMillis
+        self.roomKey = roomKey
+        self.workload = workload
+        self.inputTokens = inputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.outputTokens = outputTokens
+        self.unreported = unreported
+        self.explicitCache = explicitCache
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        atMillis = try c.decode(Int.self, forKey: .atMillis)
+        roomKey = c.value(.roomKey, "")
+        workload = c.value(.workload, .CHAT)
+        inputTokens = c.value(.inputTokens, 0)
+        cachedInputTokens = c.value(.cachedInputTokens, 0)
+        outputTokens = c.value(.outputTokens, 0)
+        unreported = c.value(.unreported, false)
+        explicitCache = (try? c.decodeIfPresent(Bool.self, forKey: .explicitCache)) ?? nil
+    }
+}
+
+/// 한 회차에 남기는 요청 기록의 상한입니다. 폰과 같은 값입니다.
+/// 기록할 때마다 파일 전체를 다시 쓰므로 크게 잡지 않습니다(한 줄 약 180바이트, 0.5MB 안팎).
+/// 넘으면 오래된 줄부터 버리고 버린 수를 셉니다. 합계(`requests`)는 계속 셉니다.
+let requestLogLimit = 3000
 
 struct MeasurementRequests: Codable, Equatable {
     var requestCount = 0
@@ -370,6 +416,12 @@ struct MeasurementRun: Codable, Equatable {
     var memory = MeasurementMemory()
     var roomRequestCounts: [String: Int] = [:]
     var requestGaps = RequestGapCounts()
+    /// 요청마다 시각과 토큰을 남긴 목록입니다. 옛 기록에는 없습니다.
+    ///
+    /// 간격을 구간으로만 세면 요청의 순서가 사라집니다. 캐시 수명은 캐시를 만든 시각부터
+    /// 흐르므로, 어떤 TTL이 싼지는 이 순서를 그대로 다시 돌려 봐야 정할 수 있습니다.
+    var requestLog: [RequestLogEntry] = []
+    var requestLogDropped = 0
 
     init(id: Int, startedAtMillis: Int, policy: MeasurementPolicy) {
         self.id = id
@@ -389,6 +441,8 @@ struct MeasurementRun: Codable, Equatable {
         memory = c.value(.memory, MeasurementMemory())
         roomRequestCounts = c.value(.roomRequestCounts, [:])
         requestGaps = c.value(.requestGaps, RequestGapCounts())
+        requestLog = c.value(.requestLog, [])
+        requestLogDropped = c.value(.requestLogDropped, 0)
     }
 }
 
@@ -433,8 +487,11 @@ final class OptimizationMeasurementStore: ObservableObject {
     private let clock: () -> Date
     private var consecutivePaidFailures = 0
 
-    init(fileURL: URL, clock: @escaping () -> Date = Date.init) {
+    private let logLimit: Int
+
+    init(fileURL: URL, logLimit: Int = requestLogLimit, clock: @escaping () -> Date = Date.init) {
         self.fileURL = fileURL
+        self.logLimit = logLimit
         self.clock = clock
         ledger = (try? JSONDecoder().decode(MeasurementLedger.self, from: Data(contentsOf: fileURL)))
             ?? MeasurementLedger()
@@ -476,6 +533,21 @@ final class OptimizationMeasurementStore: ObservableObject {
             run.requests.add(o)
             run.requestsByWorkload[o.workload.rawValue, default: MeasurementRequests()].add(o)
             run.roomRequestCounts[o.roomKey, default: 0] += 1
+            run.requestLog.append(RequestLogEntry(
+                atMillis: o.sentAt.map { Int($0.timeIntervalSince1970 * 1000) } ?? nowMillis,
+                roomKey: o.roomKey,
+                workload: o.workload,
+                inputTokens: max(0, o.inputTokens),
+                cachedInputTokens: max(0, o.cachedInputTokens),
+                outputTokens: max(0, o.outputTokens),
+                unreported: o.unreported,
+                explicitCache: o.explicitCache
+            ))
+            let overflow = max(0, run.requestLog.count - logLimit)
+            if overflow > 0 {
+                run.requestLog.removeFirst(overflow)
+                run.requestLogDropped += overflow
+            }
         }
     }
 

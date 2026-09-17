@@ -23,6 +23,10 @@ struct OptimizationMeasurementStoreTests {
         jsonShapeMatchesPhone()
         readsPhoneLedger()
         survivesReload()
+        requestLogKeepsOrder()
+        requestLogFallsBackToNow()
+        requestLogCapsOldest()
+        readsPhoneRequestLog()
         print("OptimizationMeasurementStoreTests: 모두 통과")
     }
 
@@ -195,7 +199,7 @@ struct OptimizationMeasurementStoreTests {
         precondition(root["platform"] as? String == "mac")
         let run = root["activeRun"] as! [String: Any]
         for key in ["id", "startedAtMillis", "policy", "requests", "cache", "requestsByWorkload",
-                    "memory", "roomRequestCounts", "requestGaps"] {
+                    "memory", "roomRequestCounts", "requestGaps", "requestLog", "requestLogDropped"] {
             precondition(run[key] != nil, "폰과 같은 키가 있어야 한다: \(key)")
         }
         precondition(run["endedAtMillis"] == nil, "진행 중인 회차에는 끝난 시각이 없다")
@@ -250,5 +254,68 @@ struct OptimizationMeasurementStoreTests {
         precondition(reloaded.ledger == s.ledger, "파일에서 그대로 읽힌다")
         precondition(reloaded.ledger.completedRuns.first?.roomRequestCounts == ["x": 1])
         precondition(reloaded.isMeasuring)
+    }
+
+    // 간격을 구간으로만 세면 순서가 사라진다. 요청마다 시각과 토큰을 남겨 TTL을 다시 돌려 볼 수 있게 한다.
+    @MainActor
+    static func requestLogKeepsOrder() {
+        let s = store()
+        s.start()
+        var first = chat(room: "a", input: 27_000, cached: 0)
+        first.sentAt = Date(timeIntervalSince1970: 100)
+        first.explicitCache = false
+        var second = chat(room: "a", input: 27_500, cached: 24_000, output: 50)
+        second.sentAt = Date(timeIntervalSince1970: 200)
+        second.explicitCache = true
+        s.observeRequest(first)
+        s.observeRequest(second)
+        let log = s.ledger.activeRun!.requestLog
+        precondition(log.map(\.atMillis) == [100_000, 200_000], "보낸 시각을 밀리초로, 순서대로")
+        precondition(log[1] == RequestLogEntry(atMillis: 200_000, roomKey: "a", workload: .CHAT, inputTokens: 27_500,
+                                               cachedInputTokens: 24_000, outputTokens: 50, explicitCache: true))
+        let reloaded = OptimizationMeasurementStore(fileURL: s.fileURL)
+        precondition(reloaded.ledger.activeRun?.requestLog == log, "다시 읽어도 그대로")
+    }
+
+    @MainActor
+    static func requestLogFallsBackToNow() {
+        let s = store(at: 5)
+        s.start()
+        var memory = chat(workload: .MEMORY)
+        memory.unreported = true
+        s.observeRequest(memory)
+        let log = s.ledger.activeRun!.requestLog
+        precondition(log.count == 1)
+        let entry = log[0]
+        precondition(entry.atMillis == 5_000, "보낸 시각을 모르면 기록 시각")
+        precondition(entry.explicitCache == nil && entry.unreported && entry.workload == .MEMORY)
+    }
+
+    @MainActor
+    static func requestLogCapsOldest() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("cap-\(UUID().uuidString).json")
+        let s = OptimizationMeasurementStore(fileURL: url, logLimit: 5, clock: { Date(timeIntervalSince1970: 1) })
+        s.start()
+        for i in 0..<8 {
+            var o = chat()
+            o.sentAt = Date(timeIntervalSince1970: Double(i))
+            s.observeRequest(o)
+        }
+        let run = s.ledger.activeRun!
+        precondition(run.requestLog.count == 5 && run.requestLog.first?.atMillis == 3_000, "오래된 줄부터 버린다")
+        precondition(run.requestLogDropped == 3 && run.requests.requestCount == 8, "버린 수를 세고 합계는 유지")
+    }
+
+    // 폰이 쓴 요청 기록을 맥이 읽는다. 옛 파일(기록 없음)도 읽는다.
+    @MainActor
+    static func readsPhoneRequestLog() {
+        let phone = #"{"activeRun":{"id":11,"startedAtMillis":1,"policy":{},"requestLog":[{"atMillis":42,"roomKey":"e3d6","workload":"MEMORY","inputTokens":9,"explicitCache":false},{"atMillis":43,"roomKey":"e3d6"}],"requestLogDropped":2}}"#
+        let run = try! JSONDecoder().decode(MeasurementLedger.self, from: Data(phone.utf8)).activeRun!
+        precondition(run.requestLog.count == 2 && run.requestLogDropped == 2)
+        precondition(run.requestLog[0].workload == .MEMORY && run.requestLog[0].explicitCache == false)
+        precondition(run.requestLog[1].workload == .CHAT && run.requestLog[1].explicitCache == nil, "빠진 칸은 기본값")
+        let old = #"{"activeRun":{"id":1,"startedAtMillis":1,"policy":{}}}"#
+        let oldRun = try! JSONDecoder().decode(MeasurementLedger.self, from: Data(old.utf8)).activeRun!
+        precondition(oldRun.requestLog.isEmpty && oldRun.requestLogDropped == 0)
     }
 }

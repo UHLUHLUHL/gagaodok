@@ -82,6 +82,7 @@ extension GeminiService {
         // 스트림은 완성된 문단만 통과시키므로 화면에 깨진 수식이 뜨지 않습니다.
         func run(cache: PrefixCache?, into outcome: StreamOutcome) async throws {
             outcome.startedAt = Date()
+            outcome.explicitCache = cache != nil
             defer { outcome.finishedAt = Date() }
             let roleplaySoFar = mode == .companion && roleplayInProgress
             guard let onBubble else {
@@ -222,6 +223,8 @@ extension GeminiService {
         var startedAt: Date?
         var firstTextAt: Date?
         var finishedAt: Date?
+        /// 이번 시도에 명시적 캐시를 붙였는지입니다. 캐시 없이 다시 보내면 `false`가 됩니다.
+        var explicitCache: Bool?
     }
 
     /// 대화 요청 한 건을 측정 장부에 적습니다. 사용량을 못 받았으면 건수만 적습니다.
@@ -243,7 +246,9 @@ extension GeminiService {
             ttftMillis: max(0, Int(first.timeIntervalSince(start) * 1000)),
             totalMillis: max(0, Int(end.timeIntervalSince(start) * 1000)),
             thoughtsTokens: thoughts,
-            workload: .CHAT
+            workload: .CHAT,
+            sentAt: start,
+            explicitCache: outcome.explicitCache
         )
         Task { @MainActor in OptimizationMeasurementStore.shared.observeRequest(observation) }
     }

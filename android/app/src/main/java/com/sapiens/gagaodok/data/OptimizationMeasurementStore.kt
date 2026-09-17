@@ -129,8 +129,32 @@ data class RequestObservation(
     /// 모델이 답을 쓰기 전에 생각하는 데 쓴 토큰입니다. 요금은 출력에 합산되지만,
     /// 느린 이유를 가리려면 따로 봐야 합니다.
     val thoughtsTokens: Int = 0,
-    val workload: MeasurementWorkload = MeasurementWorkload.CHAT
+    val workload: MeasurementWorkload = MeasurementWorkload.CHAT,
+    /// 요청을 보낸 벽시계 시각입니다. 모르면 기록하는 시각으로 대신합니다.
+    val sentAtMillis: Long? = null,
+    /// 명시적 캐시를 붙여 보냈는지입니다. 모르면 `null`입니다.
+    /// 캐시 토큰이 있는데 이것이 `false`면 서버의 암묵 캐시가 읽힌 것입니다.
+    val explicitCache: Boolean? = null
 )
+
+/// 요청 한 번의 기록입니다. 대화 내용은 담지 않습니다.
+@Serializable
+data class RequestLogEntry(
+    val atMillis: Long,
+    val roomKey: String,
+    val workload: MeasurementWorkload = MeasurementWorkload.CHAT,
+    val inputTokens: Int = 0,
+    val cachedInputTokens: Int = 0,
+    val outputTokens: Int = 0,
+    val unreported: Boolean = false,
+    val explicitCache: Boolean? = null
+)
+
+/// 한 회차에 남기는 요청 기록의 상한입니다. 한 줄이 약 180바이트라 0.5MB 안팎이고,
+/// 9회차 속도(6일 471건)면 한 달치가 넘습니다. 기록할 때마다 파일 전체를 다시 쓰므로
+/// 크게 잡지 않습니다.
+/// 넘으면 오래된 줄부터 버리고 버린 수를 셉니다. 합계(`requests`)는 계속 셉니다.
+const val REQUEST_LOG_LIMIT = 3000
 
 @Serializable
 data class PromptTokenBreakdown(
@@ -285,7 +309,14 @@ data class MeasurementRun(
     val memory: MeasurementMemory = MeasurementMemory(),
     val roomRequestCounts: Map<String, Int> = emptyMap(),
     /// 옛 기록에는 없으므로 기본값을 둡니다.
-    val requestGaps: RequestGapCounts = RequestGapCounts()
+    val requestGaps: RequestGapCounts = RequestGapCounts(),
+    /// 요청마다 시각과 토큰을 남긴 목록입니다. 옛 기록에는 없습니다.
+    ///
+    /// 간격을 구간으로만 세면 요청의 **순서**가 사라집니다. 캐시 수명은 마지막 요청이
+    /// 아니라 캐시를 만든 시각부터 흐르므로, 어떤 TTL이 싼지는 이 순서를 그대로 다시
+    /// 돌려 봐야 정할 수 있습니다.
+    val requestLog: List<RequestLogEntry> = emptyList(),
+    val requestLogDropped: Int = 0
 )
 
 @Serializable
@@ -297,6 +328,7 @@ data class MeasurementLedger(
 
 class OptimizationMeasurementStore internal constructor(
     private val file: File,
+    private val requestLogLimit: Int = REQUEST_LOG_LIMIT,
     private val clock: () -> Long = System::currentTimeMillis
 ) {
     private val _state = MutableStateFlow(load())
@@ -370,10 +402,23 @@ class OptimizationMeasurementStore internal constructor(
                 run.requestsByWorkload[observation.workload] ?: MeasurementRequests(),
                 observation
             ))
+        val entry = RequestLogEntry(
+            atMillis = observation.sentAtMillis ?: clock(),
+            roomKey = observation.roomKey,
+            workload = observation.workload,
+            inputTokens = observation.inputTokens.coerceAtLeast(0),
+            cachedInputTokens = observation.cachedInputTokens.coerceAtLeast(0),
+            outputTokens = observation.outputTokens.coerceAtLeast(0),
+            unreported = observation.unreported,
+            explicitCache = observation.explicitCache
+        )
+        val overflow = (run.requestLog.size + 1 - requestLogLimit).coerceAtLeast(0)
         replaceActive(run.copy(
             requests = requests,
             requestsByWorkload = perWorkload,
-            roomRequestCounts = rooms
+            roomRequestCounts = rooms,
+            requestLog = run.requestLog.drop(overflow) + entry,
+            requestLogDropped = run.requestLogDropped + overflow
         ))
     }
 

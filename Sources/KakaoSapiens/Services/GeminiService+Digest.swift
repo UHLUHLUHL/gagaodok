@@ -151,7 +151,9 @@ extension GeminiService {
                 ttftMillis: elapsed,
                 totalMillis: elapsed,
                 thoughtsTokens: thoughts,
-                workload: .MEMORY
+                workload: .MEMORY,
+                sentAt: startedAt,
+                explicitCache: false
             )
             Task { @MainActor in OptimizationMeasurementStore.shared.observeRequest(observation) }
         }

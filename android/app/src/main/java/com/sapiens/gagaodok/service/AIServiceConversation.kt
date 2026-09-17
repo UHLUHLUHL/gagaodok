@@ -141,6 +141,10 @@ internal suspend fun AIService.sendGeminiRequest(
     // 걸렸는지가 구분됩니다. 실기기에서 첫 말풍선까지 23초가 걸린 적이 있는데,
     // 그중 22초가 첫 글자를 기다린 시간이었습니다.
     val requestStartedAt = SystemClock.elapsedRealtime()
+    // 요청 기록(`RequestLogEntry`)에 남길 벽시계 시각과, 실제로 명시적 캐시를 붙여 보냈는지입니다.
+    // 캐시가 서버에서 사라져 캐시 없이 다시 보내면 `false`로 바뀝니다.
+    val requestSentAtMillis = System.currentTimeMillis()
+    var sentWithCache = cache != null
     var firstTokenAt = 0L
     try {
         val consume: suspend (String) -> Unit = {
@@ -167,6 +171,7 @@ internal suspend fun AIService.sendGeminiRequest(
                 cacheKey(roomId, model), deleteRemote = false, apiKey = apiKey,
                 reason = com.sapiens.gagaodok.data.CacheDropReason.EXPIRED
             )
+            sentWithCache = false
             streamGemini(outcome, requestContents, system, null, apiKey, model, mode, onText = consume)
         }
         sink.finish()
@@ -206,7 +211,9 @@ internal suspend fun AIService.sendGeminiRequest(
                 prompt = promptBreakdown,
                 ttftMillis = ttftMillis,
                 totalMillis = totalMillis,
-                thoughtsTokens = thoughts
+                thoughtsTokens = thoughts,
+                sentAtMillis = requestSentAtMillis,
+                explicitCache = sentWithCache
             ))
         } else {
             // 한 조각도 못 받고 끊겼습니다. 숫자를 지어내지 않고 건수만 남깁니다.
@@ -223,7 +230,9 @@ internal suspend fun AIService.sendGeminiRequest(
                 unreported = true,
                 prompt = promptBreakdown,
                 ttftMillis = ttftMillis,
-                totalMillis = totalMillis
+                totalMillis = totalMillis,
+                sentAtMillis = requestSentAtMillis,
+                explicitCache = sentWithCache
             ))
         }
     }

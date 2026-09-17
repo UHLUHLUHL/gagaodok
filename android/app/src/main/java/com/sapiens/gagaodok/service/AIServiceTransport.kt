@@ -95,6 +95,7 @@ internal fun AIService.postGemini(
     measureOptimization: Boolean = false,
     model: AIModel = auxiliaryModel(roomId)
 ): JSONObject {
+    val sentAtMillis = System.currentTimeMillis()
     val request = Request.Builder()
         .url("$GEMINI_BASE/models/${model.rawValue}:generateContent")
         .addHeader("Content-Type", "application/json")
@@ -136,7 +137,9 @@ internal fun AIService.postGemini(
                     thoughtsTokens = thoughts,
                     // 이 길로 나가는 것은 기억 생성뿐입니다. 채팅과 섞이면
                     // `high` 사고 토큰이 챗봇 몫으로 잘못 읽힙니다.
-                    workload = MeasurementWorkload.MEMORY
+                    workload = MeasurementWorkload.MEMORY,
+                    sentAtMillis = sentAtMillis,
+                    explicitCache = false
                 )
             )
         } else {
@@ -149,7 +152,9 @@ internal fun AIService.postGemini(
                     outputTokens = 0,
                     estimatedPromptTokens = TokenEstimator.textTokens(body.toString()),
                     unreported = true,
-                    workload = MeasurementWorkload.MEMORY
+                    workload = MeasurementWorkload.MEMORY,
+                    sentAtMillis = sentAtMillis,
+                    explicitCache = false
                 )
             )
         }
