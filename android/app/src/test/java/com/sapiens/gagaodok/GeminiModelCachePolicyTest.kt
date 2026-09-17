@@ -45,7 +45,9 @@ class GeminiModelCachePolicyTest {
     fun `personal companion choices exclude Luna and keep 37 first`() {
         // 3.8이 기본이고 3.7도 계속 고를 수 있습니다.
         assertEquals(
-            listOf(AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH),
+            // DeepSeek(실험)는 폰 빌드에서만 고를 수 있습니다.
+            if (BuildConfig.TABLET_MENTOR) listOf(AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH)
+            else listOf(AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH, AIModel.DEEPSEEK_FLASH),
             AIModel.personalCompanionModels,
         )
         assertTrue(AIModel.personalCompanionModels.none { it == AIModel.GPT_56_LUNA })

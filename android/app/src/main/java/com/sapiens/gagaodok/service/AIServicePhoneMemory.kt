@@ -1,6 +1,7 @@
 package com.sapiens.gagaodok.service
 
 import android.util.Log
+import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.ConversationTurn
 import kotlinx.serialization.decodeFromString
@@ -15,7 +16,8 @@ internal fun AIService.updatePhoneMemory(
     expected: ConversationDigest,
     valid: ConversationDigest,
     pending: ConversationCompactor.PendingSegment?,
-    apiKey: String
+    apiKey: String,
+    model: AIModel
 ) {
     val key = roomId.toString()
     val coverageBefore = expected.coveredTurns
@@ -55,7 +57,8 @@ internal fun AIService.updatePhoneMemory(
             segmentCount = segmentCount,
             retryAfterMillis = waiting,
             failureDetail = failureDetail,
-            droppedLoops = droppedLoops
+            droppedLoops = droppedLoops,
+            model = model.rawValue
         ))
         // 방 식별자와 응답 본문은 남기지 않습니다.
         Log.i(
@@ -138,7 +141,7 @@ internal fun AIService.updatePhoneMemory(
                 // 실측: 3,500을 주면 3,362(96.1%), 10,692를 주면 10,262(96.0%).
                 // 예산을 올려도 남는 자리는 그대로라 수준을 낮춥니다.
                 .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL)))
-        val response = postGemini(body, apiKey, roomId, measureOptimization = true)
+        val response = postGemini(body, apiKey, roomId, measureOptimization = true, model = model)
         // 여기서부터는 이미 요금이 나갔습니다. 어떻게 끝나든 반드시 적습니다.
         val candidate = response.optJSONArray("candidates")?.optJSONObject(0) ?: run {
             record(PhoneMemoryOutcome.NO_CANDIDATE)
@@ -159,7 +162,10 @@ internal fun AIService.updatePhoneMemory(
         // 뭉쳤습니다. 그러면 실패율을 봐도 어디를 고칠지 알 수 없습니다. 예산이
         // 모자란 것과 지시문이 안 지켜진 것은 처방이 정반대입니다.
         val draft = runCatching {
-            ThreeLayerMemory.json.decodeFromString<MemoryDraft>(joinParts(candidate).trim())
+            // DeepSeek는 스키마를 강제하지 못해 모르는 칸이 붙을 수 있습니다. 그 칸만 무시하고
+            // 나머지 검사(구간·분량·상태)는 그대로 거칩니다. Gemini는 예전처럼 엄격하게 읽습니다.
+            val decoder = if (model == AIModel.DEEPSEEK_FLASH) deepSeekMemoryJson else ThreeLayerMemory.json
+            decoder.decodeFromString<MemoryDraft>(joinParts(candidate).trim())
         }.getOrElse {
             record(PhoneMemoryOutcome.PARSE_FAILED)
             return

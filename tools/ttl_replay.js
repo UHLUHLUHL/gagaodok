@@ -7,6 +7,7 @@
 // 입력 두 가지:
 //   node tools/ttl_replay.js ledger <optimization_measurements.json>
 //     측정 장부의 요청 기록(requestLog). 실제 입력 토큰을 쓰고, MEMORY 요청을 요약 시점으로 본다.
+//     Gemini 대화 요청만 읽는다(모델 칸이 없는 옛 줄은 Gemini로 본다).
 //   node tools/ttl_replay.js messages <대화 폴더> [<대화 폴더> ...]
 //     room_*_messages.json의 사용자 메시지 시각만 읽는다(본문은 읽지 않는다). 재생성·삭제된
 //     요청은 빠지고, 입력 토큰은 P(기본 27,000)와 교환당 G(기본 400)로 어림한다.
@@ -30,24 +31,48 @@ const G = Number(process.env.G || 400);
 const COMPACT_EVERY = 80;
 
 // 각 방: [{ t(초), input(토큰), compacted(이 요청 전에 요약이 바뀌었는가) }]
+//
+// Gemini 요청만 다시 돌린다. 이 규칙은 Gemini 명시적 캐시 규칙이라 다른 모델(DeepSeek 등)의
+// 대화 요청을 섞으면 그 모델이 받은 캐시 적중이 Gemini 효과처럼 읽힌다.
+//   - 모델 칸이 없는 옛 줄(model 없음)은 Gemini로 본다. 칸이 생기기 전 폰 대화방은 Gemini뿐이었다.
+//   - 앱은 캐시와 직전 요청 시각을 방+모델마다 따로 두므로(cacheKey) 같은 방도 모델별로 나눠 돌린다.
+//   - MEMORY 줄은 모델과 상관없이 요약 시점으로 쓴다. 요약은 방 하나에 하나라 어느 모델이
+//     만들었든 모든 모델의 앞부분이 바뀐다.
+const UNKNOWN = "gemini(모름)";
+const isGemini = model => model == null || model.startsWith("gemini-");
+
 function fromLedger(file) {
   const ledger = JSON.parse(fs.readFileSync(file));
   const runs = [...(ledger.completedRuns || []), ...(ledger.activeRun ? [ledger.activeRun] : [])];
   const byRoom = {};
   for (const run of runs) for (const e of run.requestLog || []) (byRoom[e.roomKey.toLowerCase()] ||= []).push(e);
   const rooms = [];
+  let skipped = 0;
   for (const [id, entries] of Object.entries(byRoom)) {
     entries.sort((a, b) => a.atMillis - b.atMillis);
-    const requests = [];
-    let pendingCompaction = false;
+    const chains = {};
+    let lastKnown = null;
     for (const e of entries) {
-      if (e.workload === "MEMORY") { pendingCompaction = true; continue; }
+      if (e.workload === "MEMORY") {
+        for (const chain of Object.values(chains)) chain.pendingCompaction = true;
+        continue;
+      }
+      if (!isGemini(e.model)) { skipped++; continue; }
       if (e.unreported) continue;
-      requests.push({ t: e.atMillis / 1000, input: e.inputTokens, compacted: pendingCompaction });
-      pendingCompaction = false;
+      // 모델을 모르는 옛 줄은 그 방에서 처음 이름이 적힌 Gemini 모델로 이어 붙인다.
+      // 따로 두면 측정 도중 칸이 생긴 회차(10회차)에서 경계마다 연속 요청이 끊긴다.
+      const key = e.model ?? lastKnown ?? UNKNOWN;
+      if (e.model && chains[UNKNOWN] && !chains[e.model]) { chains[e.model] = chains[UNKNOWN]; delete chains[UNKNOWN]; }
+      if (e.model) lastKnown = e.model;
+      const chain = (chains[key] ||= { pendingCompaction: false, requests: [] });
+      chain.requests.push({ t: e.atMillis / 1000, input: e.inputTokens, compacted: chain.pendingCompaction });
+      chain.pendingCompaction = false;
     }
-    if (requests.length) rooms.push({ id: id.slice(0, 8), group: "ledger", requests });
+    for (const [model, chain] of Object.entries(chains)) {
+      if (chain.requests.length) rooms.push({ id: `${id.slice(0, 8)}/${model}`, group: "ledger", requests: chain.requests });
+    }
   }
+  if (skipped) console.log(`Gemini가 아닌 대화 요청 ${skipped}건은 뺐다.`);
   return rooms;
 }
 

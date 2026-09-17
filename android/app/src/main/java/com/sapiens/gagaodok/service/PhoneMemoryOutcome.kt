@@ -137,5 +137,8 @@ data class PhoneMemoryObservation(
     /// **0이 아니면 기억이 그만큼 흐려졌다는 뜻입니다.** 원문과 M2 요약에는 남아
     /// 있지만 규칙으로 튀어나오지는 않습니다. 이 값이 쌓이는 속도를 보고
     /// `LOOP_RULE_LIMIT`과 `STATE_TOKEN_BUDGET`을 조정합니다.
-    val droppedLoops: Int = 0
+    val droppedLoops: Int = 0,
+    /// 기억 호출을 받은 모델의 식별자입니다. 모델별 장부를 가르는 데 씁니다.
+    /// **기본값을 두지 않습니다** — 빠뜨리면 Gemini와 DeepSeek의 실패율이 섞입니다.
+    val model: String
 )

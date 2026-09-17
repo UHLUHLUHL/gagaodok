@@ -1,7 +1,9 @@
 package com.sapiens.gagaodok
 
 import com.sapiens.gagaodok.data.CacheCreateReason
+import com.sapiens.gagaodok.data.CacheDecision
 import com.sapiens.gagaodok.data.CacheDropReason
+import com.sapiens.gagaodok.data.CacheObservation
 import com.sapiens.gagaodok.data.MeasurementPolicy
 import com.sapiens.gagaodok.data.OptimizationMeasurementStore
 import org.junit.Assert.assertEquals
@@ -24,14 +26,30 @@ class CacheDropReasonTest {
         store.start(MeasurementPolicy.current())
 
         // 이 방은 처음이다.
-        store.observeCacheCreateReason(CacheCreateReason.from(null))
+        store.observeCacheCreateReason(CacheCreateReason.from(null), "gemini-3.8-flash")
         // 만료되어 버린 뒤 다시 만든다. TTL 연장이 줄이려는 것이 이것이다.
-        store.observeCacheCreateReason(CacheCreateReason.from(CacheDropReason.EXPIRED))
-        store.observeCacheCreateReason(CacheCreateReason.from(CacheDropReason.EXPIRED))
+        store.observeCacheCreateReason(CacheCreateReason.from(CacheDropReason.EXPIRED), "gemini-3.8-flash")
+        store.observeCacheCreateReason(CacheCreateReason.from(CacheDropReason.EXPIRED), "gemini-3.8-flash")
 
         val reasons = store.state.value.activeRun!!.cache.createReasons
         assertEquals(1, reasons[CacheCreateReason.FIRST])
         assertEquals(2, reasons[CacheCreateReason.EXPIRED])
+    }
+
+    @Test
+    fun `캐시 판정과 생성 이유는 Gemini 요청만 센다`() {
+        // 명시적 캐시는 Gemini 규칙입니다. DeepSeek는 서버가 알아서 캐시하므로
+        // 섞이면 TTL·물림 효과를 잰 숫자가 흐려집니다.
+        val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
+        store.start(MeasurementPolicy.current())
+        store.observeCacheCreateReason(CacheCreateReason.FIRST, "deepseek-flash")
+        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_SUCCESS, 4_900, model = "deepseek-flash"))
+        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_SUCCESS, 4_900, model = "gemini-3.7-flash"))
+
+        val cache = store.state.value.activeRun!!.cache
+        assertEquals(emptyMap<CacheCreateReason, Int>(), cache.createReasons)
+        assertEquals(mapOf(CacheDecision.CREATE_SUCCESS to 1), cache.decisionCounts)
+        assertEquals(4_900L, cache.actualCacheTokens)
     }
 
     @Test

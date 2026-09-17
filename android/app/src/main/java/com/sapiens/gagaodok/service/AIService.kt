@@ -55,6 +55,10 @@ class AIService private constructor(internal val appContext: Context) {
     internal val store get() = ChatStore.get(appContext)
     internal val usage get() = TokenUsageStore.get(appContext)
     internal val measurement get() = OptimizationMeasurementStore.get(appContext)
+    /// DeepSeek(실험)에 실제로 보낸 추가분입니다. 캐시 접두사를 되살리는 데만 씁니다.
+    internal val deepSeekExtras: DeepSeekSentExtrasStore by lazy {
+        DeepSeekSentExtrasStore(File(File(appContext.filesDir, "KakaoSapiens"), "deepseek_sent_extras.json"))
+    }
 
     // MARK: - 시스템 지침
     internal fun systemPrompt(botName: String, persona: PersonaStyle?, mode: ChatMode): String {
@@ -91,7 +95,8 @@ class AIService private constructor(internal val appContext: Context) {
         onBubble: suspend (GeneratedMessageBubble) -> Unit
     ): String = withContext(Dispatchers.IO) {
         when (model) {
-            AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH -> sendGeminiRequest(
+            // DeepSeek(실험)도 같은 길입니다. 보내는 순간에만 형식을 옮깁니다.
+            AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH, AIModel.DEEPSEEK_FLASH -> sendGeminiRequest(
                 conversation, botName, roomId, persona, mode, roleplayInProgress,
                 repetitionAdvice, systemPromptOverride, model, onRawText, onBubble
             )

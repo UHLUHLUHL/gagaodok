@@ -1,5 +1,6 @@
 package com.sapiens.gagaodok.service
 
+import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.ConversationTurn
 import org.json.JSONArray
@@ -15,7 +16,8 @@ internal fun AIService.appendDigestSegment(
     roomId: UUID,
     pending: ConversationCompactor.PendingSegment,
     mode: ChatMode,
-    apiKey: String
+    apiKey: String,
+    model: AIModel
 ) {
     val key = roomId.toString()
     synchronized(summarizingRooms) {
@@ -27,7 +29,7 @@ internal fun AIService.appendDigestSegment(
         val current = store.loadDigest(roomId)
         if (current.coveredTurns >= pending.lastTurn) return
 
-        val text = requestSegmentSummary(roomId, pending.turns, pending.firstTurn, mode, apiKey)
+        val text = requestSegmentSummary(roomId, pending.turns, pending.firstTurn, mode, apiKey, model)
         if (text.isEmpty()) return
 
         store.saveDigest(
@@ -50,7 +52,8 @@ internal fun AIService.requestSegmentSummary(
     turns: List<ConversationTurn>,
     startingTurn: Int,
     mode: ChatMode,
-    apiKey: String
+    apiKey: String,
+    model: AIModel
 ): String {
     val transcript = ConversationCompactor.transcript(turns, startingTurn, mode)
     if (transcript.isEmpty()) return ""
@@ -87,7 +90,7 @@ internal fun AIService.requestSegmentSummary(
                 .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL))
         )
 
-    val json = runCatching { postGemini(body, apiKey, roomId) }.getOrNull() ?: return ""
+    val json = runCatching { postGemini(body, apiKey, roomId, model = model) }.getOrNull() ?: return ""
     val candidate = json.optJSONArray("candidates")?.optJSONObject(0) ?: return ""
 
     // 잘린 요약은 저장하지 않습니다. 한 번 넣으면 고치지 않는 기록이라

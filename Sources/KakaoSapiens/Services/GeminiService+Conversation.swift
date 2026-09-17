@@ -125,7 +125,7 @@ extension GeminiService {
                 let reported = outcome.usage
                 let responded = outcome.serverResponded
                 if measure {
-                    observeChat(outcome, roomId: roomId, prompt: promptBreakdown, estimatedPromptTokens: estimatedPromptTokens)
+                    observeChat(outcome, roomId: roomId, model: model, prompt: promptBreakdown, estimatedPromptTokens: estimatedPromptTokens)
                 }
                 Task {
                     if !reported.isEmpty {
@@ -154,7 +154,7 @@ extension GeminiService {
                 await recordGeminiUsage(outcome.usage, roomId: roomId, model: model)
                 // 측정도 같은 자리에서 적습니다. 첫 시도는 캐시를 붙였지만 읽지 못한 요청입니다.
                 if measure {
-                    observeChat(outcome, roomId: roomId, prompt: promptBreakdown, estimatedPromptTokens: estimatedPromptTokens)
+                    observeChat(outcome, roomId: roomId, model: model, prompt: promptBreakdown, estimatedPromptTokens: estimatedPromptTokens)
                 }
                 outcome.usage = [:]
             }
@@ -228,7 +228,7 @@ extension GeminiService {
     }
 
     /// 대화 요청 한 건을 측정 장부에 적습니다. 사용량을 못 받았으면 건수만 적습니다.
-    func observeChat(_ outcome: StreamOutcome, roomId: UUID, prompt: PromptTokenBreakdown, estimatedPromptTokens: Int) {
+    func observeChat(_ outcome: StreamOutcome, roomId: UUID, model: AIModel, prompt: PromptTokenBreakdown, estimatedPromptTokens: Int) {
         let usage = outcome.usage
         guard !usage.isEmpty || outcome.serverResponded else { return }
         let start = outcome.startedAt ?? Date()
@@ -248,7 +248,8 @@ extension GeminiService {
             thoughtsTokens: thoughts,
             workload: .CHAT,
             sentAt: start,
-            explicitCache: outcome.explicitCache
+            explicitCache: outcome.explicitCache,
+            model: model.rawValue
         )
         Task { @MainActor in OptimizationMeasurementStore.shared.observeRequest(observation) }
     }

@@ -27,11 +27,15 @@ extension GeminiService {
         apiKey: String
     ) async {
         let measure = mode == .companion
+        // 요청과 장부가 같은 모델을 가리키도록 처음에 한 번 정합니다(`postGemini`와 같은 규칙).
+        let requestModel: AIModel
+        if let model { requestModel = model } else { requestModel = await auxiliaryModel(for: roomId) }
         func record(_ outcome: DigestOutcome, before: Int, after: Int, detail: String? = nil) {
             guard measure else { return }
+            let modelId = requestModel.rawValue
             Task { @MainActor in
                 OptimizationMeasurementStore.shared.observeDigest(
-                    outcome, coverageBefore: before, coverageAfter: after, failureDetail: detail)
+                    outcome, coverageBefore: before, coverageAfter: after, failureDetail: detail, model: modelId)
             }
         }
 
@@ -64,7 +68,7 @@ extension GeminiService {
         do {
             switch try await requestSegmentSummary(
                 roomId: roomId, turns: pending.turns, startingTurn: pending.firstTurn,
-                mode: mode, model: model, apiKey: apiKey) {
+                mode: mode, model: requestModel, apiKey: apiKey) {
             case .text(let value): text = value; outcome = .COMMITTED
             case .noCandidate: outcome = .NO_CANDIDATE
             case .notStop(let reason): outcome = .NOT_STOP; detail = reason
@@ -132,7 +136,10 @@ extension GeminiService {
         ]
 
         let startedAt = Date()
-        let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId, model: model)
+        // 측정 장부에 모델을 적어야 하므로 보내기 전에 정합니다(`postGemini`와 같은 규칙).
+        let requestModel: AIModel
+        if let model { requestModel = model } else { requestModel = await auxiliaryModel(for: roomId) }
+        let json = try await postGemini(body: body, apiKey: apiKey, roomId: roomId, model: requestModel)
 
         // 요약 요청도 측정합니다. **사고 토큰을 따로 봅니다** — 사고가 예산을 다 먹어
         // 본문이 잘리는지가 이 호출의 가장 큰 위험이라, 그걸 바로 볼 수 있어야 합니다.
@@ -153,7 +160,8 @@ extension GeminiService {
                 thoughtsTokens: thoughts,
                 workload: .MEMORY,
                 sentAt: startedAt,
-                explicitCache: false
+                explicitCache: false,
+                model: requestModel.rawValue
             )
             Task { @MainActor in OptimizationMeasurementStore.shared.observeRequest(observation) }
         }

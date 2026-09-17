@@ -5,7 +5,6 @@ import android.util.Log
 import com.sapiens.gagaodok.BuildConfig
 import com.sapiens.gagaodok.data.RequestObservation
 import com.sapiens.gagaodok.data.PromptTokenBreakdown
-import com.sapiens.gagaodok.data.SecureStore
 import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.AttachmentType
 import com.sapiens.gagaodok.model.ChatMode
@@ -51,9 +50,11 @@ internal suspend fun AIService.sendGeminiRequest(
     onRawText: suspend (String) -> Unit,
     onBubble: suspend (GeneratedMessageBubble) -> Unit
 ): String {
-    require(model.isGeminiConversationModel) { "Gemini conversation path requires a Gemini model." }
-    val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
-        ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
+    // DeepSeek(실험)도 이 길을 탑니다. 압축·기억·호감도·측정을 똑같이 거치고,
+    // 명시적 캐시만 건너뛰며, 보내는 순간에만 형식을 옮깁니다(`AIServiceDeepSeek.kt`).
+    require(model.usesSharedConversationPath) { "Shared conversation path requires Gemini or DeepSeek." }
+    val usesGeminiCache = model.isGeminiConversationModel
+    val apiKey = apiKeyFor(model)
 
     // 대화가 아주 길어진 방에서는 앞부분을 구간 요약으로 갈아끼웁니다.
     // 기준에 못 미치면 plan이 원본을 그대로 돌려주므로 짧은 방은 지금까지와 똑같이 동작합니다.
@@ -78,7 +79,14 @@ internal suspend fun AIService.sendGeminiRequest(
     val verbatimContents = buildGeminiContents(plan.verbatimTurns)
     var contents = verbatimContents
     plan.digestText?.let { contents = digestPreamble(it) + contents }
-    var requestContents = buildGeminiContents(plan.verbatimTurns.withRepetitionGuidance(repetitionAdvice))
+    // DeepSeek는 지난 요청에 보낸 모양을 그대로 되살려야 서버 캐시가 맞습니다(`deepSeekReplayTurns`).
+    val guidance = repetitionAdvice?.promptSection()
+    val lastUserTurn = plan.verbatimTurns.lastOrNull { it.sender == MessageSender.USER }?.id
+    var requestContents = if (model == AIModel.DEEPSEEK_FLASH) {
+        buildGeminiContents(deepSeekReplayTurns(plan.verbatimTurns, deepSeekExtras.load(roomId), guidance))
+    } else {
+        buildGeminiContents(plan.verbatimTurns.withRepetitionGuidance(repetitionAdvice))
+    }
     plan.digestText?.let { requestContents = digestPreamble(it) + requestContents }
     val system = systemPromptOverride ?: systemPrompt(botName, persona, mode)
     val stableSystemTokens = TokenEstimator.textTokens(mode.stableSystemPrompt)
@@ -105,15 +113,16 @@ internal suspend fun AIService.sendGeminiRequest(
     )
 
     // 지문에 system이 들어가므로, 모드를 바꾸면 이전 캐시가 저절로 버려지고 새 지침으로 다시 잡힙니다.
-    val cache = usablePrefixCache(
+    // 명시적 캐시는 Gemini 규칙입니다. DeepSeek는 서버가 알아서 캐시합니다.
+    val cache = if (usesGeminiCache) usablePrefixCache(
         roomId, model, contents, system, apiKey,
         digestCoveredTurns = plan.coveredTurns
-    )
+    ) else null
     // 캐시를 만들지 말지 정할 때 씁니다. **읽기 전에** 꺼내야 직전 값이 나옵니다.
     val previousRequestAt = markRequest(roomId, model)
     // 같은 값으로 요청 간격 분포도 적어 둡니다. TTL과 burst 기준을 정하려면
-    // "캐시가 죽은 뒤 얼마 만에 돌아오는가"를 알아야 합니다.
-    if (!BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
+    // "캐시가 죽은 뒤 얼마 만에 돌아오는가"를 알아야 합니다. 그래서 Gemini 요청만 셉니다.
+    if (usesGeminiCache && !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION) {
         measurement.observeRequestGap(previousRequestAt, System.currentTimeMillis())
     }
 
@@ -145,6 +154,12 @@ internal suspend fun AIService.sendGeminiRequest(
     // 캐시가 서버에서 사라져 캐시 없이 다시 보내면 `false`로 바뀝니다.
     val requestSentAtMillis = System.currentTimeMillis()
     var sentWithCache = cache != null
+    if (model == AIModel.DEEPSEEK_FLASH) {
+        deepSeekExtras.recordRequest(
+            roomId, plan.verbatimTurns, lastUserTurn, guidance,
+            liveRoomIds = store.rooms.value.map { it.id }.toSet()
+        )
+    }
     var firstTokenAt = 0L
     try {
         val consume: suspend (String) -> Unit = {
@@ -193,8 +208,8 @@ internal suspend fun AIService.sendGeminiRequest(
             val input = reported.optInt("promptTokenCount") + reported.optInt("toolUsePromptTokenCount")
             val cached = reported.optInt("cachedContentTokenCount")
             logRequestTiming(
-                mode, ttftMillis, totalMillis, input, cached, reportedThoughts, output - thoughts,
-                thinkingLevel = mode.geminiThinkingLevel,
+                model, mode, ttftMillis, totalMillis, input, cached, reportedThoughts, output - thoughts,
+                thinkingLevel = if (model == AIModel.DEEPSEEK_FLASH && deepSeekChatThinkingDisabled(mode)) "disabled" else mode.geminiThinkingLevel,
                 turns = conversation.size,
                 digestTurns = plan.digestText?.let { plan.verbatimTurns.size } ?: -1
             )
@@ -203,7 +218,8 @@ internal suspend fun AIService.sendGeminiRequest(
                 // 검색 그라운딩을 쓰면 도구가 쓴 입력이 따로 옵니다. 이것도 청구됩니다.
                 inputTokens = input,
                 outputTokens = output,
-                cachedInputTokens = cached
+                cachedInputTokens = cached,
+                sentAtMillis = requestSentAtMillis
             )
             if (shouldMeasure) measurement.observeRequest(RequestObservation(
                 roomId.toString(), input, cached, output,
@@ -213,13 +229,14 @@ internal suspend fun AIService.sendGeminiRequest(
                 totalMillis = totalMillis,
                 thoughtsTokens = thoughts,
                 sentAtMillis = requestSentAtMillis,
-                explicitCache = sentWithCache
+                explicitCache = sentWithCache,
+                model = model.rawValue
             ))
         } else {
             // 한 조각도 못 받고 끊겼습니다. 숫자를 지어내지 않고 건수만 남깁니다.
             logRequestTiming(
-                mode, ttftMillis, totalMillis, 0, 0, null, 0,
-                thinkingLevel = mode.geminiThinkingLevel,
+                model, mode, ttftMillis, totalMillis, 0, 0, null, 0,
+                thinkingLevel = if (model == AIModel.DEEPSEEK_FLASH && deepSeekChatThinkingDisabled(mode)) "disabled" else mode.geminiThinkingLevel,
                 turns = conversation.size,
                 digestTurns = plan.digestText?.let { plan.verbatimTurns.size } ?: -1
             )
@@ -232,21 +249,27 @@ internal suspend fun AIService.sendGeminiRequest(
                 ttftMillis = ttftMillis,
                 totalMillis = totalMillis,
                 sentAtMillis = requestSentAtMillis,
-                explicitCache = sentWithCache
+                explicitCache = sentWithCache,
+                model = model.rawValue
             ))
         }
     }
 
     if (outcome.text.isEmpty()) {
         // 답변이 비었을 때 "왜" 비었는지가 대부분 finishReason에 담겨 옵니다.
-        throw AIServiceException(emptyResponseMessage(outcome.finishReason))
+        throw AIServiceException(
+            emptyResponseMessage(outcome.finishReason, model),
+            // DeepSeek 서버 자원 부족은 다시 보낼 만합니다. Gemini는 예전처럼 다시 보내지 않습니다.
+            retryable = model == AIModel.DEEPSEEK_FLASH && isDeepSeekRetryableFinish(outcome.finishReason)
+        )
     }
+    if (model == AIModel.DEEPSEEK_FLASH) deepSeekExtras.recordReply(roomId, lastUserTurn, outcome.text)
 
     // 캐시에는 "방금 실제로 보낸 contents"를 그대로 올립니다.
     // 답변까지 덧붙여 캐시하면 적중률이 조금 높지만, 앱이 다음 턴에 재구성하는 문자열과
     // 한 글자라도 어긋나면 지문 검사에서 통째로 탈락합니다.
     // 답변을 이미 확보한 뒤이므로 화면 표시를 막지 않도록 백그라운드에서 진행합니다.
-    scope.launch {
+    if (usesGeminiCache) scope.launch {
         refreshPrefixCache(
             roomId, model, contents, system, apiKey, previousRequestAt,
             digestCoveredTurns = plan.coveredTurns,
@@ -255,12 +278,13 @@ internal suspend fun AIService.sendGeminiRequest(
     }
 
     // 요약도 답변을 다 받은 뒤에 만듭니다. 보내기 전에 만들면 그 몇 초가 고스란히 응답 지연이 됩니다.
+    // 이번 답변과 같은 모델·키로 보냅니다. 그사이 방 모델이 바뀌어도 키와 모델이 어긋나지 않습니다.
     if (phoneMemory) {
         if (plan.pending != null || (storedDigest.memoryVersion == 0 && !storedDigest.isEmpty)) {
-            scope.launch { updatePhoneMemory(roomId, conversation, storedDigest, digest, plan.pending, apiKey) }
+            scope.launch { updatePhoneMemory(roomId, conversation, storedDigest, digest, plan.pending, apiKey, model) }
         }
     } else {
-        plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, mode, apiKey) } }
+        plan.pending?.let { pending -> scope.launch { appendDigestSegment(roomId, pending, mode, apiKey, model) } }
     }
 
     return outcome.text
@@ -289,9 +313,11 @@ internal suspend fun AIService.streamGemini(
     onText: suspend (String) -> Unit
 ) {
     val url = "$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse"
-    val body = requestBody(contents, system, cache, mode).toString()
+    val deepSeek = model == AIModel.DEEPSEEK_FLASH
+    val requestJson = requestBody(contents, system, cache, mode)
+    val body = requestJson.toString()
 
-    val request = Request.Builder()
+    val request = if (deepSeek) deepSeekRequest(requestJson, apiKey, stream = true, chatReply = deepSeekChatThinkingDisabled(mode)) else Request.Builder()
         .url(url)
         .addHeader("Content-Type", "application/json")
         // 키를 쿼리 문자열에 붙이면 URL이 남는 곳마다 그대로 노출되므로 헤더로 보냅니다.
@@ -307,7 +333,9 @@ internal suspend fun AIService.streamGemini(
             if (cache != null && isMissingCachedContentResponse(it.code, raw, cache.name)) {
                 throw MissingCachedContentException()
             }
-            throw AIServiceException(errorMessage(raw, it.code, "Gemini"))
+            // DeepSeek(실험)만 429·5xx를 다시 보낼 수 있다고 알립니다(`postGemini`와 같은 규칙).
+            // Gemini 대화 스트림은 지금 동작 그대로 둡니다.
+            throw AIServiceException(errorMessage(raw, it.code, model.providerName), deepSeek && retryable(it.code))
         }
 
         val source = it.body?.source() ?: return
@@ -316,7 +344,8 @@ internal suspend fun AIService.streamGemini(
             if (!line.startsWith("data:")) continue
             val payload = line.removePrefix("data:").trim()
             if (payload.isEmpty() || payload == "[DONE]") continue
-            val json = runCatching { JSONObject(payload) }.getOrNull() ?: continue
+            val json = runCatching { JSONObject(payload) }.getOrNull()
+                ?.let { j -> if (deepSeek) deepSeekResponseToGemini(j) else j } ?: continue
 
             json.optJSONObject("usageMetadata")?.let { u -> outcome.usage = u }
             val candidate = json.optJSONArray("candidates")?.optJSONObject(0) ?: continue
@@ -446,6 +475,7 @@ internal fun AIService.buildGeminiContents(conversation: List<ConversationTurn>)
 /// - ttft가 큰데 둘 다 보통이다 → 네트워크나 서버 사정
 /// - ttft는 작은데 총 시간이 크다 → 답변이 길어서 생성에 걸린 것
 private fun logRequestTiming(
+    model: AIModel,
     mode: ChatMode,
     ttftMillis: Long,
     totalMillis: Long,
@@ -463,7 +493,7 @@ private fun logRequestTiming(
     val compaction = if (digestTurns < 0) "none" else "verbatim=$digestTurns"
     Log.i(
         "GagaodokTiming",
-        "$mode ttft=${ttftMillis}ms total=${totalMillis}ms " +
+        "$mode model=${model.rawValue} ttft=${ttftMillis}ms total=${totalMillis}ms " +
             "input=$inputTokens(cached=$cachedTokens) thoughts=$thoughts answer=$answerTokens " +
             "thinking=$thinkingLevel turns=$turns compaction=$compaction"
     )

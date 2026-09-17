@@ -24,7 +24,7 @@ class OptimizationMeasurementTest {
         var now = 1_000L
         val first = OptimizationMeasurementStore(file) { now }
         first.start(MeasurementPolicy.current())
-        first.observeRequest(RequestObservation("room-a", 5_000, 4_100, 200, 100))
+        first.observeRequest(RequestObservation("room-a", 5_000, 4_100, 200, 100, model = GEMINI))
         now = 5_000L
         first.stop()
 
@@ -138,12 +138,45 @@ class OptimizationMeasurementTest {
         assertEquals(4, memory.outcomeCounts.size)
     }
 
+    @Test
+    fun `기억 결과는 모델마다 따로 쌓이고 기존 합계는 Gemini만 센다`() {
+        val file = tempFile()
+        val store = OptimizationMeasurementStore(file) { 1_000L }
+        store.start(MeasurementPolicy.current())
+        val deepSeek = "deepseek-flash"
+        // Gemini 실패 → DeepSeek 성공 → Gemini 실패. 모델이 섞이면 가운데 성공이 연쇄를 끊는다.
+        store.observeMemory(memoryObservation(PhoneMemoryOutcome.NOT_STOP, false, 100, 100, "MAX_TOKENS"))
+        store.observeMemory(memoryObservation(PhoneMemoryOutcome.COMMITTED, false, 100, 150, model = deepSeek))
+        store.observeMemory(memoryObservation(PhoneMemoryOutcome.NOT_STOP, false, 100, 100, "MAX_TOKENS"))
+        store.observeMemory(memoryObservation(PhoneMemoryOutcome.PARSE_FAILED, false, 150, 150, model = deepSeek))
+
+        val run = store.state.value.activeRun!!
+        assertEquals(2, run.memory.attempts)
+        assertEquals(0, run.memory.committed)
+        assertEquals("Gemini 연쇄가 DeepSeek 성공에 끊기지 않는다", 2, run.memory.maxConsecutivePaidFailures)
+        assertEquals(mapOf("MAX_TOKENS" to 2), run.memory.failureDetails)
+
+        val gemini = run.byModel[GEMINI]!!.memory
+        assertEquals(run.memory, gemini)
+        val ds = run.byModel[deepSeek]!!.memory
+        assertEquals(2, ds.attempts)
+        assertEquals(1, ds.committed)
+        assertEquals(150, ds.lastCommittedCoverage)
+        assertEquals(1, ds.outcomeCounts[PhoneMemoryOutcome.PARSE_FAILED])
+        assertEquals(1, ds.maxConsecutivePaidFailures)
+
+        // 다시 읽어도 모델별 기억이 남는다.
+        val reloaded = OptimizationMeasurementStore(file) { 2_000L }
+        assertEquals(ds, reloaded.state.value.activeRun!!.byModel[deepSeek]!!.memory)
+    }
+
     private fun memoryObservation(
         outcome: PhoneMemoryOutcome,
         migration: Boolean,
         before: Int,
         after: Int,
-        failureDetail: String? = null
+        failureDetail: String? = null,
+        model: String = GEMINI
     ) = PhoneMemoryObservation(
         outcome = outcome,
         migration = migration,
@@ -152,14 +185,15 @@ class OptimizationMeasurementTest {
         targetThrough = after,
         segmentCount = if (migration) 7 else 1,
         retryAfterMillis = if (outcome.advancesCoverage || !outcome.paid) 0L else 900_000L,
-        failureDetail = failureDetail
+        failureDetail = failureDetail,
+        model = model
     )
 
     @Test
     fun `inactive measurement ignores observations`() {
         val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
-        store.observeRequest(RequestObservation("room-a", 5_000, 0, 200, 100))
-        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_SUCCESS, 4_800))
+        store.observeRequest(RequestObservation("room-a", 5_000, 0, 200, 100, model = GEMINI))
+        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_SUCCESS, 4_800, model = GEMINI))
         assertNull(store.state.value.activeRun)
         assertTrue(store.state.value.completedRuns.isEmpty())
     }
@@ -169,7 +203,7 @@ class OptimizationMeasurementTest {
         val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
         store.start(MeasurementPolicy.current())
         listOf(4_095, 4_096, 4_599, 4_600, 8_192, 16_384).forEach {
-            store.observeCache(CacheObservation("room-a", it, CacheDecision.BELOW_MINIMUM))
+            store.observeCache(CacheObservation("room-a", it, CacheDecision.BELOW_MINIMUM, model = GEMINI))
         }
         val histogram = store.state.value.activeRun!!.cache.prefixTokenBuckets
         assertEquals(listOf(1, 2, 1, 1, 1), histogram)
@@ -190,8 +224,8 @@ class OptimizationMeasurementTest {
     fun `cache attempt and result count one prefix sample`() {
         val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
         store.start(MeasurementPolicy.current())
-        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_ATTEMPT))
-        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_SUCCESS, 4_900))
+        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_ATTEMPT, model = GEMINI))
+        store.observeCache(CacheObservation("room-a", 5_000, CacheDecision.CREATE_SUCCESS, 4_900, model = GEMINI))
 
         val cache = store.state.value.activeRun!!.cache
         assertEquals(1, cache.prefixTokenBuckets.sum())
@@ -204,13 +238,15 @@ class OptimizationMeasurementTest {
         val store = OptimizationMeasurementStore(tempFile()) { 1_000L }
         store.start(MeasurementPolicy.current())
         store.observeRequest(RequestObservation(
-            "room-a", 6_000, 4_500, 200, 6_100,
+            "room-a", 6_000, 4_500, 200, 6_100, model = GEMINI,
             prompt = PromptTokenBreakdown(700, 900, 600, 3_800, 100)
         ))
 
         assertEquals(PromptTokenBreakdown(700, 900, 600, 3_800, 100),
             store.state.value.activeRun!!.requests.prompt)
     }
+
+    private companion object { const val GEMINI = "gemini-3.8-flash" }
 
     private fun tempFile(): File = Files.createTempDirectory("gagaodok-measurement").resolve("runs.json").toFile()
 }

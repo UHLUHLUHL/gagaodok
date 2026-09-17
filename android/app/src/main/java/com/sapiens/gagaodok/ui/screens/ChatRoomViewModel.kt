@@ -26,6 +26,7 @@ import com.sapiens.gagaodok.service.GroupReplyTimeline
 import com.sapiens.gagaodok.service.PersonalAffectionProtocol
 import com.sapiens.gagaodok.service.PlannedReaction
 import com.sapiens.gagaodok.service.RoleplayParser
+import com.sapiens.gagaodok.service.deepSeekRetryDelayMillis
 import com.sapiens.gagaodok.service.repetitionAdviceFromConversation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -405,7 +406,9 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
         val suppressedExpressions = protocol?.persona?.suppressedExpressions
             ?: room.profile.persona.suppressedExpressions
         val personalAffectionEnabled = protocol == null && requestMode == ChatMode.COMPANION &&
-            requestModel.isGeminiConversationModel && !BuildConfig.TABLET_MENTOR
+            // 호감도는 프롬프트와 표식뿐이라 모델에 묶이지 않습니다. 같은 방에서 모델을
+            // 바꿔도 켜졌다 꺼졌다 하지 않도록 DeepSeek(실험)에도 켭니다.
+            requestModel.usesSharedConversationPath && !BuildConfig.TABLET_MENTOR
         val systemPromptOverride = protocol?.systemPrompt(room.title) ?: if (personalAffectionEnabled) {
             PersonalAffectionProtocol.systemPrompt(ai.systemPrompt(requestBotName, requestPersona, requestMode))
         } else null
@@ -589,6 +592,9 @@ class ChatRoomViewModel(app: Application) : AndroidViewModel(app) {
                     val retryable = (e as? AIServiceException)?.retryable ?: true
                     if (protocol == null && !alreadyShown && retryable && attempt < SILENT_RETRIES) {
                         attempt += 1
+                        // DeepSeek(실험)만 잠깐 기다렸다 보냅니다. 곧바로 보내면 429가 연달아 납니다.
+                        // 기다리는 동안 입력 중 표시는 그대로이고, 멈추면 취소 쪽이 정리합니다.
+                        if (requestModel == AIModel.DEEPSEEK_FLASH) delay(deepSeekRetryDelayMillis(attempt))
                         continue
                     }
                     _isTyping.value = false

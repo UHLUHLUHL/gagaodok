@@ -63,11 +63,38 @@ class AuxiliaryModelTest {
     }
 
     @Test
+    fun `DeepSeek 방은 대화와 보조 호출이 함께 DeepSeek다`() {
+        if (BuildConfig.TABLET_MENTOR) {
+            // 태블릿은 실험 범위 밖이라 3.7로 물러난다.
+            assertEquals(AIModel.GEMINI_37_FLASH, room(AIModel.DEEPSEEK_FLASH.rawValue).resolvedModel(AIModel.GEMINI_38_FLASH))
+            return
+        }
+        // 방에서 고른 모델이 그 방의 모든 작업에 쓰인다(사용자 결정, 2026-09-17).
+        assertEquals(
+            AIModel.DEEPSEEK_FLASH,
+            room(AIModel.DEEPSEEK_FLASH.rawValue).resolvedModel(AIModel.GEMINI_38_FLASH)
+        )
+        // 전역 기본값이 DeepSeek여도 고른 적 없는 개인방은 그것을 따른다.
+        assertEquals(AIModel.DEEPSEEK_FLASH, room().resolvedModel(AIModel.DEEPSEEK_FLASH))
+    }
+
+    @Test
+    fun `멘토 방은 DeepSeek를 저장해도 3_7로 남는다`() {
+        // 멘토 동작은 이번 실험 범위 밖이다.
+        assertEquals(
+            AIModel.GEMINI_37_FLASH,
+            room(AIModel.DEEPSEEK_FLASH.rawValue, ChatMode.MATH_MENTOR).resolvedModel(AIModel.GEMINI_38_FLASH)
+        )
+    }
+
+    @Test
     fun `설정 화면은 개인방에 쓸 수 있는 모델을 모두 보여 준다`() {
         // 3.8이 들어올 때 목록을 같이 안 고쳐서 고를 수 있는 것이 3.7뿐이었다.
         // 저장된 기본값은 이미 3.8인데 화면에는 안 보였다.
         assertEquals(
-            listOf(AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH),
+            // DeepSeek(실험)는 폰 빌드에서만 고를 수 있습니다.
+            if (BuildConfig.TABLET_MENTOR) listOf(AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH)
+            else listOf(AIModel.GEMINI_38_FLASH, AIModel.GEMINI_37_FLASH, AIModel.DEEPSEEK_FLASH),
             AIModel.personalCompanionModels
         )
     }

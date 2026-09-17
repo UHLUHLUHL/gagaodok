@@ -230,9 +230,10 @@ extension GeminiService {
         func observe(_ decision: CacheDecision, actual: Int = 0) {
             guard measure else { return }
             let estimated = estimatedTokens
+            let modelId = model.rawValue
             Task { @MainActor in
                 OptimizationMeasurementStore.shared.observeCache(
-                    decision, estimatedPrefixTokens: estimated, actualCacheTokens: actual)
+                    decision, estimatedPrefixTokens: estimated, actualCacheTokens: actual, model: modelId)
             }
         }
         guard estimatedTokens >= Self.minimumCacheTokens else { observe(.BELOW_MINIMUM); return }
@@ -331,7 +332,8 @@ extension GeminiService {
         observe(.CREATE_SUCCESS, actual: cachedTokens)
         if measure {
             let createReason = reason
-            Task { @MainActor in OptimizationMeasurementStore.shared.observeCacheCreateReason(createReason) }
+            let modelId = model.rawValue
+            Task { @MainActor in OptimizationMeasurementStore.shared.observeCacheCreateReason(createReason, model: modelId) }
         }
         // 다 썼으므로 지웁니다. 남겨 두면 다음 생성이 옛 사유를 다시 씁니다.
         cacheDropReasons[roomId] = nil

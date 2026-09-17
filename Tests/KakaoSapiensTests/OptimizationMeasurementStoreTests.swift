@@ -27,6 +27,10 @@ struct OptimizationMeasurementStoreTests {
         requestLogFallsBackToNow()
         requestLogCapsOldest()
         readsPhoneRequestLog()
+        separatesModels()
+        cacheCountsOnlyGemini()
+        readsPhoneModelColumn()
+        separatesDigestByModel()
         print("OptimizationMeasurementStoreTests: 모두 통과")
     }
 
@@ -39,10 +43,11 @@ struct OptimizationMeasurementStoreTests {
 
     static func chat(room: String = "r", input: Int = 100, cached: Int = 0, output: Int = 10,
                      ttft: Int = 0, total: Int = 0, thoughts: Int = 0,
-                     workload: MeasurementWorkload = .CHAT) -> RequestObservation {
+                     workload: MeasurementWorkload = .CHAT,
+                     model: String? = "gemini-3.8-flash") -> RequestObservation {
         RequestObservation(roomKey: room, inputTokens: input, cachedInputTokens: cached, outputTokens: output,
                            estimatedPromptTokens: input, ttftMillis: ttft, totalMillis: total,
-                           thoughtsTokens: thoughts, workload: workload)
+                           thoughtsTokens: thoughts, workload: workload, model: model)
     }
 
     @MainActor
@@ -62,8 +67,8 @@ struct OptimizationMeasurementStoreTests {
     static func recordsOnlyWhileMeasuring() {
         let s = store()
         s.observeRequest(chat())
-        s.observeCache(.NOT_BURST, estimatedPrefixTokens: 5_000)
-        s.observeDigest(.COMMITTED, coverageBefore: 0, coverageAfter: 50)
+        s.observeCache(.NOT_BURST, estimatedPrefixTokens: 5_000, model: "gemini-3.8-flash")
+        s.observeDigest(.COMMITTED, coverageBefore: 0, coverageAfter: 50, model: "gemini-3.8-flash")
         precondition(s.ledger == MeasurementLedger(), "측정 중이 아니면 아무것도 안 적는다")
     }
 
@@ -100,10 +105,10 @@ struct OptimizationMeasurementStoreTests {
     static func cacheBucketsSkipAttempts() {
         let s = store()
         s.start()
-        s.observeCache(.BELOW_MINIMUM, estimatedPrefixTokens: 3_000)
-        s.observeCache(.CREATE_ATTEMPT, estimatedPrefixTokens: 20_000)
-        s.observeCache(.CREATE_SUCCESS, estimatedPrefixTokens: 20_000, actualCacheTokens: 18_000)
-        s.observeCache(.NOT_BURST, estimatedPrefixTokens: 4_300)
+        s.observeCache(.BELOW_MINIMUM, estimatedPrefixTokens: 3_000, model: "gemini-3.8-flash")
+        s.observeCache(.CREATE_ATTEMPT, estimatedPrefixTokens: 20_000, model: "gemini-3.8-flash")
+        s.observeCache(.CREATE_SUCCESS, estimatedPrefixTokens: 20_000, actualCacheTokens: 18_000, model: "gemini-3.8-flash")
+        s.observeCache(.NOT_BURST, estimatedPrefixTokens: 4_300, model: "gemini-3.8-flash")
         let c = s.ledger.activeRun!.cache
         precondition(c.decisionCounts == ["BELOW_MINIMUM": 1, "CREATE_ATTEMPT": 1, "CREATE_SUCCESS": 1, "NOT_BURST": 1])
         precondition(c.prefixTokenBuckets == [1, 1, 0, 0, 1], "시도는 분포에 안 넣는다: \(c.prefixTokenBuckets)")
@@ -120,8 +125,8 @@ struct OptimizationMeasurementStoreTests {
         precondition(CacheCreateReason.from(.FINGERPRINT_CHANGED) == .FINGERPRINT_CHANGED)
         let s = store()
         s.start()
-        s.observeCacheCreateReason(.EXPIRING_SOON)
-        s.observeCacheCreateReason(.EXPIRING_SOON)
+        s.observeCacheCreateReason(.EXPIRING_SOON, model: "gemini-3.8-flash")
+        s.observeCacheCreateReason(.EXPIRING_SOON, model: "gemini-3.8-flash")
         precondition(s.ledger.activeRun!.cache.createReasons == ["EXPIRING_SOON": 2])
     }
 
@@ -160,15 +165,15 @@ struct OptimizationMeasurementStoreTests {
     static func digestStreakIgnoresFreeSkips() {
         let s = store()
         s.start()
-        s.observeDigest(.NOT_STOP, coverageBefore: 280, coverageAfter: 280, failureDetail: "MAX_TOKENS")
-        s.observeDigest(.BACKOFF_SKIPPED, coverageBefore: 0, coverageAfter: 0)
-        s.observeDigest(.NOT_STOP, coverageBefore: 280, coverageAfter: 280, failureDetail: "MAX_TOKENS")
+        s.observeDigest(.NOT_STOP, coverageBefore: 280, coverageAfter: 280, failureDetail: "MAX_TOKENS", model: "gemini-3.8-flash")
+        s.observeDigest(.BACKOFF_SKIPPED, coverageBefore: 0, coverageAfter: 0, model: "gemini-3.8-flash")
+        s.observeDigest(.NOT_STOP, coverageBefore: 280, coverageAfter: 280, failureDetail: "MAX_TOKENS", model: "gemini-3.8-flash")
         var m = s.ledger.activeRun!.memory
         precondition(m.attempts == 3 && m.paidAttempts == 2, "건너뜀은 유료가 아니다")
         precondition(m.maxConsecutivePaidFailures == 2, "건너뜀이 끼어도 연속 실패는 이어진다")
         precondition(m.failureDetails == ["MAX_TOKENS": 2])
-        s.observeDigest(.COMMITTED, coverageBefore: 280, coverageAfter: 330)
-        s.observeDigest(.NOT_STOP, coverageBefore: 330, coverageAfter: 330, failureDetail: "MAX_TOKENS")
+        s.observeDigest(.COMMITTED, coverageBefore: 280, coverageAfter: 330, model: "gemini-3.8-flash")
+        s.observeDigest(.NOT_STOP, coverageBefore: 330, coverageAfter: 330, failureDetail: "MAX_TOKENS", model: "gemini-3.8-flash")
         m = s.ledger.activeRun!.memory
         precondition(m.committed == 1 && m.coverageAdvanced == 50 && m.lastCommittedCoverage == 330)
         precondition(m.maxConsecutivePaidFailures == 2, "성공하면 연속 실패가 다시 시작된다")
@@ -192,7 +197,7 @@ struct OptimizationMeasurementStoreTests {
         let s = store()
         s.start()
         s.observeRequest(chat())
-        s.observeCache(.CACHE_CURRENT, estimatedPrefixTokens: 9_000)
+        s.observeCache(.CACHE_CURRENT, estimatedPrefixTokens: 9_000, model: "gemini-3.8-flash")
         let data = try! Data(contentsOf: s.fileURL)
         let root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
         precondition(root["schemaVersion"] as? Int == 1)
@@ -272,7 +277,8 @@ struct OptimizationMeasurementStoreTests {
         let log = s.ledger.activeRun!.requestLog
         precondition(log.map(\.atMillis) == [100_000, 200_000], "보낸 시각을 밀리초로, 순서대로")
         precondition(log[1] == RequestLogEntry(atMillis: 200_000, roomKey: "a", workload: .CHAT, inputTokens: 27_500,
-                                               cachedInputTokens: 24_000, outputTokens: 50, explicitCache: true))
+                                               cachedInputTokens: 24_000, outputTokens: 50, explicitCache: true,
+                                               model: "gemini-3.8-flash"))
         let reloaded = OptimizationMeasurementStore(fileURL: s.fileURL)
         precondition(reloaded.ledger.activeRun?.requestLog == log, "다시 읽어도 그대로")
     }
@@ -317,5 +323,69 @@ struct OptimizationMeasurementStoreTests {
         let old = #"{"activeRun":{"id":1,"startedAtMillis":1,"policy":{}}}"#
         let oldRun = try! JSONDecoder().decode(MeasurementLedger.self, from: Data(old.utf8)).activeRun!
         precondition(oldRun.requestLog.isEmpty && oldRun.requestLogDropped == 0)
+    }
+
+    // Gemini와 DeepSeek를 한 회차에서 함께 잰다. 모델별 합계가 따로 쌓여야 한다.
+    @MainActor
+    static func separatesModels() {
+        let s = store()
+        s.start()
+        s.observeRequest(chat(input: 27_000, cached: 24_000))
+        s.observeRequest(chat(input: 20_000, cached: 19_000, model: "deepseek-flash"))
+        s.observeRequest(chat(input: 1, model: nil))
+        let run = s.ledger.activeRun!
+        precondition(run.requestLog.map(\.model) == ["gemini-3.8-flash", "deepseek-flash", nil])
+        precondition(run.byModel["gemini-3.8-flash"]?.requests.cachedInputTokens == 24_000)
+        precondition(run.byModel["deepseek-flash"]?.requests.requestCount == 1)
+        precondition(run.byModel["deepseek-flash"]?.requestsByWorkload["CHAT"]?.requestCount == 1)
+        precondition(run.byModel.count == 2, "모르는 모델은 모델별 합계에 넣지 않는다")
+        precondition(run.requests.requestCount == 2, "기존 합계는 Gemini와 모름만 센다")
+        precondition(run.requestsByWorkload["CHAT"]?.requestCount == 2 && run.roomRequestCounts == ["r": 2])
+        let text = String(decoding: try! Data(contentsOf: s.fileURL), as: UTF8.self)
+        precondition(text.contains("\"byModel\""), "폰과 같은 키")
+        let reloaded = OptimizationMeasurementStore(fileURL: s.fileURL)
+        precondition(reloaded.ledger == s.ledger, "다시 읽어도 그대로")
+    }
+
+    // 캐시 판정·생성 이유는 Gemini 규칙의 효과를 재는 숫자다. 다른 모델은 세지 않는다.
+    @MainActor
+    static func cacheCountsOnlyGemini() {
+        let s = store()
+        s.start()
+        s.observeCache(.CREATE_SUCCESS, estimatedPrefixTokens: 20_000, actualCacheTokens: 18_000, model: "deepseek-flash")
+        s.observeCacheCreateReason(.FIRST, model: "deepseek-flash")
+        s.observeCache(.CACHE_CURRENT, estimatedPrefixTokens: 9_000, model: "gemini-3.7-flash")
+        let c = s.ledger.activeRun!.cache
+        precondition(c.decisionCounts == ["CACHE_CURRENT": 1])
+        precondition(c.createReasons.isEmpty && c.actualCacheTokens == 0)
+        precondition(!isGeminiModelId(nil) && !isGeminiModelId("gpt-5.6-luna"))
+    }
+
+    // 폰이 모델 칸을 채워 쓴 기록을 맥이 읽는다. 칸이 없는 옛 줄은 모름(nil)이다.
+    @MainActor
+    static func readsPhoneModelColumn() {
+        let phone = #"{"activeRun":{"id":10,"startedAtMillis":1,"policy":{},"byModel":{"deepseek-flash":{"requests":{"requestCount":2},"memory":{"attempts":3,"outcomeCounts":{"PARSE_FAILED":1}}}},"requestLog":[{"atMillis":1,"roomKey":"a"},{"atMillis":2,"roomKey":"a","model":"deepseek-flash"}]}}"#
+        let run = try! JSONDecoder().decode(MeasurementLedger.self, from: Data(phone.utf8)).activeRun!
+        precondition(run.requestLog.map(\.model) == [nil, "deepseek-flash"])
+        precondition(run.byModel["deepseek-flash"]?.requests.requestCount == 2)
+        precondition(run.byModel["deepseek-flash"]?.memory.outcomeCounts["PARSE_FAILED"] == 1, "폰 기억 갈래 이름도 읽는다")
+    }
+
+    // 요약 결과도 모델별로 쌓고, 기존 합계는 Gemini만 센다. 연속 실패도 장부마다 센다(폰과 같음).
+    @MainActor
+    static func separatesDigestByModel() {
+        let s = store()
+        s.start()
+        s.observeDigest(.NOT_STOP, coverageBefore: 100, coverageAfter: 100, failureDetail: "MAX_TOKENS", model: "gemini-3.8-flash")
+        s.observeDigest(.COMMITTED, coverageBefore: 100, coverageAfter: 150, model: "deepseek-flash")
+        s.observeDigest(.NOT_STOP, coverageBefore: 100, coverageAfter: 100, failureDetail: "MAX_TOKENS", model: "gemini-3.8-flash")
+        let run = s.ledger.activeRun!
+        precondition(run.memory.attempts == 2 && run.memory.committed == 0)
+        precondition(run.memory.maxConsecutivePaidFailures == 2, "다른 모델 성공이 Gemini 연쇄를 끊지 않는다")
+        precondition(run.byModel["gemini-3.8-flash"]?.memory == run.memory)
+        let ds = run.byModel["deepseek-flash"]!.memory
+        precondition(ds.attempts == 1 && ds.committed == 1 && ds.lastCommittedCoverage == 150)
+        let reloaded = OptimizationMeasurementStore(fileURL: s.fileURL)
+        precondition(reloaded.ledger == s.ledger, "다시 읽어도 그대로")
     }
 }

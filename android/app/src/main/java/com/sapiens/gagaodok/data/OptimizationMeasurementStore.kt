@@ -134,8 +134,19 @@ data class RequestObservation(
     val sentAtMillis: Long? = null,
     /// 명시적 캐시를 붙여 보냈는지입니다. 모르면 `null`입니다.
     /// 캐시 토큰이 있는데 이것이 `false`면 서버의 암묵 캐시가 읽힌 것입니다.
-    val explicitCache: Boolean? = null
+    val explicitCache: Boolean? = null,
+    /// 요청을 받은 모델의 식별자(`AIModel.rawValue`)입니다.
+    ///
+    /// **기본값을 두지 않습니다.** Gemini와 DeepSeek를 한 회차에서 함께 재므로,
+    /// 새 호출부가 모델을 빠뜨리면 두 모델의 숫자가 조용히 섞입니다.
+    val model: String?
 )
+
+/// 캐시 판정·생성 이유를 세어도 되는 모델인가.
+///
+/// 명시적 캐시·TTL·두 칸 물림은 Gemini 규칙입니다. 다른 모델의 요청이 섞이면
+/// 그 규칙의 효과를 잰 숫자가 흐려집니다.
+fun isGeminiModelId(model: String?): Boolean = model?.startsWith("gemini-") == true
 
 /// 요청 한 번의 기록입니다. 대화 내용은 담지 않습니다.
 @Serializable
@@ -147,7 +158,9 @@ data class RequestLogEntry(
     val cachedInputTokens: Int = 0,
     val outputTokens: Int = 0,
     val unreported: Boolean = false,
-    val explicitCache: Boolean? = null
+    val explicitCache: Boolean? = null,
+    /// 모델 식별자입니다. 모델 칸이 생기기 전의 기록은 `null`(모름)입니다.
+    val model: String? = null
 )
 
 /// 한 회차에 남기는 요청 기록의 상한입니다. 한 줄이 약 180바이트라 0.5MB 안팎이고,
@@ -217,7 +230,9 @@ data class CacheObservation(
     val roomKey: String,
     val estimatedPrefixTokens: Int,
     val decision: CacheDecision,
-    val actualCacheTokens: Int = 0
+    val actualCacheTokens: Int = 0,
+    /// Gemini가 아니면 세지 않습니다(`isGeminiModelId`).
+    val model: String
 )
 
 @Serializable
@@ -305,6 +320,13 @@ data class MeasurementRun(
     /// 작업 종류별 집계입니다. `requests`는 둘을 합친 값이라 그대로 두고,
     /// 나눠 봐야 하는 것만 여기서 가릅니다.
     val requestsByWorkload: Map<MeasurementWorkload, MeasurementRequests> = emptyMap(),
+    /// 모델 식별자별 집계입니다. 옛 기록에는 없으므로 기본값을 둡니다.
+    ///
+    /// **위아래의 기존 합계(`requests`·`requestsByWorkload`·`memory`·`roomRequestCounts`)는
+    /// Gemini만 셉니다**([countsInGeminiLedger]). DeepSeek(실험)를 함께 재는 동안에도
+    /// Gemini 캐시 개선을 앞 회차와 같은 숫자로 견줄 수 있게 하려는 것입니다.
+    /// 다른 모델은 여기에만 쌓입니다. Gemini도 3.8·3.7이 따로 쌓입니다.
+    val byModel: Map<String, MeasurementModelRun> = emptyMap(),
     /// 옛 기록에는 없으므로 기본값을 둡니다.
     val memory: MeasurementMemory = MeasurementMemory(),
     val roomRequestCounts: Map<String, Int> = emptyMap(),
@@ -318,6 +340,22 @@ data class MeasurementRun(
     val requestLog: List<RequestLogEntry> = emptyList(),
     val requestLogDropped: Int = 0
 )
+
+/// 연속 실패를 셀 때 기존 Gemini 합계를 가리키는 열쇠입니다. 모델 식별자와 겹치지 않습니다.
+private const val GEMINI_LEDGER_KEY = "*gemini-ledger*"
+
+/// 한 모델이 한 회차에 쓴 몫입니다. 회차의 기존 합계와 같은 모양입니다.
+@Serializable
+data class MeasurementModelRun(
+    val requests: MeasurementRequests = MeasurementRequests(),
+    val requestsByWorkload: Map<MeasurementWorkload, MeasurementRequests> = emptyMap(),
+    val memory: MeasurementMemory = MeasurementMemory()
+)
+
+/// 회차의 기존 합계에 넣을 요청인가. Gemini와, 모델 칸이 생기기 전의 요청(모름)입니다.
+///
+/// 모델 칸이 없던 시절 폰 챗봇방은 Gemini뿐이었으므로 "모름"은 Gemini로 봅니다.
+fun countsInGeminiLedger(model: String?): Boolean = model == null || isGeminiModelId(model)
 
 @Serializable
 data class MeasurementLedger(
@@ -377,31 +415,22 @@ class OptimizationMeasurementStore internal constructor(
     @Synchronized
     fun observeRequest(observation: RequestObservation) {
         val run = _state.value.activeRun ?: return
-        val old = run.requests
-        val requests = old.copy(
-            requestCount = old.requestCount + 1,
-            inputTokens = old.inputTokens + observation.inputTokens.coerceAtLeast(0),
-            cachedInputTokens = old.cachedInputTokens + observation.cachedInputTokens.coerceAtLeast(0),
-            outputTokens = old.outputTokens + observation.outputTokens.coerceAtLeast(0),
-            estimatedPromptTokens = old.estimatedPromptTokens + observation.estimatedPromptTokens.coerceAtLeast(0),
-            unreportedRequests = old.unreportedRequests + if (observation.unreported) 1 else 0,
-            cacheHitRequests = old.cacheHitRequests + if (observation.cachedInputTokens > 0) 1 else 0,
-            prompt = old.prompt.adding(observation.prompt),
-            ttftMillisTotal = old.ttftMillisTotal + observation.ttftMillis.coerceAtLeast(0),
-            ttftMillisMax = maxOf(old.ttftMillisMax, observation.ttftMillis),
-            totalMillisTotal = old.totalMillisTotal + observation.totalMillis.coerceAtLeast(0),
-            totalMillisMax = maxOf(old.totalMillisMax, observation.totalMillis),
-            inputTokensMax = maxOf(old.inputTokensMax, observation.inputTokens),
-            thoughtsTokens = old.thoughtsTokens + observation.thoughtsTokens.coerceAtLeast(0),
-            thoughtsTokensMax = maxOf(old.thoughtsTokensMax, observation.thoughtsTokens)
-        )
-        val rooms = run.roomRequestCounts +
+        fun perWorkload(old: Map<MeasurementWorkload, MeasurementRequests>) = old +
+            (observation.workload to accumulate(old[observation.workload] ?: MeasurementRequests(), observation))
+        // 기존 합계는 Gemini만 셉니다(`byModel` 설명).
+        val gemini = countsInGeminiLedger(observation.model)
+        val requests = if (gemini) accumulate(run.requests, observation) else run.requests
+        val rooms = if (gemini) run.roomRequestCounts +
             (observation.roomKey to (run.roomRequestCounts[observation.roomKey] ?: 0) + 1)
-        val perWorkload = run.requestsByWorkload +
-            (observation.workload to accumulate(
-                run.requestsByWorkload[observation.workload] ?: MeasurementRequests(),
-                observation
+            else run.roomRequestCounts
+        val workloads = if (gemini) perWorkload(run.requestsByWorkload) else run.requestsByWorkload
+        val byModel = observation.model?.let { model ->
+            val old = run.byModel[model] ?: MeasurementModelRun()
+            run.byModel + (model to old.copy(
+                requests = accumulate(old.requests, observation),
+                requestsByWorkload = perWorkload(old.requestsByWorkload)
             ))
+        } ?: run.byModel
         val entry = RequestLogEntry(
             atMillis = observation.sentAtMillis ?: clock(),
             roomKey = observation.roomKey,
@@ -410,12 +439,14 @@ class OptimizationMeasurementStore internal constructor(
             cachedInputTokens = observation.cachedInputTokens.coerceAtLeast(0),
             outputTokens = observation.outputTokens.coerceAtLeast(0),
             unreported = observation.unreported,
-            explicitCache = observation.explicitCache
+            explicitCache = observation.explicitCache,
+            model = observation.model
         )
         val overflow = (run.requestLog.size + 1 - requestLogLimit).coerceAtLeast(0)
         replaceActive(run.copy(
             requests = requests,
-            requestsByWorkload = perWorkload,
+            requestsByWorkload = workloads,
+            byModel = byModel,
             roomRequestCounts = rooms,
             requestLog = run.requestLog.drop(overflow) + entry,
             requestLogDropped = run.requestLogDropped + overflow
@@ -424,6 +455,7 @@ class OptimizationMeasurementStore internal constructor(
 
     @Synchronized
     fun observeCache(observation: CacheObservation) {
+        if (!isGeminiModelId(observation.model)) return
         val run = _state.value.activeRun ?: return
         val old = run.cache
         val buckets = old.prefixTokenBuckets.toMutableList().also {
@@ -455,14 +487,29 @@ class OptimizationMeasurementStore internal constructor(
     @Synchronized
     fun observeMemory(observation: PhoneMemoryObservation) {
         val run = _state.value.activeRun ?: return
-        val old = run.memory
-        val advanced = (observation.coverageAfter - observation.coverageBefore).coerceAtLeast(0)
-        consecutivePaidFailures = when {
-            observation.outcome.advancesCoverage -> 0
-            observation.outcome.paid -> consecutivePaidFailures + 1
-            else -> consecutivePaidFailures
+        // 연속 실패는 **장부마다** 셉니다. 모델이 섞이면 한쪽 성공이 다른 쪽 실패 연쇄를 끊습니다.
+        fun nextStreak(key: String): Int {
+            val previous = consecutivePaidFailures[key] ?: 0
+            val next = when {
+                observation.outcome.advancesCoverage -> 0
+                observation.outcome.paid -> previous + 1
+                else -> previous
+            }
+            consecutivePaidFailures[key] = next
+            return next
         }
-        replaceActive(run.copy(memory = old.copy(
+        val gemini = countsInGeminiLedger(observation.model)
+        val memory = if (gemini) addMemory(run.memory, observation, nextStreak(GEMINI_LEDGER_KEY)) else run.memory
+        val old = run.byModel[observation.model] ?: MeasurementModelRun()
+        val byModel = run.byModel + (observation.model to old.copy(
+            memory = addMemory(old.memory, observation, nextStreak(observation.model))
+        ))
+        replaceActive(run.copy(memory = memory, byModel = byModel))
+    }
+
+    private fun addMemory(old: MeasurementMemory, observation: PhoneMemoryObservation, streak: Int): MeasurementMemory {
+        val advanced = (observation.coverageAfter - observation.coverageBefore).coerceAtLeast(0)
+        return old.copy(
             attempts = old.attempts + 1,
             paidAttempts = old.paidAttempts + if (observation.outcome.paid) 1 else 0,
             committed = old.committed + if (observation.outcome.advancesCoverage) 1 else 0,
@@ -472,18 +519,18 @@ class OptimizationMeasurementStore internal constructor(
             lastCommittedCoverage =
                 if (observation.outcome.advancesCoverage) observation.coverageAfter
                 else old.lastCommittedCoverage,
-            maxConsecutivePaidFailures =
-                maxOf(old.maxConsecutivePaidFailures, consecutivePaidFailures),
+            maxConsecutivePaidFailures = maxOf(old.maxConsecutivePaidFailures, streak),
             migrationAttempts = old.migrationAttempts + if (observation.migration) 1 else 0,
             droppedLoopRules = old.droppedLoopRules + observation.droppedLoops,
             failureDetails = observation.failureDetail?.let {
                 old.failureDetails + (it to (old.failureDetails[it] ?: 0) + 1)
             } ?: old.failureDetails
-        )))
+        )
     }
 
+    /// 장부(기존 Gemini 합계, 모델별)마다의 연속 유료 실패 수입니다.
     /// `observeMemory` 안에서만 만지므로 별도 잠금이 필요 없습니다.
-    private var consecutivePaidFailures = 0
+    private val consecutivePaidFailures = mutableMapOf<String, Int>()
 
     /// 직전 요청과의 간격을 구간에 한 건 더합니다.
     @Synchronized
@@ -514,7 +561,8 @@ class OptimizationMeasurementStore internal constructor(
     /// 읽고-고치고-쓰면 한쪽이 사라집니다. `5cde1a3`에서 위 함수를 끼워 넣다가
     /// 이 표시가 옆 함수로 밀려나 한동안 빠져 있었습니다.
     @Synchronized
-    fun observeCacheCreateReason(reason: CacheCreateReason) {
+    fun observeCacheCreateReason(reason: CacheCreateReason, model: String) {
+        if (!isGeminiModelId(model)) return
         val run = _state.value.activeRun ?: return
         val old = run.cache
         replaceActive(run.copy(cache = old.copy(

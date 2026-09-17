@@ -85,31 +85,49 @@ internal val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 ///
 /// 방을 못 찾으면 3.8입니다. 단톡방과 수학 멘토는 `resolvedModel`이 3.7로
 /// 고정하므로 대화와 보조 호출이 함께 3.7로 남습니다 — 이번에 건드리지 않습니다.
+///
+/// DeepSeek(실험) 방이면 DeepSeek입니다. 방에서 고른 모델이 그 방의 모든 작업에 쓰입니다.
+/// 모델은 **요청을 보내는 순간** 읽으므로, 방에서 모델을 바꾸면 다음 작업부터 바뀝니다.
 internal fun AIService.auxiliaryModel(roomId: UUID): AIModel =
     store.room(roomId)?.resolvedModel(AIModel.GEMINI_38_FLASH) ?: AIModel.GEMINI_38_FLASH
+
+/// Google 검색·링크 읽기·영상 입력이 필요한 요청(말투 조사의 출처 찾기와 대사 추출)이 쓸 모델입니다.
+///
+/// 그 기능은 Gemini에만 있습니다. 방 모델이 Gemini가 아니면 3.8로 보냅니다(사용자 결정,
+/// 2026-09-17). 그 뒤의 말투 분석은 다시 방 모델([auxiliaryModel])로 갑니다.
+internal fun AIService.googleToolsModel(roomId: UUID): AIModel =
+    auxiliaryModel(roomId).takeIf { it.isGeminiConversationModel } ?: AIModel.GEMINI_38_FLASH
 
 internal fun AIService.postGemini(
     body: JSONObject,
     apiKey: String,
     roomId: UUID,
     measureOptimization: Boolean = false,
-    model: AIModel = auxiliaryModel(roomId)
+    // 기본값을 두지 않습니다. 키(`apiKey`)와 같은 모델이어야 하므로 부르는 쪽이 함께 정합니다.
+    model: AIModel,
+    // DeepSeek에서 챗봇 답변과 같은 설정(사고 끔·온도)으로 보낼지입니다. 말투 미리보기가 씁니다.
+    deepSeekChatReply: Boolean = false
 ): JSONObject {
+    require(model.usesSharedConversationPath) { "Unsupported model for the shared path." }
     val sentAtMillis = System.currentTimeMillis()
-    val request = Request.Builder()
-        .url("$GEMINI_BASE/models/${model.rawValue}:generateContent")
-        .addHeader("Content-Type", "application/json")
-        .addHeader("x-goog-api-key", apiKey)
-        .post(body.toString().toRequestBody(JSON_MEDIA))
-        .build()
+    val request = if (model == AIModel.DEEPSEEK_FLASH) {
+        deepSeekRequest(body, apiKey, stream = false, chatReply = deepSeekChatReply)
+    } else {
+        Request.Builder()
+            .url("$GEMINI_BASE/models/${model.rawValue}:generateContent")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("x-goog-api-key", apiKey)
+            .post(body.toString().toRequestBody(JSON_MEDIA))
+            .build()
+    }
     return client.newCall(request).execute().use {
         val raw = it.body?.string().orEmpty()
         if (!it.isSuccessful) {
             // 실패한 요청도 서버가 입력을 읽은 뒤라면 청구됩니다.
             usage.recordUnreportedRequest(roomId, model)
-            throw AIServiceException(errorMessage(raw, it.code, "Gemini"), retryable(it.code))
+            throw AIServiceException(errorMessage(raw, it.code, model.providerName), retryable(it.code))
         }
-        val json = JSONObject(raw)
+        val json = JSONObject(raw).let { j -> if (model == AIModel.DEEPSEEK_FLASH) deepSeekResponseToGemini(j) else j }
         val reported = json.optJSONObject("usageMetadata")
         if (reported != null) {
             val input = reported.optInt("promptTokenCount") + reported.optInt("toolUsePromptTokenCount")
@@ -120,7 +138,8 @@ internal fun AIService.postGemini(
                 roomId, model,
                 inputTokens = input,
                 outputTokens = output,
-                cachedInputTokens = cached
+                cachedInputTokens = cached,
+                sentAtMillis = sentAtMillis
             )
             if (measureOptimization) measurement.observeRequest(
                 RequestObservation(
@@ -139,7 +158,8 @@ internal fun AIService.postGemini(
                     // `high` 사고 토큰이 챗봇 몫으로 잘못 읽힙니다.
                     workload = MeasurementWorkload.MEMORY,
                     sentAtMillis = sentAtMillis,
-                    explicitCache = false
+                    explicitCache = false,
+                    model = model.rawValue
                 )
             )
         } else {
@@ -154,7 +174,8 @@ internal fun AIService.postGemini(
                     unreported = true,
                     workload = MeasurementWorkload.MEMORY,
                     sentAtMillis = sentAtMillis,
-                    explicitCache = false
+                    explicitCache = false,
+                    model = model.rawValue
                 )
             )
         }
@@ -166,13 +187,17 @@ internal fun AIService.postGemini(
 ///
 /// 지금은 말투 조사만 씁니다. 오래 걸리는 요청이라, 다 받을 때까지 기다리는 대신
 /// 도착하는 대로 넘겨 화면이 무엇을 하고 있는지 보여줄 수 있게 합니다.
+///
+/// **Gemini만 받습니다.** 말투 조사는 Google 검색·링크·영상 입력에 기대므로
+/// 방 모델과 상관없이 [googleToolsModel]로 보냅니다.
 internal fun AIService.streamGeminiText(
     body: JSONObject,
     apiKey: String,
     roomId: UUID,
-    model: AIModel = auxiliaryModel(roomId),
+    model: AIModel,
     onPartial: (String) -> Unit
 ): TextStreamResult {
+    require(model.isGeminiConversationModel) { "Google tool requests must go to Gemini." }
     val request = Request.Builder()
         .url("$GEMINI_BASE/models/${model.rawValue}:streamGenerateContent?alt=sse")
         .addHeader("Content-Type", "application/json")
@@ -269,13 +294,18 @@ internal fun AIService.errorMessage(raw: String, code: Int, provider: String): S
     return "$provider 오류: ${message?.takeIf { it.isNotEmpty() } ?: "HTTP $code"}"
 }
 
-internal fun AIService.emptyResponseMessage(finishReason: String?): String = when (finishReason) {
-    "MAX_TOKENS" -> "답변이 출력 토큰 한도에 먼저 걸렸습니다. 질문을 나눠서 다시 보내주세요."
-    "SAFETY", "PROHIBITED_CONTENT" ->
-        "Gemini 안전 정책에 걸려 답변이 생성되지 않았습니다. 표현을 바꿔 다시 시도해주세요."
-    "RECITATION" -> "저작권 보호 정책 때문에 답변이 중단되었습니다. 질문을 다르게 표현해주세요."
-    null, "" -> "Gemini가 빈 응답을 반환했습니다."
-    else -> "Gemini가 빈 응답을 반환했습니다. (사유: $finishReason)"
+/// 글 없이 끝났을 때의 안내입니다. 방 모델 이름으로 알립니다(DeepSeek는 `deepSeekEmptyResponseMessage`).
+/// Gemini 모델이면 예전 문구 그대로입니다.
+internal fun AIService.emptyResponseMessage(finishReason: String?, model: AIModel): String {
+    if (model == AIModel.DEEPSEEK_FLASH) return deepSeekEmptyResponseMessage(finishReason)
+    return when (finishReason) {
+        "MAX_TOKENS" -> "답변이 출력 토큰 한도에 먼저 걸렸습니다. 질문을 나눠서 다시 보내주세요."
+        "SAFETY", "PROHIBITED_CONTENT" ->
+            "Gemini 안전 정책에 걸려 답변이 생성되지 않았습니다. 표현을 바꿔 다시 시도해주세요."
+        "RECITATION" -> "저작권 보호 정책 때문에 답변이 중단되었습니다. 질문을 다르게 표현해주세요."
+        null, "" -> "Gemini가 빈 응답을 반환했습니다."
+        else -> "Gemini가 빈 응답을 반환했습니다. (사유: $finishReason)"
+    }
 }
 
 // MARK: - 말풍선 분리

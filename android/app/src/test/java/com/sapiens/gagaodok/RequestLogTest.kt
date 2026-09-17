@@ -20,9 +20,13 @@ class RequestLogTest {
     private fun store(file: File = File.createTempFile("request-log", ".json"), limit: Int = 100) =
         OptimizationMeasurementStore(file, limit) { now }.also { it.start(MeasurementPolicy.current()) }
 
-    private fun chat(input: Int, cached: Int, sentAt: Long?, explicit: Boolean? = null) = RequestObservation(
+    private fun chat(
+        input: Int, cached: Int, sentAt: Long?, explicit: Boolean? = null,
+        model: String? = "gemini-3.8-flash"
+    ) = RequestObservation(
         roomKey = "room-a", inputTokens = input, cachedInputTokens = cached, outputTokens = 50,
-        estimatedPromptTokens = input, sentAtMillis = sentAt, explicitCache = explicit
+        estimatedPromptTokens = input, sentAtMillis = sentAt, explicitCache = explicit,
+        model = model
     )
 
     @Test
@@ -94,6 +98,69 @@ class RequestLogTest {
         val run = OptimizationMeasurementStore(file) { 1L }.state.value.activeRun!!
         assertTrue(run.requestLog.isEmpty())
         assertEquals(0, run.requestLogDropped)
+    }
+
+    @Test
+    fun `한 회차에서 모델별로 나눠 센다`() {
+        val s = store()
+        s.observeRequest(chat(27_000, 24_000, sentAt = 1L, explicit = true))
+        s.observeRequest(chat(20_000, 19_000, sentAt = 2L, explicit = false, model = "deepseek-flash"))
+        s.observeRequest(chat(21_000, 20_000, sentAt = 3L, explicit = false, model = "deepseek-flash"))
+        val run = s.state.value.activeRun!!
+        assertEquals(listOf("gemini-3.8-flash", "deepseek-flash", "deepseek-flash"), run.requestLog.map { it.model })
+        assertEquals(1, run.byModel["gemini-3.8-flash"]!!.requests.requestCount)
+        assertEquals(24_000L, run.byModel["gemini-3.8-flash"]!!.requests.cachedInputTokens)
+        val deepSeek = run.byModel["deepseek-flash"]!!
+        assertEquals(2, deepSeek.requests.requestCount)
+        assertEquals(39_000L, deepSeek.requests.cachedInputTokens)
+        assertEquals(2, deepSeek.requestsByWorkload[MeasurementWorkload.CHAT]!!.requestCount)
+        // 기존 합계는 Gemini만 센다. 진행 중인 Gemini 회차를 앞 회차와 견줄 수 있어야 한다.
+        assertEquals(1, run.requests.requestCount)
+        assertEquals(24_000L, run.requests.cachedInputTokens)
+        assertEquals(1, run.requestsByWorkload[MeasurementWorkload.CHAT]!!.requestCount)
+        assertEquals(mapOf("room-a" to 1), run.roomRequestCounts)
+    }
+
+    @Test
+    fun `모델을 모르는 요청은 Gemini 합계에만 들어간다`() {
+        val s = store()
+        s.observeRequest(chat(1, 0, sentAt = 1L, model = null))
+        val run = s.state.value.activeRun!!
+        assertNull(run.requestLog.single().model)
+        assertTrue(run.byModel.isEmpty())
+        assertEquals(1, run.requests.requestCount)
+    }
+
+    @Test
+    fun `모델 칸이 없는 진행 중 장부를 읽고 이어 적어도 옛 줄이 남는다`() {
+        // 10회차처럼 모델 칸이 생기기 전에 시작된 회차입니다.
+        val file = File.createTempFile("old-model-log", ".json")
+        file.writeText(
+            """{"activeRun":{"id":10,"startedAtMillis":1,"policy":{},""" +
+                """"requests":{"requestCount":1},""" +
+                """"requestLog":[{"atMillis":5,"roomKey":"room-a","inputTokens":9,"explicitCache":true}]}}"""
+        )
+        val s = OptimizationMeasurementStore(file) { now }
+        val before = s.state.value.activeRun!!
+        assertNull("옛 줄의 모델은 모름", before.requestLog.single().model)
+        assertTrue(before.byModel.isEmpty())
+
+        s.observeRequest(chat(2, 0, sentAt = 6L, model = "deepseek-flash"))
+        val reloaded = OptimizationMeasurementStore(file) { now }.state.value.activeRun!!
+        assertEquals(10, reloaded.id)
+        assertEquals(listOf(null, "deepseek-flash"), reloaded.requestLog.map { it.model })
+        assertEquals(9, reloaded.requestLog.first().inputTokens)
+        assertEquals("DeepSeek는 기존 합계에 더하지 않는다", 1, reloaded.requests.requestCount)
+        assertEquals(1, reloaded.byModel["deepseek-flash"]!!.requests.requestCount)
+    }
+
+    @Test
+    fun `모르는 모델은 파일에 칸을 만들지 않는다`() {
+        val file = File.createTempFile("null-model-log", ".json")
+        store(file).observeRequest(chat(1, 0, sentAt = 1L, model = null))
+        val text = file.readText()
+        assertTrue(text.contains("\"requestLog\""))
+        assertTrue("null은 쓰지 않는다(맥과 같은 모양)", !text.contains("\"model\""))
     }
 
     @Test

@@ -39,7 +39,15 @@ data class ModelTokenUsage(
     /// 스트림이 첫 조각도 오기 전에 끊기거나, 답변을 도중에 멈췄는데 그때까지
     /// 사용량 조각이 하나도 안 왔을 때입니다. 청구서에는 있고 여기에는 없는
     /// 요청이라, 숫자를 지어내는 대신 **몇 건인지만** 남깁니다.
-    val unreportedRequests: Int = 0
+    val unreportedRequests: Int = 0,
+    /// 위 입력·캐시 입력·출력 가운데 **피크 시간대에 보낸 몫**입니다(부분집합).
+    ///
+    /// 요금은 화면에 보일 때 단가를 곱해 매기므로, 시간대마다 값이 다른 모델은 어느 몫이
+    /// 피크였는지를 따로 들고 있어야 합니다. 지금은 DeepSeek만 채웁니다
+    /// (`AIModel.peakSurchargeRate`). 옛 기록에는 없으므로 0입니다.
+    val peakInputTokens: Int = 0,
+    val peakCachedInputTokens: Int = 0,
+    val peakOutputTokens: Int = 0
 ) {
     val totalTokens: Int get() = inputTokens + outputTokens
 
@@ -71,7 +79,18 @@ data class ModelTokenUsage(
             // 값 자체는 계속 셉니다. 캐시를 얼마나 다시 만드는지는 진단에 필요하고,
             // 정책이 바뀌면 다시 쓸 수 있습니다.
             outputTokens / 1_000_000.0 * model.outputPricePerMillion +
-            cacheStorageCostUSD(model)
+            cacheStorageCostUSD(model) +
+            peakSurchargeUSD(model)
+    }
+
+    /// 피크 몫에 더 받는 금액입니다. 할증이 없는 모델은 0입니다.
+    fun peakSurchargeUSD(model: AIModel): Double {
+        if (model.peakSurchargeRate == 0.0) return 0.0
+        val cached = min(peakCachedInputTokens, peakInputTokens)
+        val regular = max(0, peakInputTokens - cached)
+        return (regular / 1_000_000.0 * model.inputPricePerMillion +
+            cached / 1_000_000.0 * model.cachedInputPricePerMillion +
+            peakOutputTokens / 1_000_000.0 * model.outputPricePerMillion) * model.peakSurchargeRate
     }
 
     /// 명시적 캐시 보관료입니다. 절감액에 비하면 작지만 실제로 청구되는 항목입니다.
@@ -80,7 +99,9 @@ data class ModelTokenUsage(
 
     fun costWithoutCacheUSD(model: AIModel): Double =
         inputTokens / 1_000_000.0 * model.inputPricePerMillion +
-            outputTokens / 1_000_000.0 * model.outputPricePerMillion
+            outputTokens / 1_000_000.0 * model.outputPricePerMillion +
+            (peakInputTokens / 1_000_000.0 * model.inputPricePerMillion +
+                peakOutputTokens / 1_000_000.0 * model.outputPricePerMillion) * model.peakSurchargeRate
 
     fun adding(other: ModelTokenUsage) = ModelTokenUsage(
         inputTokens = inputTokens + other.inputTokens,
@@ -90,7 +111,10 @@ data class ModelTokenUsage(
         outputTokens = outputTokens + other.outputTokens,
         requestCount = requestCount + other.requestCount,
         cacheStorageTokenHours = cacheStorageTokenHours + other.cacheStorageTokenHours,
-        unreportedRequests = unreportedRequests + other.unreportedRequests
+        unreportedRequests = unreportedRequests + other.unreportedRequests,
+        peakInputTokens = peakInputTokens + other.peakInputTokens,
+        peakCachedInputTokens = peakCachedInputTokens + other.peakCachedInputTokens,
+        peakOutputTokens = peakOutputTokens + other.peakOutputTokens
     )
 }
 
@@ -124,8 +148,11 @@ class TokenUsageStore private constructor(context: Context) {
         outputTokens: Int,
         cachedInputTokens: Int = 0,
         cacheWriteTokens: Int = 0,
-        cacheStorageTokenHours: Double = 0.0
+        cacheStorageTokenHours: Double = 0.0,
+        /// 요청을 보낸 시각입니다. 시간대별 요금이 있는 모델만 씁니다.
+        sentAtMillis: Long = System.currentTimeMillis()
     ) {
+        val peak = model.peakSurchargeRate > 0.0 && AIModel.isDeepSeekPeak(sentAtMillis)
         add(
             roomId, model,
             ModelTokenUsage(
@@ -134,7 +161,10 @@ class TokenUsageStore private constructor(context: Context) {
                 cacheWriteTokens = max(0, cacheWriteTokens),
                 outputTokens = max(0, outputTokens),
                 requestCount = 1,
-                cacheStorageTokenHours = max(0.0, cacheStorageTokenHours)
+                cacheStorageTokenHours = max(0.0, cacheStorageTokenHours),
+                peakInputTokens = if (peak) max(0, inputTokens) else 0,
+                peakCachedInputTokens = if (peak) max(0, cachedInputTokens) else 0,
+                peakOutputTokens = if (peak) max(0, outputTokens) else 0
             )
         )
     }

@@ -392,7 +392,7 @@ internal suspend fun AIService.refreshPrefixCache(
         val estimated = if (lag > 0) laggedPrefixTokens else estimateTokens(contents) + systemTokens
         fun observe(decision: CacheDecision, actualTokens: Int = 0) {
             if (measure) measurement.observeCache(
-                CacheObservation(key, estimated, decision, actualTokens)
+                CacheObservation(key, estimated, decision, actualTokens, model = model.rawValue)
             )
         }
         if (estimated < MINIMUM_CACHE_TOKENS) {
@@ -492,7 +492,7 @@ internal suspend fun AIService.refreshPrefixCache(
 
         val cachedTokens = json.optJSONObject("usageMetadata")?.optInt("totalTokenCount") ?: 0
         observe(CacheDecision.CREATE_SUCCESS, cachedTokens)
-        if (measure) measurement.observeCacheCreateReason(reason)
+        if (measure) measurement.observeCacheCreateReason(reason, model.rawValue)
         // 다 썼으므로 지웁니다. 남겨두면 다음 생성이 옛 사유를 다시 씁니다.
         cacheDropReasons.remove(key)
         synchronized(prefixCaches) {

@@ -15,7 +15,9 @@ object SecureStore {
     /// 공급자마다 항목을 따로 둡니다. 한쪽 키를 지워도 다른 쪽은 남습니다.
     enum class Credential(val key: String, val displayName: String) {
         GEMINI("gemini-api-key", "Gemini"),
-        OPENAI("openai-api-key", "OpenAI")
+        OPENAI("openai-api-key", "OpenAI"),
+        // 실험 모델(`AIModel.DEEPSEEK_FLASH`)용입니다. 걷어낼 때 함께 지웁니다.
+        DEEPSEEK("deepseek-api-key", "DeepSeek")
     }
 
     private const val FILE_NAME = "gagaodok_secure"

@@ -116,6 +116,7 @@ class PhoneMemoryOutcomeTest {
         targetThrough = 300,
         segmentCount = 1,
         retryAfterMillis = 0L,
-        failureDetail = reason
+        failureDetail = reason,
+        model = "gemini-3.8-flash"
     )
 }

@@ -241,6 +241,16 @@ struct RequestObservation {
     /// 명시적 캐시를 붙여 보냈는지입니다. 모르면 `nil`입니다.
     /// 캐시 토큰이 있는데 이것이 `false`면 서버의 암묵 캐시가 읽힌 것입니다.
     var explicitCache: Bool? = nil
+    /// 요청을 받은 모델의 식별자(`AIModel.rawValue`)입니다.
+    ///
+    /// **기본값을 두지 않습니다(`let`).** 폰과 같은 이유로, 새 호출부가 모델을 빠뜨리면
+    /// 여러 모델의 숫자가 조용히 섞입니다.
+    let model: String?
+}
+
+/// 캐시 판정·생성 이유를 세어도 되는 모델인가. 명시적 캐시·TTL·물림은 Gemini 규칙입니다(폰과 같음).
+func isGeminiModelId(_ model: String?) -> Bool {
+    model?.hasPrefix("gemini-") == true
 }
 
 /// 요청 한 번의 기록입니다. 대화 내용은 담지 않습니다. 필드는 폰(`RequestLogEntry`)과 같습니다.
@@ -253,9 +263,12 @@ struct RequestLogEntry: Codable, Equatable {
     var outputTokens = 0
     var unreported = false
     var explicitCache: Bool? = nil
+    /// 모델 식별자입니다. 모델 칸이 생기기 전의 기록은 `nil`(모름)입니다.
+    var model: String? = nil
 
     init(atMillis: Int, roomKey: String, workload: MeasurementWorkload = .CHAT, inputTokens: Int = 0,
-         cachedInputTokens: Int = 0, outputTokens: Int = 0, unreported: Bool = false, explicitCache: Bool? = nil) {
+         cachedInputTokens: Int = 0, outputTokens: Int = 0, unreported: Bool = false, explicitCache: Bool? = nil,
+         model: String? = nil) {
         self.atMillis = atMillis
         self.roomKey = roomKey
         self.workload = workload
@@ -264,6 +277,7 @@ struct RequestLogEntry: Codable, Equatable {
         self.outputTokens = outputTokens
         self.unreported = unreported
         self.explicitCache = explicitCache
+        self.model = model
     }
 
     init(from decoder: Decoder) throws {
@@ -276,6 +290,7 @@ struct RequestLogEntry: Codable, Equatable {
         outputTokens = c.value(.outputTokens, 0)
         unreported = c.value(.unreported, false)
         explicitCache = (try? c.decodeIfPresent(Bool.self, forKey: .explicitCache)) ?? nil
+        model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
     }
 }
 
@@ -405,6 +420,27 @@ struct MeasurementMemory: Codable, Equatable {
     }
 }
 
+/// 한 모델이 한 회차에 쓴 몫입니다. 회차의 기존 합계와 같은 모양입니다(폰과 같음).
+struct MeasurementModelRun: Codable, Equatable {
+    var requests = MeasurementRequests()
+    var requestsByWorkload: [String: MeasurementRequests] = [:]
+    var memory = MeasurementMemory()
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requests = c.value(.requests, MeasurementRequests())
+        requestsByWorkload = c.value(.requestsByWorkload, [:])
+        memory = c.value(.memory, MeasurementMemory())
+    }
+}
+
+/// 회차의 기존 합계에 넣을 요청인가. Gemini와 모델 칸이 생기기 전의 요청(모름)입니다(폰과 같음).
+func countsInGeminiLedger(_ model: String?) -> Bool {
+    model == nil || isGeminiModelId(model)
+}
+
 struct MeasurementRun: Codable, Equatable {
     var id: Int
     var startedAtMillis: Int
@@ -413,6 +449,12 @@ struct MeasurementRun: Codable, Equatable {
     var requests = MeasurementRequests()
     var cache = MeasurementCache()
     var requestsByWorkload: [String: MeasurementRequests] = [:]
+    /// 모델 식별자별 집계입니다(폰과 같음).
+    ///
+    /// **기존 합계(`requests`·`requestsByWorkload`·`memory`·`roomRequestCounts`)는 Gemini만
+    /// 셉니다**(`countsInGeminiLedger`). 폰에서 DeepSeek(실험)를 함께 재는 동안에도 Gemini
+    /// 캐시 개선을 앞 회차와 같은 숫자로 견주기 위해서입니다. 다른 모델은 여기에만 쌓입니다.
+    var byModel: [String: MeasurementModelRun] = [:]
     var memory = MeasurementMemory()
     var roomRequestCounts: [String: Int] = [:]
     var requestGaps = RequestGapCounts()
@@ -438,6 +480,7 @@ struct MeasurementRun: Codable, Equatable {
         requests = c.value(.requests, MeasurementRequests())
         cache = c.value(.cache, MeasurementCache())
         requestsByWorkload = c.value(.requestsByWorkload, [:])
+        byModel = c.value(.byModel, [:])
         memory = c.value(.memory, MeasurementMemory())
         roomRequestCounts = c.value(.roomRequestCounts, [:])
         requestGaps = c.value(.requestGaps, RequestGapCounts())
@@ -485,7 +528,8 @@ final class OptimizationMeasurementStore: ObservableObject {
     @Published private(set) var ledger: MeasurementLedger
     let fileURL: URL
     private let clock: () -> Date
-    private var consecutivePaidFailures = 0
+    /// 장부(기존 Gemini 합계, 모델별)마다의 연속 유료 실패 수입니다.
+    private var consecutivePaidFailures: [String: Int] = [:]
 
     private let logLimit: Int
 
@@ -507,7 +551,7 @@ final class OptimizationMeasurementStore: ObservableObject {
         let nextId = (ledger.completedRuns.map(\.id).max() ?? 0) + 1
         var next = ledger
         next.activeRun = MeasurementRun(id: nextId, startedAtMillis: nowMillis, policy: policy)
-        consecutivePaidFailures = 0
+        consecutivePaidFailures = [:]
         update(next)
         return true
     }
@@ -524,15 +568,24 @@ final class OptimizationMeasurementStore: ObservableObject {
     }
 
     func clear() {
-        consecutivePaidFailures = 0
+        consecutivePaidFailures = [:]
         update(MeasurementLedger())
     }
 
     func observeRequest(_ o: RequestObservation) {
         mutateRun { run in
-            run.requests.add(o)
-            run.requestsByWorkload[o.workload.rawValue, default: MeasurementRequests()].add(o)
-            run.roomRequestCounts[o.roomKey, default: 0] += 1
+            // 기존 합계는 Gemini만 셉니다(`byModel` 설명, 폰과 같음).
+            if countsInGeminiLedger(o.model) {
+                run.requests.add(o)
+                run.requestsByWorkload[o.workload.rawValue, default: MeasurementRequests()].add(o)
+                run.roomRequestCounts[o.roomKey, default: 0] += 1
+            }
+            if let model = o.model {
+                var perModel = run.byModel[model] ?? MeasurementModelRun()
+                perModel.requests.add(o)
+                perModel.requestsByWorkload[o.workload.rawValue, default: MeasurementRequests()].add(o)
+                run.byModel[model] = perModel
+            }
             run.requestLog.append(RequestLogEntry(
                 atMillis: o.sentAt.map { Int($0.timeIntervalSince1970 * 1000) } ?? nowMillis,
                 roomKey: o.roomKey,
@@ -541,7 +594,8 @@ final class OptimizationMeasurementStore: ObservableObject {
                 cachedInputTokens: max(0, o.cachedInputTokens),
                 outputTokens: max(0, o.outputTokens),
                 unreported: o.unreported,
-                explicitCache: o.explicitCache
+                explicitCache: o.explicitCache,
+                model: o.model
             ))
             let overflow = max(0, run.requestLog.count - logLimit)
             if overflow > 0 {
@@ -551,7 +605,8 @@ final class OptimizationMeasurementStore: ObservableObject {
         }
     }
 
-    func observeCache(_ decision: CacheDecision, estimatedPrefixTokens: Int, actualCacheTokens: Int = 0) {
+    func observeCache(_ decision: CacheDecision, estimatedPrefixTokens: Int, actualCacheTokens: Int = 0, model: String) {
+        guard isGeminiModelId(model) else { return }
         mutateRun { run in
             run.cache.decisionCounts[decision.rawValue, default: 0] += 1
             // 시도는 판정이 아니라 과정이라 크기 분포에서 뺍니다(폰과 같음).
@@ -564,7 +619,8 @@ final class OptimizationMeasurementStore: ObservableObject {
     }
 
     /// 캐시를 새로 만든 이유를 적습니다. 생성에 성공한 뒤에만 부릅니다.
-    func observeCacheCreateReason(_ reason: CacheCreateReason) {
+    func observeCacheCreateReason(_ reason: CacheCreateReason, model: String) {
+        guard isGeminiModelId(model) else { return }
         mutateRun { $0.cache.createReasons[reason.rawValue, default: 0] += 1 }
     }
 
@@ -574,13 +630,21 @@ final class OptimizationMeasurementStore: ObservableObject {
 
     /// 요약 한 번의 결과입니다. **무료 건너뜀은 연속 실패로 세지 않습니다** —
     /// 그것까지 세면 실제로 돈을 쓴 실패가 몇 번 이어졌는지가 묻힙니다.
-    func observeDigest(_ outcome: DigestOutcome, coverageBefore: Int, coverageAfter: Int, failureDetail: String? = nil) {
+    ///
+    /// 결과는 그 모델의 몫(`byModel`)에도 쌓습니다. 연속 실패도 장부마다 셉니다(폰과 같음).
+    func observeDigest(
+        _ outcome: DigestOutcome, coverageBefore: Int, coverageAfter: Int,
+        failureDetail: String? = nil, model: String
+    ) {
         guard ledger.activeRun != nil else { return }
-        if outcome.advancesCoverage { consecutivePaidFailures = 0 }
-        else if outcome.paid { consecutivePaidFailures += 1 }
-        let streak = consecutivePaidFailures
-        mutateRun { run in
-            var m = run.memory
+        func nextStreak(_ key: String) -> Int {
+            var streak = consecutivePaidFailures[key] ?? 0
+            if outcome.advancesCoverage { streak = 0 } else if outcome.paid { streak += 1 }
+            consecutivePaidFailures[key] = streak
+            return streak
+        }
+        func adding(to old: MeasurementMemory, streak: Int) -> MeasurementMemory {
+            var m = old
             m.attempts += 1
             if outcome.paid { m.paidAttempts += 1 }
             if outcome.advancesCoverage {
@@ -591,9 +655,20 @@ final class OptimizationMeasurementStore: ObservableObject {
             m.outcomeCounts[outcome.rawValue, default: 0] += 1
             m.maxConsecutivePaidFailures = max(m.maxConsecutivePaidFailures, streak)
             if let failureDetail { m.failureDetails[failureDetail, default: 0] += 1 }
-            run.memory = m
+            return m
+        }
+        let geminiStreak = countsInGeminiLedger(model) ? nextStreak(Self.geminiLedgerKey) : nil
+        let modelStreak = nextStreak(model)
+        mutateRun { run in
+            if let geminiStreak { run.memory = adding(to: run.memory, streak: geminiStreak) }
+            var perModel = run.byModel[model] ?? MeasurementModelRun()
+            perModel.memory = adding(to: perModel.memory, streak: modelStreak)
+            run.byModel[model] = perModel
         }
     }
+
+    /// 연속 실패를 셀 때 기존 Gemini 합계를 가리키는 열쇠입니다. 모델 식별자와 겹치지 않습니다.
+    private static let geminiLedgerKey = "*gemini-ledger*"
 
     private func mutateRun(_ change: (inout MeasurementRun) -> Void) {
         guard var run = ledger.activeRun else { return }

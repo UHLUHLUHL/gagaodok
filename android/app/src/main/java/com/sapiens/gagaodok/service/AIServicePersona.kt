@@ -1,7 +1,7 @@
 package com.sapiens.gagaodok.service
 
 import com.sapiens.gagaodok.BuildConfig
-import com.sapiens.gagaodok.data.SecureStore
+import com.sapiens.gagaodok.model.AIModel
 import com.sapiens.gagaodok.model.ChatMode
 import com.sapiens.gagaodok.model.PersonaSampleEvidence
 import com.sapiens.gagaodok.model.PersonaSourceTier
@@ -210,8 +210,9 @@ suspend fun AIService.lookupPersona(
     mode: ChatMode = ChatMode.MATH_MENTOR,
     onProgress: (String) -> Unit = {}
 ): PersonaLookup = withContext(Dispatchers.IO) {
-    val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
-        ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
+    // 검색·링크 읽기는 Gemini에만 있어 방 모델이 DeepSeek여도 Gemini로 찾습니다.
+    val searchModel = googleToolsModel(roomId)
+    val apiKey = apiKeyFor(searchModel)
     val trimmed = query.trim()
     if (trimmed.isEmpty() && imageBase64 == null) {
         throw AIServiceException("캐릭터 이름이나 참고 링크를 입력해주세요.")
@@ -219,7 +220,7 @@ suspend fun AIService.lookupPersona(
 
     val companionControls = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
     if (companionControls && imageBase64 == null) {
-        return@withContext lookupCompanionPersona(trimmed, roomId, apiKey, onProgress)
+        return@withContext lookupCompanionPersona(trimmed, roomId, apiKey, searchModel, onProgress)
     }
 
     val parts = JSONArray()
@@ -262,11 +263,11 @@ suspend fun AIService.lookupPersona(
         )
 
     onProgress("자료를 찾고 있습니다…")
-    val result = streamGeminiText(body, apiKey, roomId) { soFar ->
+    val result = streamGeminiText(body, apiKey, roomId, searchModel) { soFar ->
         onProgress(AIService.lookupProgressLabel(soFar))
     }
     if (result.text.isEmpty()) {
-        throw AIServiceException(emptyResponseMessage(result.finishReason))
+        throw AIServiceException(emptyResponseMessage(result.finishReason, searchModel))
     }
     parsePersonaLookup(result.text, result.sources)
 }
@@ -275,6 +276,7 @@ private suspend fun AIService.lookupCompanionPersona(
     query: String,
     roomId: UUID,
     apiKey: String,
+    searchModel: AIModel,
     onProgress: (String) -> Unit
 ): PersonaLookup {
     onProgress("공식 출처를 찾고 있습니다…")
@@ -301,7 +303,7 @@ private suspend fun AIService.lookupCompanionPersona(
             JSONObject().put("maxOutputTokens", 3072)
                 .put("thinkingConfig", JSONObject().put("thinkingLevel", "medium"))
         )
-    val discoveryCandidate = postGemini(discoveryBody, apiKey, roomId)
+    val discoveryCandidate = postGemini(discoveryBody, apiKey, roomId, model = searchModel)
         .optJSONArray("candidates")?.optJSONObject(0)
     val discoveryText = discoveryCandidate?.let { joinParts(it) }.orEmpty()
     val sources = parsePersonaSources(discoveryText)
@@ -351,7 +353,7 @@ private suspend fun AIService.lookupCompanionPersona(
             )
 
     suspend fun extract(forSources: List<PersonaSourceCandidate>): TextStreamResult = streamGeminiText(
-        extractionBody(forSources), apiKey, roomId
+        extractionBody(forSources), apiKey, roomId, searchModel
     ) { soFar -> onProgress(AIService.lookupProgressLabel(soFar)) }
 
     val textSources = extractionSources.filter { !it.isYouTube }.ifEmpty {
@@ -420,8 +422,9 @@ internal suspend fun AIService.previewPersona(
     mode: ChatMode,
     repetitionAdvice: RepetitionAdvice? = null
 ): String = withContext(Dispatchers.IO) {
-    val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
-        ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
+    // 방에서 고른 모델로 보냅니다(DeepSeek 방이면 DeepSeek).
+    val model = auxiliaryModel(roomId)
+    val apiKey = apiKeyFor(model)
     val system = systemPrompt(botName, persona.copy(isEnabled = true), mode)
 
     val body = JSONObject()
@@ -457,12 +460,16 @@ internal suspend fun AIService.previewPersona(
             }
         }
 
-    val json = postGemini(body, apiKey, roomId)
+    // DeepSeek 챗봇방은 실제 대화와 같이 사고를 끄고 온도를 적어야 결을 판단할 수 있습니다.
+    val json = postGemini(
+        body, apiKey, roomId, model = model,
+        deepSeekChatReply = deepSeekChatThinkingDisabled(mode)
+    )
     val candidate = json.optJSONArray("candidates")?.optJSONObject(0)
         ?: throw AIServiceException("미리보기를 읽을 수 없습니다.")
     val text = joinParts(candidate).trim()
     if (text.isEmpty()) {
-        throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason")))
+        throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason"), model))
     }
     text
 }
@@ -480,8 +487,9 @@ suspend fun AIService.analyzePersonaStyle(
     evidence: List<PersonaSampleEvidence> = emptyList()
 ): String =
     withContext(Dispatchers.IO) {
-        val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
-            ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
+        // 방에서 고른 모델로 보냅니다(DeepSeek 방이면 DeepSeek).
+        val model = auxiliaryModel(roomId)
+        val apiKey = apiKeyFor(model)
         val companionControls = !BuildConfig.TABLET_MENTOR && mode == ChatMode.COMPANION
         val cleanedSamples = if (companionControls) {
             val linked = reconcilePersonaEvidence(samples, evidence)
@@ -534,10 +542,10 @@ suspend fun AIService.analyzePersonaStyle(
                     .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL))
             )
 
-        val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)
+        val candidate = postGemini(body, apiKey, roomId, model = model).optJSONArray("candidates")?.optJSONObject(0)
             ?: throw AIServiceException("말투 분석 결과를 읽을 수 없습니다.")
         joinParts(candidate).trim().ifEmpty {
-            throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason")))
+            throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason"), model))
         }
     }
 
@@ -553,8 +561,9 @@ suspend fun AIService.refinePersonaStyle(
     description: String,
     samples: List<String>
 ): String = withContext(Dispatchers.IO) {
-    val apiKey = SecureStore.apiKey(appContext, SecureStore.Credential.GEMINI)
-        ?: throw AIServiceException("설정에서 Gemini API 키를 먼저 등록해주세요.")
+    // 방에서 고른 모델로 보냅니다(DeepSeek 방이면 DeepSeek).
+    val model = auxiliaryModel(roomId)
+    val apiKey = apiKeyFor(model)
     if (instruction.isBlank()) throw AIServiceException("어떻게 고칠지 입력해주세요.")
     if (currentGuide.isBlank()) throw AIServiceException("먼저 말투 규칙을 만들어주세요.")
 
@@ -582,10 +591,10 @@ suspend fun AIService.refinePersonaStyle(
                 .put("thinkingConfig", JSONObject().put("thinkingLevel", MEMORY_THINKING_LEVEL))
         )
 
-    val candidate = postGemini(body, apiKey, roomId).optJSONArray("candidates")?.optJSONObject(0)
+    val candidate = postGemini(body, apiKey, roomId, model = model).optJSONArray("candidates")?.optJSONObject(0)
         ?: throw AIServiceException("교정 결과를 읽을 수 없습니다.")
     joinParts(candidate).trim().ifEmpty {
-        throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason")))
+        throw AIServiceException(emptyResponseMessage(candidate.optString("finishReason"), model))
     }
 }
 
