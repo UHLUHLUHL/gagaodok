@@ -19,6 +19,7 @@ struct GeminiCachePolicyTests {
         digestThinkingIsLowered()
         digestBudgetLeavesRoomForThinking()
         digestRetryBacksOff()
+        personaStyleLeavesRoomForThinking()
         cacheCreationIsNotBilled()
         exchangeRateMatchesBill()
         rerollJudgement()
@@ -106,6 +107,16 @@ struct GeminiCachePolicyTests {
         precondition(d(6) == 6 * 3600, "여섯 번째에서 상한")
         precondition(d(50) == 6 * 3600, "더 늘지 않는다")
         precondition(d(0) == 15 * 60, "이상한 입력도 최소값")
+    }
+
+    // 말투 요청도 요약과 같은 결함이었다(high + 본문 몫만). 수준은 사용자가 medium으로 정했다.
+    static func personaStyleLeavesRoomForThinking() {
+        for body in [2048, 2560, 3072, 4096, 8192] {
+            let config = GeminiCachePolicy.personaStyleGeneration(bodyTokens: body)
+            precondition(config["maxOutputTokens"] as? Int == body + 8_192, "본문에 사고 몫을 더한다: \(body)")
+            let thinking = config["thinkingConfig"] as? [String: String]
+            precondition(thinking?["thinkingLevel"] == "medium", "말투 요청은 medium")
+        }
     }
 
     // 실제 청구서에 캐시 생성 항목이 없었다. 개수는 세되 요금에는 안 넣는다.

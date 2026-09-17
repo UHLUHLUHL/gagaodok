@@ -18,6 +18,8 @@ public struct PersonaEditorView: View {
     @State private var samplesText: String
     @State private var styleGuide: String
     @State private var isEnabled: Bool
+    /// 자동 조사에서 확인한 대사의 출처입니다. 화면에는 보이지 않고 분석과 저장에만 씁니다.
+    @State private var sampleEvidence: [PersonaSampleEvidence]
     @State private var isAnalyzing = false
     @State private var status: String = ""
 
@@ -60,6 +62,16 @@ public struct PersonaEditorView: View {
         _samplesText = State(initialValue: persona.samples.joined(separator: "\n"))
         _styleGuide = State(initialValue: persona.styleGuide)
         _isEnabled = State(initialValue: persona.isEnabled)
+        _sampleEvidence = State(initialValue: persona.sampleEvidence)
+    }
+
+    /// 대사 칸에서 고친 줄은 원문이 아니므로 출처 연결을 뺍니다.
+    private var linkedEvidence: [PersonaSampleEvidence] {
+        PersonaSourcePipeline.reconcile(samples: sampleLines, evidence: sampleEvidence)
+    }
+
+    private var roomMode: ChatMode {
+        roomManager.getRoom(id: roomId)?.resolvedMode ?? .mathMentor
     }
 
     private var sampleLines: [String] {
@@ -535,7 +547,7 @@ public struct PersonaEditorView: View {
             }
             HStack(spacing: 8) {
                 Button(action: {
-                    description = ""; samplesText = ""; styleGuide = ""; isEnabled = false
+                    description = ""; samplesText = ""; styleGuide = ""; isEnabled = false; sampleEvidence = []
                     previewAnswers = [:]; lookupConfidence = ""; lookupNote = ""; lookupSources = []
                     status = "지웠습니다."
                 }) {
@@ -576,10 +588,13 @@ public struct PersonaEditorView: View {
         let query = lookupQuery
         let shot = attachedShot
         let room = roomId
+        // 챗봇 방은 출처를 먼저 찾고 거기서만 대사를 뽑는 두 단계로 조사합니다.
+        let mode = roomMode
         Task {
             do {
                 let result = try await GeminiService.shared.lookupPersona(
-                    query: query, roomId: room, imageBase64: shot?.base64, imageMimeType: shot?.mime
+                    query: query, roomId: room, imageBase64: shot?.base64, imageMimeType: shot?.mime,
+                    mode: mode
                 ) { label in
                     await MainActor.run { lookupProgress = label }
                 }
@@ -594,6 +609,7 @@ public struct PersonaEditorView: View {
                         return
                     }
                     if !result.samples.isEmpty { samplesText = result.samples.joined(separator: "\n") }
+                    sampleEvidence = result.evidence
                     if !result.styleGuide.isEmpty { styleGuide = result.styleGuide }
                     if description.trimmingCharacters(in: .whitespaces).isEmpty {
                         description = query.trimmingCharacters(in: .whitespaces)
@@ -618,12 +634,13 @@ public struct PersonaEditorView: View {
         previewAsking = situation
         status = ""
         let persona = PersonaStyle(
-            description: description, samples: sampleLines, styleGuide: styleGuide, isEnabled: true
+            description: description, samples: sampleLines, styleGuide: styleGuide, isEnabled: true,
+            sampleEvidence: linkedEvidence
         )
         let botName = roomManager.getRoom(id: roomId)?.profile.name ?? "사피엔스"
         // 이 방의 모드로 미리봅니다. 챗봇 방인데 멘토 지침으로 미리보면
         // 여기서 괜찮아 보이던 말투가 실제 대화에서는 전혀 다르게 나옵니다.
-        let mode = roomManager.getRoom(id: roomId)?.resolvedMode ?? .mathMentor
+        let mode = roomMode
         let room = roomId
         Task {
             let answer: String
@@ -686,11 +703,14 @@ public struct PersonaEditorView: View {
         status = ""
         let currentDescription = description
         let currentSamples = sampleLines
+        let currentEvidence = linkedEvidence
+        let mode = roomMode
         let room = roomId
         Task {
             do {
                 let guide = try await GeminiService.shared.analyzePersonaStyle(
-                    roomId: room, description: currentDescription, samples: currentSamples
+                    roomId: room, description: currentDescription, samples: currentSamples,
+                    mode: mode, evidence: currentEvidence
                 )
                 await MainActor.run {
                     styleGuide = guide
@@ -715,7 +735,8 @@ public struct PersonaEditorView: View {
                 description: description,
                 samples: sampleLines,
                 styleGuide: styleGuide,
-                isEnabled: isEnabled
+                isEnabled: isEnabled,
+                sampleEvidence: linkedEvidence
             )
         )
     }

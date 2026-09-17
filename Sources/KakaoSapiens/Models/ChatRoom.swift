@@ -16,17 +16,46 @@ public struct PersonaStyle: Codable, Equatable {
     public var styleGuide: String
     /// 말투를 실제로 적용할지 여부.
     public var isEnabled: Bool
+    /// 자동 조사에서 대사가 어디서 확인됐는지입니다. 챗봇 방의 말투 분석이 씁니다.
+    /// 대화 지침에는 아직 넣지 않습니다(`PersonaSourcePipeline` 머리말 참고).
+    public var sampleEvidence: [PersonaSampleEvidence]
 
     public init(
         description: String = "",
         samples: [String] = [],
         styleGuide: String = "",
-        isEnabled: Bool = false
+        isEnabled: Bool = false,
+        sampleEvidence: [PersonaSampleEvidence] = []
     ) {
         self.description = description
         self.samples = samples
         self.styleGuide = styleGuide
         self.isEnabled = isEnabled
+        self.sampleEvidence = sampleEvidence
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case description, samples, styleGuide, isEnabled, sampleEvidence
+    }
+
+    // 옛 저장에는 증거 목록이 없습니다. 네 필드는 예전처럼 반드시 있어야 합니다.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        description = try c.decode(String.self, forKey: .description)
+        samples = try c.decode([String].self, forKey: .samples)
+        styleGuide = try c.decode(String.self, forKey: .styleGuide)
+        isEnabled = try c.decode(Bool.self, forKey: .isEnabled)
+        sampleEvidence = try c.decodeIfPresent([PersonaSampleEvidence].self, forKey: .sampleEvidence) ?? []
+    }
+
+    // 증거가 없으면 적지 않습니다. 직접 입력한 방의 저장 파일은 예전과 똑같이 남습니다.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(description, forKey: .description)
+        try c.encode(samples, forKey: .samples)
+        try c.encode(styleGuide, forKey: .styleGuide)
+        try c.encode(isEnabled, forKey: .isEnabled)
+        if !sampleEvidence.isEmpty { try c.encode(sampleEvidence, forKey: .sampleEvidence) }
     }
 
     public var hasContent: Bool {

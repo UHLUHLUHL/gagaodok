@@ -149,6 +149,25 @@ enum GeminiCachePolicy {
         min(bodyTokens + thinkingHeadroom, modelMaxOutputTokens)
     }
 
+    /// 말투를 찾고, 뽑고, 다듬는 요청의 사고 수준입니다. 미리보기는 실제 대화와 같아야 하므로 제외합니다.
+    ///
+    /// 사용자가 medium으로 정했습니다(2026-09-17). 폰은 분석·다듬기가 `low`, 검색이 `medium`입니다.
+    /// 96%는 `high`에서 잰 값이고 **medium의 사고량은 아직 재지 않았습니다.** 그래서 한도에
+    /// 사고 몫을 따로 얹습니다(`personaStyleGeneration`).
+    static let personaThinkingLevel = "medium"
+
+    /// 말투 요청의 생성 설정입니다. 본문 몫에 사고 몫을 더합니다.
+    ///
+    /// 예전에는 `high`에 본문 몫(2,048·2,560)만 줬습니다. 요약에서 잰 것처럼 `high`는
+    /// 예산의 96%를 사고에 쓰므로, 결과가 잘리거나 비어서 "질문을 나눠서 다시 보내주세요"가
+    /// 뜨는데 나눠도 달라지지 않습니다. 멘토·챗봇 방이 같은 편집 화면을 씁니다.
+    static func personaStyleGeneration(bodyTokens: Int) -> [String: Any] {
+        [
+            "maxOutputTokens": outputBudget(bodyTokens: bodyTokens),
+            "thinkingConfig": ["thinkingLevel": personaThinkingLevel]
+        ]
+    }
+
     /// 요약이 연속으로 실패한 뒤 다음 시도까지 기다릴 시간입니다.
     ///
     /// **예전에는 기다리지 않았습니다.** 실패하면 "다음 요청에서 다시 시도"했으므로,
