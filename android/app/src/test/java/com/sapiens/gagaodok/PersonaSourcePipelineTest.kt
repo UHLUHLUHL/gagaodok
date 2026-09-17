@@ -236,6 +236,26 @@ class PersonaSourcePipelineTest {
         assertEquals("공식판", parsed.single().edition)
     }
 
+    // 위 테스트는 raw string 안의 글자 `\t`라 앞 칸이 지워지지 않는다. 문서에서 뽑은 대사는
+    // 시각 칸이 비어 줄이 진짜 탭으로 시작한다. 그 탭을 지우면 칸이 밀려 줄이 버려진다.
+    @Test
+    fun `시각 칸이 빈 문서 대사도 칸이 밀리지 않는다`() {
+        val source = PersonaSourceCandidate(
+            PersonaSourceTier.OFFICIAL_TEXT,
+            "https://official.example/script", "제작사", "공식 대본", "ko", "공식판", "공식 사이트"
+        )
+        val parsed = parsePersonaEvidence(
+            "[대사]\n\t평상시\t인물\t문서의 대사\thttps://official.example/script\t공식 대본\tOFFICIAL_TEXT\t공식판\tko\t보통",
+            sourceCandidates = listOf(source)
+        )
+
+        assertEquals(1, parsed.size)
+        assertEquals("문서의 대사", parsed.single().text)
+        assertEquals(null, parsed.single().timestampSeconds)
+        assertEquals("평상시", parsed.single().contextTag)
+        assertEquals("보통", parsed.single().confidence)
+    }
+
     @Test
     fun `같은 유튜브 영상 URL 변형은 한 출처로 합친다`() {
         val parsed = parsePersonaSources(

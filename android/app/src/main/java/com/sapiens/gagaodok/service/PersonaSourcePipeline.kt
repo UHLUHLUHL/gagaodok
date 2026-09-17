@@ -34,7 +34,7 @@ internal fun parsePersonaSources(text: String): List<PersonaSourceCandidate> = t
     .drop(1)
     .takeWhile { !it.trim().startsWith("[") }
     .mapNotNull { raw ->
-        val fields = raw.trim().trim('-', '•', ' ').replace("\\t", "\t").split('\t')
+        val fields = splitPersonaFields(raw)
         if (fields.size < 3) return@mapNotNull null
         val tier = runCatching { PersonaSourceTier.valueOf(fields[0].trim()) }.getOrNull()
             ?: return@mapNotNull null
@@ -64,7 +64,7 @@ internal fun parsePersonaEvidence(
     .drop(1)
     .takeWhile { !it.trim().startsWith("[") }
     .mapNotNull { raw ->
-        val fields = raw.trim().trim('-', '•', ' ').replace("\\t", "\t").split('\t')
+        val fields = splitPersonaFields(raw)
         if (fields.size < 4) return@mapNotNull null
         val quote = fields[3].trim().trim('"', '“', '”', '「', '」')
         val sourceUrl = fields.getOrElse(4) { "" }.trim()
@@ -90,6 +90,14 @@ internal fun parsePersonaEvidence(
             confidence = fields.getOrElse(9) { "" }.trim()
         )
     }
+
+// 앞뒤의 공백과 목록 기호를 떼고 탭으로 나눈다. 모델이 탭 대신 `\t` 글자를 적어도 받는다.
+// **탭은 떼지 않는다.** 문서에서 뽑은 대사는 시각 칸이 비어 줄이 탭으로 시작하는데,
+// `trim()`은 탭도 지워 칸이 하나씩 밀리고 그 줄이 통째로 버려졌다.
+private fun splitPersonaFields(raw: String): List<String> = raw
+    .trim { (it.isWhitespace() && it != '\t') || it == '-' || it == '•' }
+    .replace("\\t", "\t")
+    .split('\t')
 
 private fun parseTimestampSeconds(value: String): Int? {
     val pieces = value.trim().split(':').mapNotNull { it.toIntOrNull() }
